@@ -1,6 +1,13 @@
-# AutoBrain Frontend (Flutter)
+# AutoBrain Mobile (Flutter)
 
-Offline-first mobile app for iOS and Android.
+The **mobile app** for AutoBrain — an AI-powered car enthusiast companion.
+Split out of the `autobrain` monorepo (`frontend/`) into this private repo so
+the mobile and web apps can evolve and version independently.
+
+> [!NOTE]
+> The web app lives in the [autobrain](https://github.com/CannonFodder151/autobrain)
+> repo (`frontend/`) and is built for web by its Docker image. This repo is the
+> iOS / Android home for the same Flutter codebase.
 
 ## Structure
 
@@ -16,7 +23,7 @@ lib/
     offline_cache.dart  SQLite cache for offline mode
     theme.dart
   screens/
-    auth/            login, register
+    auth/            login, register, reset password, server setup
     home/            dashboard
     vehicles/        list, add (with rego lookup), timeline
     services/        history, add, AI prediction, export
@@ -27,8 +34,11 @@ lib/
     parts/           inventory, reorder suggestions
     valuation/       resale value estimator
     analytics/       spend, TCO, insights, forecast
+    admin/           user admin, server settings, licence
+    settings/        account, licence, notifications
   widgets/           shared widgets
 test/                model unit tests
+web/                 Flutter web build config (mirrored into autobrain)
 ```
 
 ## Build
@@ -44,19 +54,11 @@ flutter pub get
 Configure API endpoints at build time:
 
 ```bash
-flutter build web --dart-define=API_BASE_URL=http://your-host/api/v1 \
-                  --dart-define=WS_BASE_URL=ws://your-host/ws
+flutter build apk --release --dart-define=API_BASE_URL=https://host/api/v1 \
+                   --dart-define=WS_BASE_URL=wss://host/ws
+flutter build ios --release --dart-define=API_BASE_URL=https://host/api/v1 \
+                   --dart-define=WS_BASE_URL=wss://host/ws   # requires macOS + Xcode
 ```
-
-Mobile builds:
-
-```bash
-flutter build apk --release
-flutter build ios --release   # requires macOS + Xcode
-```
-
-Web builds are also produced by the frontend Docker image (see
-`docker/frontend/Dockerfile`).
 
 ## Offline mode
 
@@ -69,3 +71,9 @@ the intended extension point for full offline queues.
 ```bash
 flutter test
 ```
+
+## Versioning
+
+The mobile app versions independently from the web app. `scripts/bump-version.sh`
+in `autobrain` accepts `--mobile` to bump this repo's `pubspec.yaml` alongside a
+release.
