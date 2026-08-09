@@ -79,7 +79,7 @@ jobs:
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws
 
-      - name: Verify v1+v2+v3 signing
+      - name: Verify signing (AAB v1, APK v2/v3)
         run: |
           set -euo pipefail
           aab=build/app/outputs/bundle/release/app-release.aab
@@ -89,18 +89,18 @@ jobs:
           if ! command -v jarsigner >/dev/null 2>&1 && [[ -n "${JAVA_HOME:-}" ]]; then
             export PATH="$JAVA_HOME/bin:$PATH"
           fi
-          echo "== jarsigner -verify -verbose $aab (v1/JAR signature) =="
-          jarsigner -verify -verbose "$aab"
+          echo "== jarsigner -verify $aab (v1/JAR signature on bundle container) =="
+          jarsigner -verify "$aab"
           echo "== signer identity of $aab =="
           keytool -printcert -jarfile "$aab" 2>/dev/null | grep -E "Owner|SHA256" | head -3 || true
           apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
           echo "== $apksigner verify --verbose --print-certs $apk =="
           out="$("$apksigner" verify --verbose --print-certs "$apk")"
           echo "$out"
-          for s in "Verified using v1 scheme: true" "Verified using v2 scheme: true" "Verified using v3 scheme: true"; do
-            grep -q "$s" <<<"$out" || { echo "::error::missing $s"; exit 1; }
-          done
-          echo "signing OK: AAB v1 (jarsigner) valid; APK v1+v2+v3 valid with upload cert"
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" <<<"$out" || { echo "::error::APK missing v2 scheme (Play requires it)"; exit 1; }
+          grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" <<<"$out" || { echo "::error::APK missing v3 scheme (Play requires it)"; exit 1; }
+          grep -q "Verified using v1 scheme (JAR signing): true" <<<"$out" || echo "note: APK has no v1 (JAR) scheme — expected with minSdk >= 24; Play requires v2/v3"
+          echo "signing OK: AAB v1 valid; APK v2+v3 valid with upload certificate"
 
       - name: Extract changelog top entry for release body
         id: changelog
