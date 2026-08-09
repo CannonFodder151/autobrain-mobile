@@ -94,7 +94,7 @@ jobs:
           echo "== signer identity of $aab =="
           keytool -printcert -jarfile "$aab" 2>/dev/null | grep -E "Owner|SHA256" | head -3 || true
           echo "== AAB v2/v3 signing block presence =="
-          python3 - <<'PY'
+          python3 -c '
           import struct
           with open("build/app/outputs/bundle/release/app-release.aab", "rb") as f:
               f.seek(-22, 2)
@@ -103,7 +103,7 @@ jobs:
               magic = f.read(16)
           assert magic == b"APK Sig Block 42", "AAB missing APK Signature Block (v2/v3)"
           print("AAB carries APK Signature Block (v2/v3)")
-PY
+          '
           apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
           echo "== $apksigner verify --verbose --print-certs $apk =="
           out="$("$apksigner" verify --verbose --print-certs "$apk")"
