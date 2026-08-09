@@ -126,11 +126,19 @@ jobs:
           CHANGELOG_BODY: ${{ steps.changelog.outputs.body_file }}
         run: |
           notes="$(grep -v '^$' "$CHANGELOG_BODY" | head -4 | tr '\n' ' ' | cut -c1-400)"
+          changelog_payload="$(jq -n \
+            --arg channel changelog \
+            --arg title "AutoBrain app ${{ inputs.version }} released" \
+            --arg desc "$notes" \
+            --arg url "$RELEASE_URL" \
+            '{channel:$channel,title:$title,description:$desc,color:"0x2ECC71",author:"Mobile Release Engineer",fields:[{name:"Download",value:$url,inline:true},{name:"Platform",value:"Android (.aab)",inline:true}]}')"
+          updates_payload="$(jq -n \
+            --arg channel updates \
+            --arg title "Mobile .aab ${{ inputs.version }} released" \
+            '{channel:$channel,title:$title,description:"Release notes + .aab live.",color:"0x3498DB",author:"Mobile Release Engineer",fields:[{name:"Artifact",value:"app-release.aab",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true}]}')"
           # Discord embeds are best-effort: a transient n8n outage must not fail the
           # release run (it only creates failure-notification spam).
           curl -sS -o /dev/null -w "changelog embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
-            -H 'Content-Type: application/json' \
-            -d "{\"channel\":\"changelog\",\"title\":\"AutoBrain app ${{ inputs.version }} released\",\"description\":\"$notes\",\"color\":\"0x2ECC71\",\"author\":\"Mobile Release Engineer\",\"fields\":[{\"name\":\"Download\",\"value\":\"$RELEASE_URL\",\"inline\":true},{\"name\":\"Platform\",\"value\":\"Android (.aab)\",\"inline\":true}]}" || true
+            -H 'Content-Type: application/json' -d "$changelog_payload" || true
           curl -sS -o /dev/null -w "updates embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
-            -H 'Content-Type: application/json' \
-            -d "{\"channel\":\"updates\",\"title\":\"Mobile .aab ${{ inputs.version }} released\",\"description\":\"Release notes + .aab live.\",\"color\":\"0x3498DB\",\"author\":\"Mobile Release Engineer\",\"fields\":[{\"name\":\"Artifact\",\"value\":\"app-release.aab\",\"inline\":true},{\"name\":\"Notes\",\"value\":\"#changelog + GitHub Releases\",\"inline\":true}]}" || true
+            -H 'Content-Type: application/json' -d "$updates_payload" || true
