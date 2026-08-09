@@ -79,9 +79,14 @@ jobs:
           apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
           aab=build/app/outputs/bundle/release/app-release.aab
           [[ -f "$aab" ]] || { echo "::error::$aab not found"; exit 1; }
-          echo "== $apksigner verify --verbose --print-certs $aab =="
-          "$apksigner" verify --verbose --print-certs "$aab"
-          out="$("$apksigner" verify --verbose "$aab")"
+          if ! command -v jarsigner >/dev/null 2>&1 && [[ -n "${JAVA_HOME:-}" ]]; then
+            export PATH="$JAVA_HOME/bin:$PATH"
+          fi
+          echo "== jarsigner -verify -verbose -certs $aab =="
+          jarsigner -verify -verbose -certs "$aab"
+          echo "== $apksigner verify --verbose --min-sdk-version 24 $aab =="
+          out="$("$apksigner" verify --verbose --min-sdk-version 24 --print-certs "$aab")"
+          echo "$out"
           for s in "Verified using v1 scheme: true" "Verified using v2 scheme: true" "Verified using v3 scheme: true"; do
             grep -q "$s" <<<"$out" || { echo "::error::missing $s"; exit 1; }
           done
