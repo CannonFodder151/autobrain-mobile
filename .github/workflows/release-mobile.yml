@@ -122,10 +122,14 @@ jobs:
 
       - name: Post Discord changelog + updates (n8n Reporter)
         env:
-          RELEASE_URL: https://github.com/CannonFodder151/autobrain-mobile/releases/tag/${{ inputs.version }}
+          RELEASE_URL: ${{ steps.release.outputs.url }}
           CHANGELOG_BODY: ${{ steps.changelog.outputs.body_file }}
         run: |
-          notes="$(grep -v '^$' "$CHANGELOG_BODY" | head -4 | tr '\n' ' ' | cut -c1-400)"
+          # Clean, plain-text notes: top changelog section bullets, stripped of
+          # markdown markers (#/###/-/backticks), joined on one line.
+          notes="$(awk '/^## \[/{f=1;next} f&&/^## \[/{exit} f' CHANGELOG.md \
+            | grep -E '^- ' | sed 's/^- //; s/`//g; s/\*\*//g' \
+            | head -3 | tr '\n' ' ' | cut -c1-400)"
           changelog_payload="$(jq -n \
             --arg channel changelog \
             --arg title "AutoBrain app ${{ inputs.version }} released" \
@@ -135,7 +139,8 @@ jobs:
           updates_payload="$(jq -n \
             --arg channel updates \
             --arg title "Mobile .aab ${{ inputs.version }} released" \
-            '{channel:$channel,title:$title,description:"Release notes + .aab live.",color:"0x3498DB",author:"Mobile Release Engineer",fields:[{name:"Artifact",value:"app-release.aab",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true}]}')"
+            --arg url "$RELEASE_URL" \
+            '{channel:$channel,title:$title,description:"Release notes + .aab live.",color:"0x3498DB",author:"Mobile Release Engineer",fields:[{name:"Artifact",value:"app-release.aab",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true},{name:"Download",value:$url,inline:true}]}')"
           # Discord embeds are best-effort: a transient n8n outage must not fail the
           # release run (it only creates failure-notification spam).
           curl -sS -o /dev/null -w "changelog embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
