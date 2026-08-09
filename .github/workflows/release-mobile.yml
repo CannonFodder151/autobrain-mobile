@@ -93,17 +93,6 @@ jobs:
           jarsigner -verify -verbose "$aab"
           echo "== signer identity of $aab =="
           keytool -printcert -jarfile "$aab" 2>/dev/null | grep -E "Owner|SHA256" | head -3 || true
-          echo "== AAB v2/v3 signing block presence =="
-          python3 -c '
-          import struct
-          with open("build/app/outputs/bundle/release/app-release.aab", "rb") as f:
-              f.seek(-22, 2)
-              cd_offset = struct.unpack("<I", f.read(22)[16:20])[0]
-              f.seek(cd_offset - 16)
-              magic = f.read(16)
-          assert magic == b"APK Sig Block 42", "AAB missing APK Signature Block (v2/v3)"
-          print("AAB carries APK Signature Block (v2/v3)")
-          '
           apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
           echo "== $apksigner verify --verbose --print-certs $apk =="
           out="$("$apksigner" verify --verbose --print-certs "$apk")"
@@ -111,7 +100,7 @@ jobs:
           for s in "Verified using v1 scheme: true" "Verified using v2 scheme: true" "Verified using v3 scheme: true"; do
             grep -q "$s" <<<"$out" || { echo "::error::missing $s"; exit 1; }
           done
-          echo "signing OK: AAB v1 valid + v2/v3 block present; APK v1+v2+v3 valid with upload cert"
+          echo "signing OK: AAB v1 (jarsigner) valid; APK v1+v2+v3 valid with upload cert"
 
       - name: Extract changelog top entry for release body
         id: changelog
