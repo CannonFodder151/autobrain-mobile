@@ -1,4 +1,4 @@
-﻿package com.autobrain.app
+﻿package com.autobrainservice.app
 
 import io.flutter.embedding.android.FlutterActivity
 
