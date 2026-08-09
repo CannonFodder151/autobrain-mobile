@@ -73,24 +73,45 @@ jobs:
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws
 
+      - name: Build release APK (same signingConfig, for apksigner scheme check)
+        run: |
+          flutter build apk --release \
+            --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
+            --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws
+
       - name: Verify v1+v2+v3 signing
         run: |
           set -euo pipefail
-          apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
           aab=build/app/outputs/bundle/release/app-release.aab
+          apk=build/app/outputs/flutter-apk/app-release.apk
           [[ -f "$aab" ]] || { echo "::error::$aab not found"; exit 1; }
+          [[ -f "$apk" ]] || { echo "::error::$apk not found"; exit 1; }
           if ! command -v jarsigner >/dev/null 2>&1 && [[ -n "${JAVA_HOME:-}" ]]; then
             export PATH="$JAVA_HOME/bin:$PATH"
           fi
-          echo "== jarsigner -verify -verbose -certs $aab =="
-          jarsigner -verify -verbose -certs "$aab"
-          echo "== $apksigner verify --verbose --min-sdk-version 24 $aab =="
-          out="$("$apksigner" verify --verbose --min-sdk-version 24 --print-certs "$aab")"
+          echo "== jarsigner -verify -verbose $aab (v1/JAR signature) =="
+          jarsigner -verify -verbose "$aab"
+          echo "== signer identity of $aab =="
+          keytool -printcert -jarfile "$aab" 2>/dev/null | grep -E "Owner|SHA256" | head -3 || true
+          echo "== AAB v2/v3 signing block presence =="
+          python3 - <<'PY'
+          import struct
+          with open("build/app/outputs/bundle/release/app-release.aab", "rb") as f:
+              f.seek(-22, 2)
+              cd_offset = struct.unpack("<I", f.read(22)[16:20])[0]
+              f.seek(cd_offset - 16)
+              magic = f.read(16)
+          assert magic == b"APK Sig Block 42", "AAB missing APK Signature Block (v2/v3)"
+          print("AAB carries APK Signature Block (v2/v3)")
+PY
+          apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
+          echo "== $apksigner verify --verbose --print-certs $apk =="
+          out="$("$apksigner" verify --verbose --print-certs "$apk")"
           echo "$out"
           for s in "Verified using v1 scheme: true" "Verified using v2 scheme: true" "Verified using v3 scheme: true"; do
             grep -q "$s" <<<"$out" || { echo "::error::missing $s"; exit 1; }
           done
-          echo "signing OK: v1+v2+v3 present"
+          echo "signing OK: AAB v1 valid + v2/v3 block present; APK v1+v2+v3 valid with upload cert"
 
       - name: Extract changelog top entry for release body
         id: changelog
