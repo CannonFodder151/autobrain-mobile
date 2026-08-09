@@ -61,7 +61,7 @@ jobs:
           set -euo pipefail
           grep -q 'namespace "com.autobrainservice.app"' android/app/build.gradle || { echo "::error::build.gradle namespace is not com.autobrainservice.app"; exit 1; }
           grep -q 'applicationId "com.autobrainservice.app"' android/app/build.gradle || { echo "::error::build.gradle applicationId is not com.autobrainservice.app"; exit 1; }
-          grep -q '^package com.autobrainservice.app$' android/app/src/main/kotlin/com/autobrainservice/app/MainActivity.kt || { echo "::error::MainActivity.kt package is not com.autobrainservice.app"; exit 1; }
+          head -1 android/app/src/main/kotlin/com/autobrainservice/app/MainActivity.kt | grep -q 'package com.autobrainservice.app' || { echo "::error::MainActivity.kt package is not com.autobrainservice.app"; exit 1; }
           echo "package identity OK: com.autobrainservice.app"
 
       - name: flutter pub get
