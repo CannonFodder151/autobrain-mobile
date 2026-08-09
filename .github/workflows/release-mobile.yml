@@ -1,0 +1,119 @@
+name: Mobile Release (.aab)
+
+# Manual release pipeline: build + sign + GitHub Release draft + Discord notes.
+# See docs/mobile-release.md (autobrain monorepo). Never runs on push.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag to build, e.g. v0.3.4+21 (must match pubspec.yaml version X.Y.Z+N)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Verify requested version matches pubspec
+        run: |
+          set -euo pipefail
+          version="$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}')"
+          tag="v${version}"
+          if [[ "$tag" != "${{ inputs.version }}" ]]; then
+            echo "::error::pubspec.yaml version is ${tag} but requested ${{ inputs.version }}. Run bump-version.sh --mobile in the autobrain monorepo first."
+            exit 1
+          fi
+          echo "Building release ${tag}"
+
+      - name: Install Android keystore + key.properties
+        env:
+          KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          echo "$KEYSTORE_B64" | base64 -d > android/upload-keystore.jks
+          cp android/upload-keystore.jks android/app/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storeFile=upload-keystore.jks
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          storePassword=$KEY_STORE_PASSWORD
+          EOF
+          ls -la android/ android/app/*.jks
+
+      - name: Verify Play-locked package identity
+        run: |
+          set -euo pipefail
+          grep -q 'namespace "com.autobrainservice.app"' android/app/build.gradle || { echo "::error::build.gradle namespace is not com.autobrainservice.app"; exit 1; }
+          grep -q 'applicationId "com.autobrainservice.app"' android/app/build.gradle || { echo "::error::build.gradle applicationId is not com.autobrainservice.app"; exit 1; }
+          grep -q '^package com.autobrainservice.app$' android/app/src/main/kotlin/com/autobrainservice/app/MainActivity.kt || { echo "::error::MainActivity.kt package is not com.autobrainservice.app"; exit 1; }
+          echo "package identity OK: com.autobrainservice.app"
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: Build release appbundle
+        run: |
+          flutter build appbundle --release \
+            --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
+            --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws
+
+      - name: Verify v1+v2+v3 signing
+        run: |
+          set -euo pipefail
+          apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
+          aab=build/app/outputs/bundle/release/app-release.aab
+          [[ -f "$aab" ]] || { echo "::error::$aab not found"; exit 1; }
+          echo "== $apksigner verify --verbose --print-certs $aab =="
+          "$apksigner" verify --verbose --print-certs "$aab"
+          out="$("$apksigner" verify --verbose "$aab")"
+          for s in "Verified using v1 scheme: true" "Verified using v2 scheme: true" "Verified using v3 scheme: true"; do
+            grep -q "$s" <<<"$out" || { echo "::error::missing $s"; exit 1; }
+          done
+          echo "signing OK: v1+v2+v3 present"
+
+      - name: Extract changelog top entry for release body
+        id: changelog
+        run: |
+          awk '/^## \[/{found=1; next} found && /^## \[/{exit} found{print}' CHANGELOG.md > "$RUNNER_TEMP/release-body.md"
+          [[ -s "$RUNNER_TEMP/release-body.md" ]] || { echo "::error::CHANGELOG.md has no top version section"; exit 1; }
+          { echo "# ${{ inputs.version }}"; echo; cat "$RUNNER_TEMP/release-body.md"; } > "$RUNNER_TEMP/release-body-full.md"
+          echo "body_file=$RUNNER_TEMP/release-body-full.md" >> "$GITHUB_OUTPUT"
+
+      - name: Publish draft GitHub Release with .aab
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: ${{ inputs.version }}
+          body_path: ${{ steps.changelog.outputs.body_file }}
+          draft: true
+          files: build/app/outputs/bundle/release/app-release.aab
+
+      - name: Post Discord changelog + updates (n8n Reporter)
+        env:
+          RELEASE_URL: https://github.com/CannonFodder151/autobrain-mobile/releases/tag/${{ inputs.version }}
+          CHANGELOG_BODY: ${{ steps.changelog.outputs.body_file }}
+        run: |
+          notes="$(grep -v '^$' "$CHANGELOG_BODY" | head -4 | tr '\n' ' ' | cut -c1-400)"
+          curl -sS -o /dev/null -w "changelog embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
+            -H 'Content-Type: application/json' \
+            -d "{\"channel\":\"changelog\",\"title\":\"AutoBrain app ${{ inputs.version }} released\",\"description\":\"$notes\",\"color\":\"0x2ECC71\",\"author\":\"Mobile Release Engineer\",\"fields\":[{\"name\":\"Download\",\"value\":\"$RELEASE_URL\",\"inline\":true},{\"name\":\"Platform\",\"value\":\"Android (.aab)\",\"inline\":true}]}"
+          curl -sS -o /dev/null -w "updates embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
+            -H 'Content-Type: application/json' \
+            -d "{\"channel\":\"updates\",\"title\":\"Mobile .aab ${{ inputs.version }} released\",\"description\":\"Release notes + .aab live.\",\"color\":\"0x3498DB\",\"author\":\"Mobile Release Engineer\",\"fields\":[{\"name\":\"Artifact\",\"value\":\"app-release.aab\",\"inline\":true},{\"name\":\"Notes\",\"value\":\"#changelog + GitHub Releases\",\"inline\":true}]}"

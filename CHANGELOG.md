@@ -1,0 +1,152 @@
+# Changelog
+
+All notable changes to this project are documented in this file.
+Format follows [Keep a Changelog](https://keepachangelog.com/).
+
+> This is the single shared changelog for BOTH the hosted (web) app (`frontend/`)
+> and the mobile app (`CannonFodder151/autobrain-mobile`). Every feature or
+> user-facing change ships with an entry here under `[Unreleased]` — see
+> `CONTRIBUTING.md` for the frontend-parity + changelog rules.
+
+## [Unreleased]
+
+### Added
+- Vehicle sharing (AUT-16/AUT-21/AUT-115): share a vehicle with another AutoBrain account by email (3-dot menu on the vehicle card). Pending invites sit in an **Invited** section with Accept/Deny, shared vehicles show an "(Invited by <name>)" label, and owners can remove access at any time. Available in both the web and mobile apps.
+- Feature gating follows the car's owner (AUT-21): a free account invited to a paid owner's vehicle inherits the owner's AI and rego entitlement on that car; a free owner still blocks those features for everyone, including invitees.
+
+### Changed
+- Versioning unified around a single `x.y.z` (see `docs/versioning.md`): the backend and AI gateway report `APP_VERSION` (no more stale hardcoded strings), and `bump-version.sh` updates backend, AI gateway, web, mobile and the changelog in one shot.
+- Public `GET /api/v1/auth/config` now returns `app_version` so the mobile app can detect when it is behind and prompt for an update on login.
+- Stripped sensitive info from the repo (sample number plate in the changelog, internal IPs, hostnames and hosting details in `.env.example`, config defaults, compose comments and docs).
+
+## [0.3.4] - 2026-08-06
+
+### Added
+- Rego lookup now sends the vehicle type (car/motorcycle) to the self-hosted scraper. VIC motorcycles resolve correctly — the vicroads form selects the motorcycle field and vehicle-type dropdown (test case: `[redacted]` → clean not-found for an unregistered plate).
+- Motorcycle-aware offline fallback — a bike never falls back to a guessed car.
+- Vehicle type is enforced in the add/edit vehicle screens before rego lookup (selector moved above the rego field).
+
+### Fixed
+- Scraper no longer misreads form dropdown labels (e.g. "Chassis number") as result data.
+- Provider timeout raised to 150s so a retrying browser lookup completes instead of falling back early.
+
+## [0.3.3] - 2026-08-06
+
+### Added
+- Vehicle type: every vehicle is a Car or a Motorcycle (dropdown on add/edit). The home screen shows a motorcycle icon for bikes, and the vehicle type is passed to the AI agents (diagnostics, service prediction, valuation, mod impact).
+- Admin console: search users by display name or email — alphabetical, 15 per page, with previous/next buttons.
+- Account creation (signup + admin) rejects duplicate emails and duplicate display names.
+- "Delete account" menu item for non-admin users on licensed servers, linking to the deletion instructions page.
+- Demo data: two motorcycles plus logbook trips, scanned receipts, valuations and diagnostics.
+
+### Fixed
+- Service/mod `photo_keys` now store as JSON (raw-list inserts from the receipt auto-apply flow and the demo seed previously failed).
+- Web home screen no longer shows garbled characters on the vehicle display.
+- Admin user list no longer 500s — `UserAdminOut` now serializes ORM rows (blank list / broken search fixed).
+- CSV exports now include a UTF-8 BOM so Excel renders em-dashes and unicode correctly instead of garbled characters.
+- Home screen shows a clear "server unreachable" error (with Retry) instead of "no vehicles" when the backend is offline.
+
+## [0.3.2] - 2026-08-06
+
+### Changed
+- Android app distributed via Google Play (`com.autobrainservice.app`); the
+  in-app "Get the mobile app" download dialog and menu item are removed.
+- Mobile: sign out now offers "Sign out & change server"; new app icon.
+- Rego lookup resilience: provider timeout raised to 90s (covers the
+  scraper's fast-fail + retry).
+
+## [0.3.1] - 2026-08-06
+
+### Fixed
+- Fuel efficiency (L/100km, cost/km) now calculates when you back-fill an
+  older fill-up. The full-tank efficiency chain is recomputed after every
+  add/edit/delete, so later fills are re-chained correctly; out-of-order or
+  duplicate odometer entries stay blank instead of getting a wrong value.
+
+## [0.3.0] - 2026-08-06
+
+### Added
+- Fuel tracker: filter the list by Australian financial year, and export by
+  FY as CSV or CSV + receipt images (ZIP). Scanned receipts are saved against
+  the fuel record (receipt_id) and exported alongside it.
+- Service history and build sheet exports support `fmt=zip`: CSV gains an
+  Image column and the receipt/scan photos are bundled in the ZIP.
+- Receipt scans auto-attach their image to the service record created from
+  the scanner (`photo_keys` on `service_records`).
+- Admin console: "Re-upgrade" action grants the $19/month Enthusiast
+  benefits to an account without a Stripe subscription, and sponsored
+  accounts are blocked from buying a licence.
+- Licence/upgrade feature is gated behind `LICENSE_ENABLED` (served via
+  `GET /auth/config`). On for the hosted instance, off for demo/default and
+  self-hosted; the app hides the License page when disabled.
+- Self-hosted rego lookup: `REGO_LOOKUP_URL` now points at the
+  Plate-API-Scraper (POST `/lookup`) instead of the paid plateapi provider.
+
+### Fixed
+- Fuel receipts no longer stay stuck on `pending` when OCR is unavailable
+  (the record is marked done/failed and the image stays usable).
+- Removed the odometer photo-scan option from the logbook.
+
+## [0.2.4] - 2026-08-05
+
+### Added
+- `SELF_SIGNUP_ENABLED` now also drives the UI: the app fetches public `GET /auth/config` (`signup_enabled`) and hides the "Create a free account" button when disabled. Signup stays on by default for the hosted instance and is disabled on demo/default (admin-provisioned).
+
+## [0.2.3] - 2026-08-05
+
+### Fixed
+- Receipt uploads: the app now sends a real file MIME type (it previously always sent `application/octet-stream`, which the fuel-receipt endpoint rejected with "unsupported file type").
+- Backend now sniffs file type from magic bytes (PDF/JPEG/PNG/WEBP) before trusting the upload header, so photos from phone/camera pickers work for fuel receipts, receipts scanner and odometer OCR. HEIC/TIFF now accepted too.
+
+## [0.2.2] - 2026-08-05
+
+### Fixed
+- Web autofill: removed the global Enter-key interceptor that could swallow browser password-manager fills (Enter still submits via the fields themselves).
+- MFA code fields now carry `one-time-code` autofill hints so browsers offer the OTP/password suggestion (login, MFA setup, and Settings & security).
+
+## [0.2.1] - 2026-08-05
+
+### Added
+- Vehicle body type field (add/edit form, rego-lookup auto-fill, shown on vehicle cards and home screen).
+
+## [0.2.0] - 2026-08-05
+
+### Added
+- Vehicle colour field (add/edit form, rego-lookup auto-fill, shown on vehicle cards and home screen).
+- Self-service Free-tier signup (hosted): display name + email only; a 7-day setup email completes the account (choose password + MFA, enforced on the hosted instance).
+- Stripe self-service billing: Checkout, Customer Portal, cancel-at-end-of-period, webhook promote/demote between free and paid plans.
+- OBD2 hardware companion listed as a **Coming soon** product on the marketing site (not part of subscription plans).
+- ATO logbook: per-trip logging for non-club-reg vehicles (start/end time, GPS, odometer, work/private, reason), edit/complete trips, per-financial-year CSV export, and dashboard-photo odometer OCR (AI). Completing a trip updates the vehicle odometer.
+- Club registration selector on vehicles — club-registered vehicles disable the logbook feature.
+- Fuel: edit/delete fill-ups, fuel-receipt photo upload (AI parse of litres/price-per-litre, or plain upload without AI), and per-financial-year CSV export for tax purposes. Fuel always updates the odometer unless a newer logbook trip governs.
+- Free account tier (`free_account` per user): disables AI features and rego lookup (403 server-side); file exports are available on all plans.
+- Server version in admin settings with GitHub latest-release check (up to date / update available).
+- Diagnostics: resolve + delete once fixed; a diagnostic auto-flips to resolved (green tick) when its linked scheduled service is completed.
+- Profile export/import: download your whole account as JSON and import it on any server.
+- Admin backup & restore: full JSON database snapshot download, wipe-and-restore endpoint, and a scheduled daily backup (Celery beat → MinIO) with retention.
+- Admin API key (`ADMIN_API_KEY` + `X-Admin-API-Key`): create users, set permissions (role, vehicle quota, free/paid account, OBD access), list, disable and delete users machine-to-machine.
+- OBD-II seam: fault-code library with save/pull-to-AI-diagnostics, VIN auto-fill, admin-gated per-account access, Bluetooth auto-connect setting, and a "work in progress" UI for the live adapter features.
+- AI gateway: new `fuel-ocr` and `odometer` modules; all modules run at temperature 0 with validated/clamped numeric output (resale low ≤ est ≤ high) for stable estimates.
+- Azure/cloud web build fix: hermetic `pub get` (pubspec.lock copied) and removed the vestigial `build_runner` step.
+- Live 9Router integration: OpenAI-compatible router client (`AI_ROUTER_URL`/`AI_ROUTER_MODEL`), per-module strict-JSON prompts, tolerant schemas.
+- Web app delivery: Flutter web build served at `/` behind the proxy nginx.
+- TOTP multi-factor authentication (setup QR, enable/disable, MFA-gated login) and self-service password reset.
+- Role-based access (admin/user) with admin user management and seeded bootstrap admin.
+- Australian rego lookup (state-aware, personalised-plate word decoding, optional plateapi.com.au provider).
+- Services overhaul: scheduled/completed status, editable service cards with items + work steps, AI prediction, PDF/CSV export.
+- Receipt & parts OCR, parts inventory with AI reorder suggestions, resale value estimator, analytics.
+
+### Fixed
+- Login: email field is focused and its text selected on page load (fixes the web-autofill landing issue).
+- Login/MFA: the 6-digit verification code field is auto-focused when the MFA step appears.
+- Login/MFA: pressing Enter on the keyboard now submits the form instead of doing nothing.
+- Login: completing MFA setup no longer leaves the button spinning — the busy state is cleared and the app returns to the home screen.
+
+### Changed
+- Free accounts can export files; only AI features and rego lookup remain paid.
+- MFA is no longer a paid-plan feature — available on all tiers.
+- Self-service signup collects display name + email only; a setup email completes the account (password + MFA).
+
+### Removed
+- GitHub Actions CI/CD workflows.
+- Initial AutoBrain scaffold.
