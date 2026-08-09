@@ -4,10 +4,12 @@ library;
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
 import 'config.dart';
+import 'version_check.dart';
 
 enum LoginOutcome { ok, mfaRequired, mfaSetupRequired, failed }
 
@@ -23,6 +25,8 @@ class AuthState extends ChangeNotifier {
   bool _darkMode = true;
   bool _signupEnabled = true;
   bool _licenseEnabled = false;
+  bool _updateAvailable = false;
+  String? _latestVersion;
   String? get token => _token;
   String? get role => _role;
   String? get userId => _userId;
@@ -36,6 +40,10 @@ class AuthState extends ChangeNotifier {
   /// Whether the licence/upgrade feature is enabled on this server
   /// (LICENSE_ENABLED env var; on for hosted, off for demo/default).
   bool get licenseEnabled => _licenseEnabled;
+  /// Newer app release published by this server (from /auth/config).
+  String? get latestVersion => _latestVersion;
+  /// True when the installed app is older than the server's release.
+  bool get updateAvailable => _updateAvailable;
 
   Future<void> toggleThemeMode() async {
     _darkMode = !_darkMode;
@@ -62,15 +70,31 @@ class AuthState extends ChangeNotifier {
   }
 
   /// Fetches public server config (self-signup enabled, MFA enforced,
-  /// licence feature enabled).
+  /// licence feature enabled, current app release). Any failure is silent.
   Future<void> _loadConfig() async {
     try {
       final data = await _anonymous().get('/auth/config') as Map<String, dynamic>;
       _signupEnabled = data['signup_enabled'] != false;
       _licenseEnabled = data['license_enabled'] == true;
+      final serverVersion = data['app_version'] as String?;
+      if (serverVersion != null && serverVersion.isNotEmpty) {
+        _latestVersion = serverVersion;
+        _updateAvailable = await _isBehind(serverVersion);
+      }
       notifyListeners();
     } catch (_) {
       // Defaults to enabled; the backend still enforces SELF_SIGNUP_ENABLED.
+    }
+  }
+
+  /// True when the installed app version is older than [serverVersion].
+  /// The `+build` suffix is ignored by the comparison helper.
+  Future<bool> _isBehind(String serverVersion) async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      return isVersionNewerThan(serverVersion, info.version);
+    } catch (_) {
+      return false;
     }
   }
 
@@ -83,6 +107,8 @@ class AuthState extends ChangeNotifier {
     _client = null;
     _signupEnabled = true;
     _licenseEnabled = false;
+    _updateAvailable = false;
+    _latestVersion = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
     await prefs.remove('auth_role');

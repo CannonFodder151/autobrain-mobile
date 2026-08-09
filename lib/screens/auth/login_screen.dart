@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth_state.dart';
 import '../../core/config.dart';
@@ -30,6 +31,7 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _mfaQr;
   String? _mfaSecret;
   String? _error;
+  bool _updatePromptShown = false;
 
   bool get _isDemo =>
       AppConfig.apiBase.contains('demo.autobrainservice.app');
@@ -70,8 +72,54 @@ class _LoginScreenState extends State<LoginScreen> {
       _busy = false;
       _error = null;
     });
+    _maybeShowUpdatePrompt();
     if (Navigator.of(context).canPop()) {
       Navigator.of(context).popUntil((r) => r.isFirst);
+    }
+  }
+
+  /// Non-blocking "update available" prompt, at most once per session.
+  void _maybeShowUpdatePrompt() {
+    if (_updatePromptShown) return;
+    final auth = context.read<AuthState>();
+    final latest = auth.latestVersion;
+    if (!auth.updateAvailable || latest == null) return;
+    _updatePromptShown = true;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('A new version of AutoBrain is available'),
+        content: Text(
+          'Version $latest is ready. Update from the Play Store for the '
+          'latest features and fixes.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Not now'),
+          ),
+          FilledButton(
+            onPressed: () {
+              _openPlayStore();
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Update'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openPlayStore() async {
+    const storeUri = 'market://details?id=com.autobrainservice.app';
+    const webUri =
+        'https://play.google.com/store/apps/details?id=com.autobrainservice.app';
+    final opened = await launchUrl(
+      Uri.parse(storeUri),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened) {
+      await launchUrl(Uri.parse(webUri));
     }
   }
 
