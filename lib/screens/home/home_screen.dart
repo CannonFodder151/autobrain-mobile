@@ -53,18 +53,11 @@ class _HomeScreenState extends State<HomeScreen> {
           .map((e) => Vehicle.fromJson(e as Map<String, dynamic>))
           .toList();
       _vehicles = vehicles;
-      _selected = _selected ?? _firstPrimary(vehicles);
+      _selected = Vehicle.resolveSelection(vehicles, _selected);
     } catch (_) {
       _loadError = 'Could not reach the server. Check your connection or server settings.';
     }
     setState(() => _loading = false);
-  }
-
-  Vehicle? _firstPrimary(List<Vehicle> v) {
-    for (final x in v) {
-      if (x.isPrimary) return x;
-    }
-    return v.isEmpty ? null : v.first;
   }
 
   void _showDownload() {
@@ -225,7 +218,9 @@ class _HeroCard extends StatelessWidget {
                   '${vehicle.make ?? ''} ${vehicle.model ?? ''}'
                   '${vehicle.bodyType != null ? ' · ${vehicle.bodyType}' : ''}'
                   '${vehicle.colour != null ? ' · ${vehicle.colour}' : ''}'
-                  '${vehicle.year != null ? ' · ${vehicle.year}' : ''}'.trim(),
+                  '${vehicle.year != null ? ' · ${vehicle.year}' : ''}'
+                  '${vehicle.isShared ? ' · Invited by ${vehicle.sharedBy ?? 'Unknown'}' : ''}'
+                  .trim(),
                   style: const TextStyle(color: Colors.white70),
                 ),
                 const SizedBox(height: 14),
