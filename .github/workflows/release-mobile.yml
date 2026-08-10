@@ -93,6 +93,11 @@ jobs:
           jarsigner -verify "$aab"
           echo "== signer identity of $aab =="
           keytool -printcert -jarfile "$aab" 2>/dev/null | grep -E "Owner|SHA256" | head -3 || true
+          echo "== upload-key fingerprint guard (Play expects machine keystore) =="
+          expected_sha1="F3:79:19:3F:F7:28:54:BE:46:01:6E:CB:FF:43:DC:15:DF:BF:FB:4C"
+          actual_sha1="$(keytool -printcert -jarfile "$aab" 2>/dev/null | grep -E '^\s*SHA1:' | head -1 | awk '{print $3}')"
+          [[ "$actual_sha1" == "$expected_sha1" ]] || { echo "::error::AAB signer SHA1 ${actual_sha1:-<none>} != expected $expected_sha1 (wrong upload keystore in CI secrets)"; exit 1; }
+          echo "AAB signer SHA1 matches Play upload key: $actual_sha1"
           apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
           echo "== $apksigner verify --verbose --print-certs $apk =="
           out="$("$apksigner" verify --verbose --print-certs "$apk")"
@@ -100,6 +105,10 @@ jobs:
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" <<<"$out" || { echo "::error::APK missing v2 scheme (Play requires it)"; exit 1; }
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" <<<"$out" || { echo "::error::APK missing v3 scheme (Play requires it)"; exit 1; }
           grep -q "Verified using v1 scheme (JAR signing): true" <<<"$out" || echo "note: APK has no v1 (JAR) scheme — expected with minSdk >= 24; Play requires v2/v3"
+          expected_sha1_hex="f379193ff72854be46016ecbff43dc15dfbffb4c"
+          actual_sha1_hex="$(echo "$out" | grep 'certificate SHA-1 digest' | awk '{print $NF}')"
+          [[ "$actual_sha1_hex" == "$expected_sha1_hex" ]] || { echo "::error::APK signer SHA-1 ${actual_sha1_hex:-<none>} != expected $expected_sha1_hex (wrong upload keystore in CI secrets)"; exit 1; }
+          echo "APK signer SHA-1 matches Play upload key: $actual_sha1_hex"
           echo "signing OK: AAB v1 valid; APK v2+v3 valid with upload certificate"
 
       - name: Extract changelog top entry for release body
