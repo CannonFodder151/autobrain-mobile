@@ -95,7 +95,7 @@ jobs:
           keytool -printcert -jarfile "$aab" 2>/dev/null | grep -E "Owner|SHA256" | head -3 || true
           echo "== upload-key fingerprint guard (Play expects machine keystore) =="
           expected_sha1="F3:79:19:3F:F7:28:54:BE:46:01:6E:CB:FF:43:DC:15:DF:BF:FB:4C"
-          actual_sha1="$(keytool -printcert -jarfile "$aab" 2>/dev/null | grep -E '^\s*SHA1:' | head -1 | awk '{print $3}')"
+          actual_sha1="$(keytool -printcert -jarfile "$aab" 2>/dev/null | grep -E '^\s*SHA1:' | head -1 | awk '{print $2}')"
           [[ "$actual_sha1" == "$expected_sha1" ]] || { echo "::error::AAB signer SHA1 ${actual_sha1:-<none>} != expected $expected_sha1 (wrong upload keystore in CI secrets)"; exit 1; }
           echo "AAB signer SHA1 matches Play upload key: $actual_sha1"
           apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
