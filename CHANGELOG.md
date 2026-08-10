@@ -8,14 +8,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 > user-facing change ships with an entry here under `[Unreleased]` — see
 > `CONTRIBUTING.md` for the frontend-parity + changelog rules.
 
+
+## [Unreleased]
+
+## [0.3.6] - 2026-08-10
+
+### Added
+- MinIO asset backup/restore admin endpoints (AUT-194): `GET /admin-api/assets/backup` streams a tar.gz of every object in the MinIO bucket, `POST /admin-api/assets/restore` validates + restores a gzip tar before wiping, enabling the autobrain-backup service to back up DB snapshots and image assets together.
+
+### Changed
+- Automatic release cutting (AUT-240): `scripts/auto-bump.sh` now runs before
+  every app/docker build — in CI (`dockerhub-publish.yml`, `build-hosted.yml`)
+  and local (`publish-images.sh`, `deploy.sh`). Whenever `CHANGELOG.md` has a
+  non-empty `[Unreleased]` section, it bumps the patch version
+  (`x.y.z` → `x.y.(z+1)`) via `bump-version.sh`, re-opens `[Unreleased]`, and
+  commits the release — so a change can never ship without a new version.
+  Images are additionally tagged with the release version (e.g. `0.3.6`).
+  No AI agent needed: a deterministic gate is more reliable than an LLM for
+  this, matching the "deterministic paths first" rule.
+- Changelog is now mandatory for every app/docker change (AUT-168): CI on
+  `main` fails the Docker Hub publish if `backend/`, `ai/`, `frontend/`,
+  `docker/` or compose files changed without a matching `CHANGELOG.md` entry.
+  The marketing site still auto-syncs `CHANGELOG.md` and regenerates
+  `changelog.html` on every release push, so the website changelog always
+  reflects the shipped code.
+
+### Fixed
+- Asset backup no longer fails on zero-byte MinIO directory-marker objects (`obj.is_dir`/keys ending in `/`): `export_assets` skips them instead of hitting `NoSuchKey` (AUT-194).
+- Security: `/ws/{user_id}` WebSocket now requires a valid access JWT and fail-closes; search embedding SQL is bound-parameterized (`CAST(:embedding AS vector)`) instead of interpolated; `/api/v1/search` results are scoped to the requesting user's owned + shared vehicles (IDOR fix) (AUT-203, AUT-134).
+
 ## [0.3.5] - 2026-08-09
 
 ### Added
 - Vehicle sharing (AUT-16/AUT-21/AUT-115): share a vehicle with another AutoBrain account by email (3-dot menu on the vehicle card). Pending invites sit in an **Invited** section with Accept/Deny, shared vehicles show an "(Invited by <name>)" label, and owners can remove access at any time. Available in both the web and mobile apps.
 - Feature gating follows the car's owner (AUT-21): a free account invited to a paid owner's vehicle inherits the owner's AI and rego entitlement on that car; a free owner still blocks those features for everyone, including invitees.
-
-### Fixed
-- App launcher icon no longer shows the default Flutter placeholder — regenerated from the AutoBrain logo so the correct branding appears on the home screen and app list (Android).
 
 ### Changed
 - Versioning unified around a single `x.y.z` (see `docs/versioning.md`): the backend and AI gateway report `APP_VERSION` (no more stale hardcoded strings), and `bump-version.sh` updates backend, AI gateway, web, mobile and the changelog in one shot.
