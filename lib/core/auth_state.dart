@@ -1,14 +1,13 @@
 /// Global auth + navigation state (ChangeNotifier via provider).
 library;
 
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_client.dart';
 import 'config.dart';
+import 'token_store.dart';
 import 'version_check.dart';
 
 enum LoginOutcome { ok, mfaRequired, mfaSetupRequired, failed }
@@ -52,14 +51,16 @@ class AuthState extends ChangeNotifier {
     notifyListeners();
   }
 
+  final TokenStore _tokens = TokenStore();
   ApiClient? _client;
   ApiClient get api => _client!;
 
   Future<void> _restore() async {
     final prefs = await SharedPreferences.getInstance();
     await AppConfig.load();
-    _token = prefs.getString('auth_token');
-    _role = prefs.getString('auth_role');
+    final (token, role) = await _tokens.read();
+    _token = token;
+    _role = role;
     _darkMode = prefs.getBool('dark_mode') ?? true;
     _loadConfig();
     if (_token != null) {
@@ -109,9 +110,7 @@ class AuthState extends ChangeNotifier {
     _licenseEnabled = false;
     _updateAvailable = false;
     _latestVersion = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('auth_token');
-    await prefs.remove('auth_role');
+    await _tokens.clear();
     _loadConfig();
     notifyListeners();
   }
@@ -121,8 +120,7 @@ class AuthState extends ChangeNotifier {
       final data = await _client!.get('/auth/me') as Map<String, dynamic>;
       _role = data['role'] as String?;
       _userId = data['id'] as String?;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('auth_role', _role ?? 'user');
+      await _tokens.write(token: _token!, role: _role ?? 'user');
       notifyListeners();
     } catch (_) {}
   }
@@ -234,9 +232,7 @@ class AuthState extends ChangeNotifier {
     _role = null;
     _userId = null;
     _client = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('auth_token');
-    await prefs.remove('auth_role');
+    await _tokens.clear();
     notifyListeners();
   }
 
@@ -251,9 +247,7 @@ class AuthState extends ChangeNotifier {
     _role = ((map['user'] as Map<String, dynamic>?) ?? {})['role'] as String?;
     _userId = ((map['user'] as Map<String, dynamic>?) ?? {})['id'] as String?;
     _client = ApiClient(_token!);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auth_token', _token!);
-    await prefs.setString('auth_role', _role ?? 'user');
+    await _tokens.write(token: _token!, role: _role ?? 'user');
     notifyListeners();
   }
 }
