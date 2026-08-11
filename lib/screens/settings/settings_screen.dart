@@ -48,58 +48,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         labelStyle: TextStyle(color: Colors.blue.shade700, fontSize: 12),
       );
 
-  Widget _versionRow(String label, String value) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 120,
-              child: Text(label,
-                  style: Theme.of(context).textTheme.bodySmall),
-            ),
-            Expanded(
-              child: Text(value,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(fontWeight: FontWeight.w600)),
-            ),
-          ],
-        ),
-      );
-
-  Widget _versionStatus() {
-    final auth = context.watch<AuthState>();
-    final latest = auth.latestVersion;
-    final String text;
-    final IconData icon;
-    final Color color;
-    if (latest == null) {
-      text = "Can't check for updates right now";
-      icon = Icons.cloud_off;
-      color = Colors.grey;
-    } else if (auth.updateAvailable) {
-      text = 'Update available: v$latest';
-      icon = Icons.system_update_alt;
-      color = Colors.orange;
-    } else {
-      text = 'Up to date (v$latest)';
-      icon = Icons.check_circle;
-      color = Colors.green;
-    }
-    return Row(
-      children: [
-        Icon(icon, size: 14, color: color),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(text,
-              style: TextStyle(color: color, fontSize: 13)),
-        ),
-      ],
-    );
-  }
-
   @override
   void initState() {
     super.initState();
@@ -223,7 +171,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AuthState>();
+    final auth = context.read<AuthState>();
     return Scaffold(
       appBar: AppBar(title: const Text('Settings & security')),
       body: ListView(
@@ -402,47 +350,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   onTap: _import,
                 ),
               ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.info_outline, size: 20),
-                      SizedBox(width: 8),
-                      Text('App & server versions',
-                          style: TextStyle(fontWeight: FontWeight.w700)),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  _versionRow('App installed',
-                      auth.installedVersion != null ? 'v${auth.installedVersion}' : '—'),
-                  _versionRow(
-                      'Latest release',
-                      auth.latestVersion != null
-                          ? 'v${auth.latestVersion}'
-                          : '—'),
-                  _versionRow('Server',
-                      auth.serverVersion != null ? 'v${auth.serverVersion}' : '—'),
-                  const SizedBox(height: 8),
-                  _versionStatus(),
-                  if (auth.releaseSource == 'server') ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      'Release from this server (GitHub unreachable)',
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: Colors.grey),
-                    ),
-                  ],
-                ],
-              ),
             ),
           ),
           const SizedBox(height: 16),

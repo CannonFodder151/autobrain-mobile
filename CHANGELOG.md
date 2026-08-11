@@ -18,7 +18,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Added
+- Public `GET /api/v1/version/mobile` endpoint that reports the latest
+  published `autobrain-mobile` release (read from GitHub server-side, since the
+  mobile repo is private). The mobile app consumes it via the connected server
+  for its version banner (AUT-365).
+
+## [0.3.16] - 2026-08-11
 
 ### Fixed
 - Hosted/Default blank page (AUT-347): the CSP allowlisted `www.gstatic.com` but not `fonts.gstatic.com`, so CanvasKit's startup font fetch stalled the Flutter engine before the first frame. `fonts.gstatic.com` is now allowed in `font-src` + `connect-src`; text/images render again.
@@ -75,7 +84,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.3.6] - 2026-08-10
 
 ### Added
-- MinIO asset backup/restore admin endpoints (AUT-194): `GET /admin-api/assets/backup` streams a tar.gz of every object in the MinIO bucket, `POST /admin-api/assets/restore` validates + restores a gzip tar before wiping, enabling the autobrain-backup service to back up DB snapshots and image assets together.
+- MinIO asset backup/restore admin endpoints (AUT-194): `GET /admin-api/assets/backup` streams a tar.gz of every object in the MinIO bucket, `POST /admin-api/assets/restore` validates + restores a gzip tar before wiping,    enabling the autobrain-backup service to back up DB snapshots and image assets together.
 
 ### Changed
 - Automatic release cutting (AUT-240): `scripts/auto-bump.sh` now runs before
