@@ -38,6 +38,27 @@ jobs:
           fi
           echo "Building release ${tag}"
 
+      - name: Detect semantic version iteration (Discord changelog gate)
+        id: semver-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Semantic version (X.Y.Z) of the requested release, e.g. v0.3.7+30 -> 0.3.7.
+          req_semver="$(echo '${{ inputs.version }}' | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+          echo "semver=$req_semver" >> "$GITHUB_OUTPUT"
+          # Has any release (draft or published, build series included) already
+          # announced this semantic version? One announcement per version.
+          released="$(gh release list --limit 100 --json tagName --jq '.[].tagName' 2>/dev/null \
+            | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/' || true)"
+          if grep -qx "$req_semver" <<<"$released"; then
+            echo "Version ${req_semver} already released/announced — build-only, skipping #changelog post"
+            echo "post_discord=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New version ${req_semver} — #changelog post enabled"
+            echo "post_discord=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install Android keystore + key.properties
         env:
           KEYSTORE_B64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
@@ -111,13 +132,15 @@ jobs:
           echo "APK signer SHA-1 matches Play upload key: $actual_sha1_hex"
           echo "signing OK: AAB v1 valid; APK v2+v3 valid with upload certificate"
 
-      - name: Extract changelog top entry for release body
+      - name: Extract changelog entry for this version (release body)
         id: changelog
         run: |
-          awk '/^## \[/ && found {exit} /^## \[/{found=1; next} found{print}' CHANGELOG.md > "$RUNNER_TEMP/release-body.md"
-          [[ -s "$RUNNER_TEMP/release-body.md" ]] || { echo "::error::CHANGELOG.md has no top version section"; exit 1; }
+          awk -v s="## [$SEMVER]" 'index($0,s){f=1;next} f && /^## /{exit} f' CHANGELOG.md > "$RUNNER_TEMP/release-body.md"
+          [[ -s "$RUNNER_TEMP/release-body.md" ]] || { echo "::error::CHANGELOG.md has no section for [$SEMVER]"; exit 1; }
           { echo "# ${{ inputs.version }}"; echo; cat "$RUNNER_TEMP/release-body.md"; } > "$RUNNER_TEMP/release-body-full.md"
           echo "body_file=$RUNNER_TEMP/release-body-full.md" >> "$GITHUB_OUTPUT"
+        env:
+          SEMVER: ${{ steps.semver-check.outputs.semver }}
 
       - name: Publish draft GitHub Release with .aab
         id: release
@@ -132,19 +155,29 @@ jobs:
       - name: Post Discord changelog + updates (n8n Reporter)
         env:
           RELEASE_URL: ${{ steps.release.outputs.url }}
-          CHANGELOG_BODY: ${{ steps.changelog.outputs.body_file }}
+          SEMVER: ${{ steps.semver-check.outputs.semver }}
+          POST_CHANGELOG: ${{ steps.semver-check.outputs.post_discord }}
         run: |
-          # Clean, plain-text notes: top changelog section bullets, stripped of
-          # markdown markers (#/###/-/backticks), joined on one line.
-          notes="$(awk '/^## \[/ && f {exit} /^## \[/{f=1;next} f' CHANGELOG.md \
+          # Summarized changelog for this semantic version: its section bullets,
+          # stripped of markdown markers, joined on one line.
+          notes="$(awk -v s="## [$SEMVER]" 'index($0,s){f=1;next} f && /^## /{exit} f' CHANGELOG.md \
             | grep -E '^- ' | sed 's/^- //; s/`//g; s/\*\*//g' \
             | head -3 | tr '\n' ' ' | cut -c1-400)"
-          changelog_payload="$(jq -n \
-            --arg channel changelog \
-            --arg title "AutoBrain app ${{ inputs.version }} released" \
-            --arg desc "$notes" \
-            --arg url "$RELEASE_URL" \
-            '{channel:$channel,title:$title,description:$desc,color:"0x2ECC71",author:"Mobile Release Engineer",fields:[{name:"Download",value:$url,inline:true},{name:"Platform",value:"Android (.aab)",inline:true}]}')"
+          # Customer-facing #changelog: only announce a new semantic version
+          # (0.3.6 -> 0.3.7), not every build of the same version.
+          if [[ "$POST_CHANGELOG" == "true" ]]; then
+            changelog_payload="$(jq -n \
+              --arg channel changelog \
+              --arg title "AutoBrain app $SEMVER released" \
+              --arg desc "$notes" \
+              --arg url "$RELEASE_URL" \
+              '{channel:$channel,title:$title,description:$desc,color:"0x2ECC71",author:"Mobile Release Engineer",fields:[{name:"Download",value:$url,inline:true},{name:"Platform",value:"Android (.aab)",inline:true}]}')"
+            curl -sS -o /dev/null -w "changelog embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
+              -H 'Content-Type: application/json' -d "$changelog_payload" || true
+          else
+            echo "skipping #changelog embed: $SEMVER already announced (build-only)"
+          fi
+          # Staff #updates: every build stays visible internally.
           updates_payload="$(jq -n \
             --arg channel updates \
             --arg title "Mobile .aab ${{ inputs.version }} released" \
@@ -152,7 +185,5 @@ jobs:
             '{channel:$channel,title:$title,description:"Release notes + .aab live.",color:"0x3498DB",author:"Mobile Release Engineer",fields:[{name:"Artifact",value:"app-release.aab",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true},{name:"Download",value:$url,inline:true}]}')"
           # Discord embeds are best-effort: a transient n8n outage must not fail the
           # release run (it only creates failure-notification spam).
-          curl -sS -o /dev/null -w "changelog embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
-            -H 'Content-Type: application/json' -d "$changelog_payload" || true
           curl -sS -o /dev/null -w "updates embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
             -H 'Content-Type: application/json' -d "$updates_payload" || true
