@@ -12,7 +12,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- Hosted/default blank white screen (AUT-339): frontend CSP now allowlists `https://www.gstatic.com` in `script-src`/`connect-src`/`img-src`/`font-src` so the Flutter CanvasKit engine bundle can load; previously `script-src 'self'` and `connect-src 'self'` blocked `canvaskit.js`/`canvaskit.wasm`, so the web app never bootstrapped.
+
+## [0.3.10] - 2026-08-11
 
 ### Fixed
 - Alembic migration chain (AUT-290): `market_listing_cache` and the HNSW embedding-index migrations shared the same revision id `h1i2j3k4l5m6`, which broke `alembic upgrade head` (boot fell back to `create_all`, leaving `users.pending`/`users.token_version` and other columns unapplied). Renamed the market-cache revision to `h1i2j3k4l5m7` and folded it into the `m3rge01` merge so the chain has a single head.
