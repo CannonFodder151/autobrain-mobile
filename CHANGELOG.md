@@ -11,7 +11,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- Alembic migration chain (AUT-290): `market_listing_cache` and the HNSW embedding-index migrations shared the same revision id `h1i2j3k4l5m6`, which broke `alembic upgrade head` (boot fell back to `create_all`, leaving `users.pending`/`users.token_version` and other columns unapplied). Renamed the market-cache revision to `h1i2j3k4l5m7` and folded it into the `m3rge01` merge so the chain has a single head.
+
+## [0.3.9] - 2026-08-11
 
 ### Added
 - Market-data scraper API (AUT-290): self-hosted `market-data` service scrapes live CarsGuide listings (no browser, via the site's SSR `__NUXT_DATA__` payload) and serves `POST /search` with `{query, make, model, year}` behind an API key — the same protocol rego-lookup uses. Wired into the hosted stack as `MARKET_DATA_URL`/`MARKET_DATA_API_KEY`, so valuations now anchor on real listings instead of showing "provider not configured".
