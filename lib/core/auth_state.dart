@@ -1,7 +1,10 @@
 /// Global auth + navigation state (ChangeNotifier via provider).
 library;
 
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -26,6 +29,10 @@ class AuthState extends ChangeNotifier {
   bool _licenseEnabled = false;
   bool _updateAvailable = false;
   String? _latestVersion;
+  String? _installedVersion;
+  String? _serverVersion;
+  bool _releaseReachable = false;
+  String? _releaseSource; // 'github' | 'server' | null
   String? get token => _token;
   String? get role => _role;
   String? get userId => _userId;
@@ -39,9 +46,18 @@ class AuthState extends ChangeNotifier {
   /// Whether the licence/upgrade feature is enabled on this server
   /// (LICENSE_ENABLED env var; on for hosted, off for demo/default).
   bool get licenseEnabled => _licenseEnabled;
-  /// Newer app release published by this server (from /auth/config).
+  /// Latest known mobile release (GitHub release tag when reachable,
+  /// otherwise the release advertised by this server from /auth/config).
   String? get latestVersion => _latestVersion;
-  /// True when the installed app is older than the server's release.
+  /// Installed mobile app version (from PackageInfo).
+  String? get installedVersion => _installedVersion;
+  /// Version of the connected backend server (from GET /health).
+  String? get serverVersion => _serverVersion;
+  /// True when the latest mobile release was read from GitHub directly.
+  bool get releaseReachable => _releaseReachable;
+  /// Where [latestVersion] came from: 'github' or 'server' fallback.
+  String? get releaseSource => _releaseSource;
+  /// True when the installed app is older than the latest mobile release.
   bool get updateAvailable => _updateAvailable;
 
   Future<void> toggleThemeMode() async {
@@ -58,11 +74,12 @@ class AuthState extends ChangeNotifier {
   Future<void> _restore() async {
     final prefs = await SharedPreferences.getInstance();
     await AppConfig.load();
-    final (token, role) = await _tokens.read();
+    final (token, _, role) = await _tokens.read();
     _token = token;
     _role = role;
     _darkMode = prefs.getBool('dark_mode') ?? true;
-    _loadConfig();
+    await _loadConfig();
+    _loadVersionInfo();
     if (_token != null) {
       _client = ApiClient(_token);
       _refreshProfile();
@@ -99,6 +116,69 @@ class AuthState extends ChangeNotifier {
     }
   }
 
+  /// Collects version awareness in the background: installed app version,
+  /// connected server version (/health), and the latest mobile release
+  /// (GitHub releases/latest, falling back to this server's /auth/config
+  /// when GitHub is unreachable). Never throws — shows what we know.
+  Future<void> _loadVersionInfo() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      _installedVersion = info.version;
+    } catch (_) {}
+    await _loadServerVersion();
+    await _loadLatestRelease();
+    notifyListeners();
+  }
+
+  Future<void> _loadServerVersion() async {
+    try {
+      final origin = AppConfig.apiBase.replaceFirst(RegExp(r'/api/v1/?$'), '');
+      final res = await http.get(
+        Uri.parse('$origin/health'),
+        headers: const {'Accept': 'application/json'},
+      );
+      if (res.statusCode == 200) {
+        final body = jsonDecode(res.body);
+        if (body is Map && body['version'] is String) {
+          _serverVersion = body['version'] as String;
+        }
+      }
+    } catch (_) {
+      // Server unreachable — keep null, show what we know.
+    }
+  }
+
+  Future<void> _loadLatestRelease() async {
+    try {
+      final res = await http.get(
+        Uri.parse(
+            'https://api.github.com/repos/CannonFodder151/autobrain-mobile/releases/latest'),
+        headers: const {
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'autobrain',
+        },
+      );
+      if (res.statusCode == 200) {
+        final body = jsonDecode(res.body);
+        if (body is Map) {
+          final tag = body['tag_name'] as String?;
+          if (tag != null && tag.isNotEmpty) {
+            _releaseReachable = true;
+            _releaseSource = 'github';
+            _latestVersion = tag.replaceFirst(RegExp(r'^v'), '');
+            _updateAvailable = await _isBehind(_latestVersion!);
+            return;
+          }
+        }
+      }
+    } catch (_) {
+      // GitHub unreachable — fall through to the server-advertised release.
+    }
+    // Conservative fallback: the release this server distributes
+    // (/auth/config app_version, already loaded by _loadConfig).
+    if (_latestVersion != null) _releaseSource = 'server';
+  }
+
   /// Called after the user picks a server — resets any session and rebuilds
   /// the client against the new base URL.
   Future<void> serverChanged() async {
@@ -110,8 +190,13 @@ class AuthState extends ChangeNotifier {
     _licenseEnabled = false;
     _updateAvailable = false;
     _latestVersion = null;
+    _installedVersion = null;
+    _serverVersion = null;
+    _releaseReachable = false;
+    _releaseSource = null;
     await _tokens.clear();
-    _loadConfig();
+    await _loadConfig();
+    _loadVersionInfo();
     notifyListeners();
   }
 
