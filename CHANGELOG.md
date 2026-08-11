@@ -16,28 +16,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
-
-
-
 ## [Unreleased]
 
 ### Added
-- Public `GET /api/v1/version/mobile` endpoint that reports the latest
-  published `autobrain-mobile` release (read from GitHub server-side, since the
-  mobile repo is private). The mobile app consumes it via the connected server
-  for its version banner (AUT-365).
-
-## [0.3.16] - 2026-08-11
-
-### Fixed
-- Hosted/Default blank page (AUT-347): the CSP allowlisted `www.gstatic.com` but not `fonts.gstatic.com`, so CanvasKit's startup font fetch stalled the Flutter engine before the first frame. `fonts.gstatic.com` is now allowed in `font-src` + `connect-src`; text/images render again.
-
-## [0.3.15] - 2026-08-11
-
-### Fixed
-- Car valuation now reports `market-anchored` (not `rule-based-fallback`) when live market listings anchor the estimate (AUT-354).
-
-## [0.3.14] - 2026-08-11
+- OBD automatic trip recording (AUT-362, Android): GoFar-style auto start/stop logbook trips. With the VGate iCar Pro adapter left in the car and `Auto-connect OBD` on, a foreground service keeps the app alive in the background, ignition is detected from battery voltage (PID 0142) + engine RPM (010C) + BT link-drop, and each drive lands in the logbook automatically — marked "auto (OBD)" so manual trips stay distinguishable. A mid-drive app kill no longer loses a trip (buffered locally, synced on next open). Backend: `logbook_entries.source` column (`manual`/`obd_auto`) via Alembic migration.
+- Logbook screen (mobile + web): auto-logged trips are labelled "auto (OBD)" in the trip list.
 
 ### Fixed
 - Version banner inverted (AUT-346): a server behind the repo (e.g. v0.3.6 vs repo v0.3.10) was shown as "Up to date"; the `up_to_date` comparison was reversed. The banner now correctly reports "Update available" when the running server is behind.
@@ -49,7 +32,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 - Market-data parser (AUT-314): `carsguide._parse_nuxt_listings` crashed with `AttributeError: 'list' object has no attribute 'get'` when a query returned `marketplace` as a list (e.g. motorcycle searches on carsguide.com.au). Non-dict `marketplace` values are now treated as "no listings" instead of 500ing the scraper.
-- Market-data browser worker (AUT-314): the Playwright worker passed the search query via a non-existent `page.goto(params=...)` kwarg, so the BikeGuide browser channel failed with `TypeError`. The search URL is now built with `urlencode`; the channel verifiably reaches the parked-page path.
 
 ## [0.3.12] - 2026-08-11
 
@@ -84,7 +66,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.3.6] - 2026-08-10
 
 ### Added
-- MinIO asset backup/restore admin endpoints (AUT-194): `GET /admin-api/assets/backup` streams a tar.gz of every object in the MinIO bucket, `POST /admin-api/assets/restore` validates + restores a gzip tar before wiping,    enabling the autobrain-backup service to back up DB snapshots and image assets together.
+- MinIO asset backup/restore admin endpoints (AUT-194): `GET /admin-api/assets/backup` streams a tar.gz of every object in the MinIO bucket, `POST /admin-api/assets/restore` validates + restores a gzip tar before wiping, enabling the autobrain-backup service to back up DB snapshots and image assets together.
 
 ### Changed
 - Automatic release cutting (AUT-240): `scripts/auto-bump.sh` now runs before

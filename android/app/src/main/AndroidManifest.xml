@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 
     <application
         android:label="AutoBrain"
@@ -32,6 +35,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- Foreground service for background OBD trip recording (AUT-362).
+             connectedDevice is the Android 14+ required type for Bluetooth. -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false"
+            android:stopWithTask="true" />
+        <receiver
+            android:name="com.pravera.flutter_foreground_task.service.RestartReceiver"
+            android:enabled="true"
+            android:exported="false" />
     </application>
     <queries>
         <intent>
