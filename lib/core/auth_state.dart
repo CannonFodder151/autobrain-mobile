@@ -148,31 +148,24 @@ class AuthState extends ChangeNotifier {
     }
   }
 
+  /// Latest mobile release via the connected server's /version/mobile proxy.
+  /// The autobrain-mobile repo is private, so the app cannot query GitHub
+  /// directly; the server reads it with its GITHUB_TOKEN. Falls back to the
+  /// server-advertised release from /auth/config when the proxy is unavailable.
   Future<void> _loadLatestRelease() async {
     try {
-      final res = await http.get(
-        Uri.parse(
-            'https://api.github.com/repos/CannonFodder151/autobrain-mobile/releases/latest'),
-        headers: const {
-          'Accept': 'application/vnd.github+json',
-          'User-Agent': 'autobrain',
-        },
-      );
-      if (res.statusCode == 200) {
-        final body = jsonDecode(res.body);
-        if (body is Map) {
-          final tag = body['tag_name'] as String?;
-          if (tag != null && tag.isNotEmpty) {
-            _releaseReachable = true;
-            _releaseSource = 'github';
-            _latestVersion = tag.replaceFirst(RegExp(r'^v'), '');
-            _updateAvailable = await _isBehind(_latestVersion!);
-            return;
-          }
-        }
+      final data = await _anonymous()
+          .get('/version/mobile') as Map<String, dynamic>;
+      final latest = data['latest_version']?.toString();
+      if (latest != null && latest.isNotEmpty) {
+        _releaseReachable = data['reachable'] != false;
+        _releaseSource = 'github';
+        _latestVersion = latest.replaceFirst(RegExp(r'^v'), '');
+        _updateAvailable = await _isBehind(_latestVersion!);
+        return;
       }
     } catch (_) {
-      // GitHub unreachable — fall through to the server-advertised release.
+      // Proxy unreachable — fall through to the server-advertised release.
     }
     // Conservative fallback: the release this server distributes
     // (/auth/config app_version, already loaded by _loadConfig).
