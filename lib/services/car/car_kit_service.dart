@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../obd/obd_trip_monitor.dart';
 import 'car_kit_connection.dart';
 import 'car_kit_trip_monitor.dart';
+import 'position_source.dart';
 import 'speed_source.dart';
 
 class CarKitTripMonitorService {
@@ -59,6 +60,7 @@ class CarKitTripMonitorService {
       recorder: recorder,
       connection: CarKitConnectionSource.create(),
       speed: SpeedSourceFactory.create(),
+      position: PositionSourceFactory.create(),
     );
     recorder.bind(vehicleId);
     final prefs = await SharedPreferences.getInstance();
