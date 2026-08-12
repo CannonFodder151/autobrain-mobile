@@ -22,7 +22,13 @@ class KeepAliveImpl {
     if (!supported) return;
     await _init();
     final started = await FlutterForegroundTask.startService(
-      serviceTypes: const [ForegroundServiceTypes.connectedDevice],
+      // location type keeps the GPS stream alive in the background for the
+      // phone-side speed guard + odometer (AUT-367); connectedDevice is the
+      // Android 14+ type required for Bluetooth.
+      serviceTypes: const [
+        ForegroundServiceTypes.connectedDevice,
+        ForegroundServiceTypes.location,
+      ],
       notificationTitle: title ?? 'OBD recording',
       notificationText: text ?? 'Recording trips automatically',
     );
