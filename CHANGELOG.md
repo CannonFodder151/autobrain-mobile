@@ -43,7 +43,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- Community Garage no longer shows the "Community Garage" title twice (AUT-511): the Feed tab dropped its own app bar since the parent screen already shows the title.
+
+## [0.3.42] - 2026-08-13
 
 ### Changed
 - Community Garage admin Settings moved out of the tab bar into the AppBar 3-dot menu (AUT-502) so it no longer takes up the whole screen; non-admins see no menu.
