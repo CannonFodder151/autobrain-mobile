@@ -36,18 +36,6 @@ abstract class SpeedSource {
   Stream<double> get speedKmh;
 }
 
-/// One GPS fix (WGS84). Feeds the trip route (AUT-395).
-class GpsFix {
-  const GpsFix(this.lat, this.lng);
-  final double lat, lng;
-}
-
-/// A source of GPS position fixes. Injected for tests; the recorder's
-/// `feedPosition` turns these into the trip route.
-abstract class PositionSource {
-  Stream<GpsFix> get fixes;
-}
-
 /// A live source is optional at construction; the monitor also exposes the
 /// [feedConnection]/[feedSpeed] methods so callers (or tests) can push
 /// events synchronously.
@@ -56,7 +44,6 @@ class CarKitTripMonitor extends ChangeNotifier {
     required this.recorder,
     CarKitConnection? connection,
     SpeedSource? speed,
-    PositionSource? position,
     DateTime Function()? now,
     this.commitSpeedKmh = 20,
     this.commitSeconds = 5,
@@ -65,7 +52,6 @@ class CarKitTripMonitor extends ChangeNotifier {
   }) : now = now ?? DateTime.now {
     if (connection != null) _subscribeConnection(connection);
     if (speed != null) _subscribeSpeed(speed);
-    if (position != null) _subscribePosition(position);
   }
 
   final ObdTripRecorder recorder;
@@ -120,13 +106,6 @@ class CarKitTripMonitor extends ChangeNotifier {
   void _subscribeSpeed(SpeedSource speed) {
     _subs.add(speed.speedKmh.listen(
       (s) => feedSpeed(s),
-      onError: (_) {},
-    ));
-  }
-
-  void _subscribePosition(PositionSource position) {
-    _subs.add(position.fixes.listen(
-      (f) => recorder.feedPosition(f.lat, f.lng),
       onError: (_) {},
     ));
   }

@@ -12,8 +12,6 @@ class GpsPoint {
         (j['lat'] as num?)?.toDouble() ?? 0,
         (j['lng'] as num?)?.toDouble() ?? 0,
       );
-
-  Map<String, dynamic> toJson() => {'t': t, 'lat': lat, 'lng': lng};
 }
 
 class LogEntry {

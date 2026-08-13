@@ -165,4 +165,47 @@ void main() {
       m.dispose();
     });
   });
+
+  group('shared recorder arbitration (T5)', () {
+    test('phone path does not close an OBD-started trip', () async {
+      final r = _Recorder();
+      final clock = _Clock();
+      final m = _build(r, clock);
+      await m.feedConnection(CarKitLinkState.connected);
+      // OBD/VGate path starts its own trip via the shared seam.
+      await r.recorder
+          .feedCarConnection(CarConnectionState.connected, source: 'obd_auto');
+      expect(m.isTripActive, isTrue);
+      // Car-kit link drops: must NOT close the OBD trip (would double-trip on
+      // a later ACL flap when the phone path restarts one).
+      await m.feedConnection(CarKitLinkState.disconnected);
+      expect(m.isTripActive, isTrue);
+      expect(r.writes, isEmpty);
+      // OBD path closes its own trip.
+      await r.recorder
+          .feedCarConnection(CarConnectionState.disconnected, source: 'obd_auto');
+      expect(m.isTripActive, isFalse);
+      expect(r.writes, hasLength(1));
+      expect(r.writes.first.source, 'obd_auto');
+      m.dispose();
+    });
+
+    test('phone path closes only the trip it started', () async {
+      final r = _Recorder();
+      final clock = _Clock();
+      final m = _build(r, clock);
+      await m.feedConnection(CarKitLinkState.connected);
+      for (var i = 0; i < 6; i++) {
+        clock.advance(const Duration(seconds: 1));
+        await m.feedSpeed(60);
+      }
+      expect(m.isTripActive, isTrue);
+      expect(r.recorder.activeTrip?.source, 'car_auto');
+      await m.feedConnection(CarKitLinkState.disconnected);
+      expect(m.isTripActive, isFalse);
+      expect(r.writes, hasLength(1));
+      expect(r.writes.first.source, 'car_auto');
+      m.dispose();
+    });
+  });
 }

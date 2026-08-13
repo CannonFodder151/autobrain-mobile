@@ -303,7 +303,6 @@ class ObdTripMonitor extends ChangeNotifier {
       'status': 'completed',
       'source': trip.source,
       if (trip.distanceKm != null) 'distance_km': trip.distanceKm,
-      if (trip.gpsSamples.isNotEmpty) 'gps_samples': trip.gpsSamples,
     });
     // Remember the latest synced auto trip for the settings status line
     // (AUT-366 Car Play / Android Auto submenu).

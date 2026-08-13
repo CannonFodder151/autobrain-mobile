@@ -239,47 +239,4 @@ void main() {
       expect(r.pending, isEmpty);
     });
   });
-
-  group('GPS route capture (AUT-395)', () {
-    test('feedPosition buffers fixes while active and lands them on the trip',
-        () async {
-      final box = _Recorder();
-      final r = box.recorder;
-      r.bind('v1');
-      await r.feedCarConnection(CarConnectionState.connected, source: 'car_auto');
-      r.feedPosition(-37.6385, 145.1936);
-      r.feedPosition(-37.6387, 145.1940);
-      r.feedPosition(0, 0); // no fix — dropped
-      await r.feedCarConnection(CarConnectionState.disconnected);
-      await r.flush();
-      expect(box.writes, hasLength(1));
-      expect(box.writes.first.gpsSamples, hasLength(2));
-      expect(box.writes.first.gpsSamples.first['lat'], -37.6385);
-    });
-
-    test('route survives an app kill via the persisted active buffer', () async {
-      final box = _Recorder();
-      box.recorder.bind('v1');
-      await box.recorder
-          .feedCarConnection(CarConnectionState.connected, source: 'car_auto');
-      box.recorder.feedPosition(-37.6, 145.1);
-      // New recorder instance on the same store = process death + restart.
-      final r2 = ObdTripRecorder(
-        store: box.store,
-        writeTrip: (_) async {},
-        now: () => DateTime.utc(2026, 8, 11, 9, 10, 0),
-      );
-      final restored = await r2.restore();
-      expect(restored, isNotNull);
-      expect(restored!.gpsSamples, hasLength(1));
-      expect(restored.gpsSamples.first['lng'], 145.1);
-    });
-
-    test('feedPosition does nothing when no trip is active', () {
-      final r = _Recorder().recorder;
-      r.bind('v1');
-      r.feedPosition(-37.6, 145.1);
-      expect(r.activeTrip, isNull);
-    });
-  });
 }

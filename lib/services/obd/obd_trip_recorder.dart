@@ -42,23 +42,16 @@ class ActiveTrip {
     required this.vehicleId,
     required this.startedAt,
     this.source = 'obd_auto',
-    this.gpsSamples = const [],
   });
 
   final String vehicleId;
   final DateTime startedAt;
   final String source;
 
-  /// Trip route fixes `{"t": epoch, "lat": deg, "lng": deg}` (AUT-395),
-  /// accumulated while the drive is active and persisted so an app kill
-  /// mid-drive does not lose the route.
-  final List<Map<String, dynamic>> gpsSamples;
-
   Map<String, dynamic> toJson() => {
         'vehicleId': vehicleId,
         'startedAt': startedAt.toIso8601String(),
         'source': source,
-        'gpsSamples': gpsSamples,
       };
 
   static ActiveTrip? fromJson(Map<String, dynamic>? j) {
@@ -69,11 +62,7 @@ class ActiveTrip {
     return ActiveTrip(
         vehicleId: vehicleId,
         startedAt: started,
-        source: j['source'] as String? ?? 'obd_auto',
-        gpsSamples: [
-          for (final s in j['gpsSamples'] as List? ?? const [])
-            if (s is Map<String, dynamic>) s
-        ]);
+        source: j['source'] as String? ?? 'obd_auto');
   }
 }
 
@@ -85,7 +74,6 @@ class PendingTrip {
     required this.endedAt,
     this.distanceKm,
     this.source = 'obd_auto',
-    this.gpsSamples = const [],
   });
 
   final String vehicleId;
@@ -100,16 +88,12 @@ class PendingTrip {
   /// (phone car-kit path, AUT-367).
   final String source;
 
-  /// Trip route fixes carried to the backend (AUT-395).
-  final List<Map<String, dynamic>> gpsSamples;
-
   Map<String, dynamic> toJson() => {
         'vehicleId': vehicleId,
         'startedAt': startedAt.toIso8601String(),
         'endedAt': endedAt.toIso8601String(),
         if (distanceKm != null) 'distanceKm': distanceKm,
         'source': source,
-        'gpsSamples': gpsSamples,
       };
 
   static PendingTrip? fromJson(Map<String, dynamic>? j) {
@@ -124,10 +108,6 @@ class PendingTrip {
       endedAt: ended,
       distanceKm: (j['distanceKm'] as num?)?.toDouble(),
       source: j['source'] as String? ?? 'obd_auto',
-      gpsSamples: [
-        for (final s in j['gpsSamples'] as List? ?? const [])
-          if (s is Map<String, dynamic>) s
-      ],
     );
   }
 }
@@ -157,14 +137,6 @@ class ObdTripRecorder {
   static const activeKey = 'obd.trip.active.v1';
   static const pendingKey = 'obd.trip.pending.v1';
 
-  /// Max route fixes kept per trip (~1 fix/s → 40 min of driving).
-  static const int maxGpsSamples = 2400;
-
-  /// Persist the growing route buffer to the store at most this often (a write
-  /// per fix would thrash SharedPreferences and be O(n²) over a long drive);
-  /// the trip end always flushes. Bounds app-kill route loss to ~5s of fixes.
-  static const Duration gpsPersistInterval = Duration(seconds: 5);
-
   // Ignition thresholds (VGate iCar Pro): running ≈ 13.8-14.4 V, off ≈ 12.5 V.
   static const double onVoltage = 13.2;
   static const double offVoltage = 12.8;
@@ -179,7 +151,6 @@ class ObdTripRecorder {
   ActiveTrip? _active;
   List<PendingTrip> _pending = const [];
   bool _flushing = false;
-  DateTime? _lastGpsPersist;
 
   IgnitionState get ignition => _ignition;
   ActiveTrip? get activeTrip => _active;
@@ -304,44 +275,9 @@ class ObdTripRecorder {
   Future<void> _startTrip({String source = 'obd_auto'}) async {
     if (_active != null) return;
     if (_vehicleId == null) return; // nothing bound yet
-    _lastGpsPersist = null;
     _active = ActiveTrip(
         vehicleId: _vehicleId!, startedAt: now(), source: source);
     await _writeActive();
-  }
-
-  /// Feeds one GPS fix (lat/lon, WGS84) recorded while a trip is active.
-  /// Invalid `0,0` fixes (no lock) are dropped — deterministic, no AI. The
-  /// route survives app kills via the persisted active-trip buffer and lands
-  /// on the backend trip as `gps_samples`.
-  void feedPosition(double lat, double lng) {
-    final t = _active;
-    if (t == null) return;
-    if (lat == 0 && lng == 0) return;
-    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
-    final samples = [
-      ...t.gpsSamples,
-      {
-        't': now().millisecondsSinceEpoch ~/ 1000,
-        'lat': lat,
-        'lng': lng,
-      },
-    ];
-    if (samples.length > maxGpsSamples) {
-      samples.removeRange(0, samples.length - maxGpsSamples);
-    }
-    _active = ActiveTrip(
-      vehicleId: t.vehicleId,
-      startedAt: t.startedAt,
-      source: t.source,
-      gpsSamples: samples,
-    );
-    final last = _lastGpsPersist;
-    if (last == null ||
-        now().difference(last) >= gpsPersistInterval) {
-      _lastGpsPersist = now();
-      unawaited(_writeActive());
-    }
   }
 
   Future<void> _endTrip({double? distanceKm}) async {
@@ -356,7 +292,6 @@ class ObdTripRecorder {
         endedAt: now(),
         distanceKm: distanceKm,
         source: t.source,
-        gpsSamples: t.gpsSamples,
       ),
     ];
     await _writeActive();
