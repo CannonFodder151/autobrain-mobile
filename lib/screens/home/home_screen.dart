@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth_state.dart';
+import '../../core/config.dart';
 import '../../core/models.dart';
 import '../../widgets/vehicle_selector.dart';
 import '../admin/admin_screen.dart';
@@ -81,6 +82,30 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Store-published builds open License in the browser (hosted web app) so
+  /// purchases never happen in-app — avoids the Apple/Google 30% cut.
+  Future<void> _openLicense() async {
+    if (AppConfig.isMobile &&
+        AppConfig.apiBase.contains('autobrainservice.app')) {
+      final origin = AppConfig.apiBase.replaceFirst(RegExp(r'/api/v1/?$'), '');
+      final ok = await launchUrl(
+        Uri.parse('$origin/#/license'),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open the link.')),
+        );
+      }
+      return;
+    }
+    if (context.mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const LicenseScreen()),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthState>();
@@ -112,9 +137,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 case 'download':
                   _showDownload();
                 case 'license':
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const LicenseScreen()),
-                  );
+                  _openLicense();
                 case 'admin':
                   Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const AdminScreen()),
