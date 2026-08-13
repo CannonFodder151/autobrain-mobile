@@ -58,6 +58,13 @@ void main() {
       final r = PidReading(pid, 1726);
       expect(r.label, 'Engine RPM: 1726 rpm');
     });
+
+    test('battery voltage (PID 0142, millivolts)', () {
+      final pid = livePids.firstWhere((p) => p.command == '0142');
+      // 13.8 V = 13800 mV = 0x35E8.
+      expect(pid.value(mode01Payload('41 42 35 E8', '42')), closeTo(13.8, 0.01));
+      expect(pid.value(mode01Payload('41 42 30 39', '42')), closeTo(12.345, 0.01));
+    });
   });
 
   group('DTC decoding', () {
