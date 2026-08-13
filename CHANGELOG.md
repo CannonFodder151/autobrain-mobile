@@ -39,7 +39,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Changed
+- Community Garage moved from the app-bar menu to a home-screen feature tile button (AUT-488), matching the Fuel/Logbook style; Settings & security stays in the menu.
+
+## [0.3.38] - 2026-08-13
 
 ### Security
 - Crafted-PDF DoS regression tests (AUT-471): new `backend/tests/test_pdf_dos_regression.py` feeds the receipt worker `_pdf_text()` oversized CID `/W` width ranges (GHSA-fwg2-594c-jp42) and large `/ToUnicode` CMaps (GHSA-fp3f-mc75-235c) and asserts fast rejection. Both runtime requirement files stay pinned to `pypdf==6.15.0` (the fix release); the existing pin-guard test enforces it.
