@@ -30,4 +30,14 @@ void main() {
     });
     expect(low.needsReorder, isTrue);
   });
+
+  test('Vehicle.byId resolves the requested vehicle, not the first', () {
+    final crown = Vehicle.fromJson(
+        const {'id': 'crown', 'nickname': 'Crown', 'is_primary': true});
+    final fazer = Vehicle.fromJson(const {'id': 'fazer', 'nickname': 'Fazer'});
+    expect(Vehicle.byId([crown, fazer], 'crown'), same(crown));
+    expect(Vehicle.byId([crown, fazer], 'fazer'), same(fazer));
+    expect(Vehicle.byId([crown, fazer], 'missing'), same(crown));
+    expect(Vehicle.byId([], 'missing'), isNull);
+  });
 }
