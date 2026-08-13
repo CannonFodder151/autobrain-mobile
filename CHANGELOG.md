@@ -47,7 +47,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Security
+- Federation hub registration: `register()` now sends `registration_key` (from `SOCIAL_FEDERATION_HOSTED_REGISTRATION_KEY`, a deploy-time secret) whenever a server presents itself as `hosted=true`. Self-hosted servers send an empty key and register unlicensed as before. Closes the hosted=true free-license bypass on the hub (AUT-525).
+
+## [0.3.46] - 2026-08-13
 
 ### Removed
 - Server version check removed entirely (AUT-461): the GitHub update check (`/api/v1/version/mobile`, the GitHub portion of `/admin/version`, and `backend/app/services/version.py`) is gone. The server no longer touches the GitHub API at all — no PAT, no anonymous rate-limit usage. `/admin/version` still returns the local server version string; the admin UI shows it without any update banner. The mobile app's release banner now uses only the release advertised by its server (`/auth/config app_version`).
