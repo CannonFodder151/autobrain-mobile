@@ -56,7 +56,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- Social uploads no longer buffer the full request body before size validation (AUT-597): `POST /api/v1/social/uploads` rejects oversize `Content-Length` with 413 before reading, and a bounded read loop aborts with 415 once buffered bytes exceed the 5MB cap.
+
+## [0.3.55] - 2026-08-13
 
 ### Fixed
 - Billing hardening for the AUD currency migration (AUT-523 security follow-ups): `_apply_subscription` no longer demotes an actively-billed subscriber whose Stripe price was archived/rotated (grandfathered pre-AUD prices keep their plan until the subscription lapses), and `scripts/stripe-setup.py` refuses to archive a price that active subscriptions still reference (plus an `assert` hardened to an explicit `sys.exit`).
