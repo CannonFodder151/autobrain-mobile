@@ -39,7 +39,7 @@ android {
 
     defaultConfig {
         applicationId "com.autobrainservice.app"
-        minSdk = 23
+        minSdkVersion = flutter.minSdkVersion
         targetSdk = 36
         versionCode = flutterVersionCode.toInteger()
         versionName = flutterVersionName
