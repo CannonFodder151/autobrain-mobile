@@ -54,7 +54,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+### Added
+- Demo Community Garage builds now each ship with 3 photos (AUT-529): every demo build shows media in the feed instead of only the first build having a single image. Existing demo instances pick this up on next `DEMO_RESET` restart.
+
+## [0.3.53] - 2026-08-13
 
 ### Added
 - Community Garage feed search (AUT-530): search bar on the Feed tab (debounced 350ms, server-side `?q=`) filters posts by title, caption, author and server name, with a clear button and a search-aware empty state. Feed cards are now separated by 12px spacing (`ListView.separated`).
