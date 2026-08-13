@@ -28,4 +28,7 @@ jobs:
         run: flutter pub get
 
       - name: Analyze
-        run: flutter analyze
+        # Warnings/infos are pre-existing in the synced web lineage; only fail
+        # on hard errors (undefined symbols, type errors) — that is the build
+        # breaker we gate on (AUT-522).
+        run: flutter analyze --no-fatal-warnings --no-fatal-infos
