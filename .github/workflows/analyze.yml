@@ -1,0 +1,31 @@
+name: Analyze
+
+# Compile-guard for the whole tree. Runs on every PR and on main pushes
+# (including the auto syncs from CannonFodder151/autobrain). This is what
+# catches a stale mobile-only delta (e.g. lib/core/auth_state.dart) breaking
+# the build before a release is ever cut (AUT-522).
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Fetch dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
