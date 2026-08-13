@@ -51,7 +51,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- GitHub Actions "run failed" noise (AUT-540): the publish workflow only auto-cuts releases when the ref is `main` (a `workflow_dispatch` on a feature branch no longer tries to push to `main` and fail), git identity is set before the auto-bump push/rebase retry, and the changelog gate is skipped for `dependabot[bot]` PRs (they never modify CHANGELOG.md).
+
+## [0.3.50] - 2026-08-13
 
 ### Fixed
 - Logbook GPS button on mobile (AUT-539): the "Use GPS" icon always showed "GPS unavailable" because the native (non-web) helper `frontend/lib/core/geoloc_io.dart` was a hard-coded `null`. It now uses the `geolocator` plugin: checks location services, requests permission on first use, and stamps the current `lat, lng` (10s fix timeout) into the trip start/end location. iOS: added `NSLocationWhenInUseUsageDescription`. Android permissions (`ACCESS_FINE/COARSE_LOCATION`) were already declared for the car-kit GPS path.
