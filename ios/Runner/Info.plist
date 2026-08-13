@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>AutoBrain uses the camera to photograph receipts and vehicle parts.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>AutoBrain uses your location to stamp trip start/end positions on the logbook.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>AutoBrain uses your photo library to attach receipts and mod photos.</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
