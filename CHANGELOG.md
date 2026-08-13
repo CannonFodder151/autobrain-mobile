@@ -36,7 +36,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Security
+- Version-check (AUT-461): GitHub token removed from the server entirely. The private `autobrain-mobile` release check no longer calls the GitHub API with a PAT — the release info is published to a public manifest (`mobile/latest.json` in the autobrain repo) and read unauthenticated. `GITHUB_TOKEN` deleted from backend config, compose files, and stack envs; legacy classic PAT no longer exposed at runtime.
+
+### Changed
+- `/api/v1/version/mobile` now reads the mobile release from `mobile/latest.json` (public repo) instead of the private repo's GitHub API. Deploy pipeline updates that manifest on each mobile release; no server redeploy needed for manifest updates.
+
+## [0.3.35] - 2026-08-13
 
 ### Added
 - Community Garage backend (AUT-332): social models/API/media under `backend/app/social/` — build posts (vehicle snapshot from existing specs + mods, deterministic — no AI), photo upload with on-upload webp compression + signed short-lived MinIO URLs, comments, likes, share links, and a federation hub client (register / outbox / inbox; the hub itself ships separately). Routes: `/social/feed`, `/social/posts`, `/social/posts/{id}/comments`, `/social/posts/{id}/likes`, `/social/posts/{id}/share-link`, `/social/uploads`.
