@@ -36,6 +36,18 @@ abstract class SpeedSource {
   Stream<double> get speedKmh;
 }
 
+/// One GPS fix (WGS84). Feeds the trip route (AUT-395).
+class GpsFix {
+  const GpsFix(this.lat, this.lng);
+  final double lat, lng;
+}
+
+/// A source of GPS position fixes. Injected for tests; the recorder's
+/// `feedPosition` turns these into the trip route.
+abstract class PositionSource {
+  Stream<GpsFix> get fixes;
+}
+
 /// A live source is optional at construction; the monitor also exposes the
 /// [feedConnection]/[feedSpeed] methods so callers (or tests) can push
 /// events synchronously.
