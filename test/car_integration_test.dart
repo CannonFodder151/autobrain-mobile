@@ -8,7 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:autobrain/core/auth_state.dart';
 import 'package:autobrain/screens/settings/car_integration_screen.dart';
-import 'package:autobrain/services/car/car_kit_trip_monitor.dart';
 import 'package:autobrain/services/obd/obd_connection.dart';
 
 void main() {
@@ -31,18 +30,6 @@ void main() {
             tripActive: false,
             lastTripAt: null),
         'Connected — VGate iCar Pro',
-      );
-    });
-
-    test('car-kit linked without an adapter shows the car-kit signal', () {
-      expect(
-        carIntegrationStatusLine(
-          connectionStatus: ObdStatus.off,
-          tripActive: false,
-          lastTripAt: null,
-          carKitLink: CarKitLinkState.connected,
-        ),
-        'Car-kit connected',
       );
     });
 

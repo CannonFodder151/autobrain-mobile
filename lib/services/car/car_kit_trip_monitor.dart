@@ -128,9 +128,6 @@ class CarKitTripMonitor extends ChangeNotifier {
         // Link dropped (ignition off / head unit off): close any open trip.
         await _closeTrip();
     }
-    // Foreground service on link-up keeps the GPS stream alive in the
-    // background (and shows the notification) before a trip even commits.
-    await _syncKeepAlive();
     if (!_disposed) notifyListeners();
   }
 
@@ -218,15 +215,14 @@ class CarKitTripMonitor extends ChangeNotifier {
 
   bool _keepAliveOn = false;
 
-  /// Foreground service keeps the phone path alive while the car is linked or
-  /// a trip is open (BT ACL broadcasts still wake the app; the service covers
-  /// the app being backgrounded mid-drive). No drain while parked. Best-effort:
-  /// a missing foreground-service plugin (unit tests, web) is non-fatal.
+  /// Foreground service keeps the phone path alive only while a trip is open
+  /// (BT ACL broadcasts still wake the app; the service covers the app being
+  /// backgrounded mid-drive). No drain while parked. Best-effort: a missing
+  /// foreground-service plugin (unit tests, web) is non-fatal.
   Future<void> _syncKeepAlive() async {
     try {
-      final linked = _enabled && _link == CarKitLinkState.connected;
-      if (recorder.isTripActive || linked) {
-        final text = recorder.isTripActive ? 'Trip recording…' : 'Car connected';
+      if (recorder.isTripActive) {
+        const text = 'Trip recording…';
         if (_keepAliveOn) {
           await ObdKeepAlive.update(text: text);
         } else {

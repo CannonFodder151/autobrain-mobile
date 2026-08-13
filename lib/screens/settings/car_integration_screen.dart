@@ -88,7 +88,8 @@ class _CarIntegrationScreenState extends State<CarIntegrationScreen> {
 
   late final ObdTripMonitor _monitor =
       widget.monitor ?? ObdTripMonitor.instance;
-  CarKitTripMonitor? _carKitMonitor;
+  late final CarKitTripMonitor? _carKitMonitor =
+      CarKitTripMonitorService.instance.monitor;
 
   bool _autoLogging = false;
   bool _obdEnabled = true;
@@ -98,7 +99,6 @@ class _CarIntegrationScreenState extends State<CarIntegrationScreen> {
   void initState() {
     super.initState();
     _monitor.addListener(_onChanged);
-    _carKitMonitor = CarKitTripMonitorService.instance.monitor;
     _carKitMonitor?.addListener(_onChanged);
     _load();
   }
@@ -112,16 +112,6 @@ class _CarIntegrationScreenState extends State<CarIntegrationScreen> {
 
   void _onChanged() {
     if (mounted) setState(() {});
-  }
-
-  /// Re-attaches to the monitor after the service rebuilds it (a permission
-  /// grant triggers a fresh EventChannel subscription).
-  void _resyncCarKitMonitor() {
-    final next = CarKitTripMonitorService.instance.monitor;
-    if (identical(next, _carKitMonitor)) return;
-    _carKitMonitor?.removeListener(_onChanged);
-    _carKitMonitor = next;
-    _carKitMonitor?.addListener(_onChanged);
   }
 
   Future<void> _load() async {
@@ -148,17 +138,7 @@ class _CarIntegrationScreenState extends State<CarIntegrationScreen> {
     // The master switch gates BOTH auto-trip trigger paths: the OBD adapter
     // link (AUT-362) and the phone car-kit BT + GPS path (AUT-367). The phone
     // path needs no OBD adapter, so it is armed whenever the switch is on.
-    final applied = await CarKitTripMonitorService.instance.setEnabled(value);
-    _resyncCarKitMonitor();
-    if (value && !applied && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'Auto trip logging needs Bluetooth + location + notification '
-              'permissions. Allow them and toggle the switch again.'),
-        ),
-      );
-    }
+    await CarKitTripMonitorService.instance.setEnabled(value);
     if (value && _obdEnabled) {
       await prefs.setBool('obd_auto_connect', true);
       _monitor.setAutoConnect(true);

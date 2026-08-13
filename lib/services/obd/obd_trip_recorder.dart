@@ -259,11 +259,6 @@ class ObdTripRecorder {
       case CarConnectionState.connected:
         await _startTrip(source: source);
       case CarConnectionState.disconnected:
-        // Each trigger only closes the trip it started. Without this a car-kit
-        // BT drop would close an OBD/VGate trip early and a later ACL flap
-        // could open a second (car_auto) trip for the same drive (T5 double
-        // trip). The OBD path closes its own trips via [feed]/[onLinkDrop].
-        if (_active?.source != source) return;
         await _endTrip(distanceKm: distanceKm);
     }
   }

@@ -1,6 +1,8 @@
 name: Mobile Release (.aab)
 
-# Manual release pipeline: build + sign + GitHub Release draft + Discord notes.
+# Manual release pipeline: build + sign + published GitHub Release + Discord notes.
+# Release is auto-published (not a draft) so it never stalls in draft backlog.
+# Play Console upload is still manual (Nathan) — see docs/mobile-release.md step 4b.
 # See docs/mobile-release.md (autobrain monorepo). Never runs on push.
 
 on:
@@ -142,15 +144,19 @@ jobs:
         env:
           SEMVER: ${{ steps.semver-check.outputs.semver }}
 
-      - name: Publish draft GitHub Release with .aab
+      - name: Publish GitHub Release with .aab (published, never a draft)
         id: release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version }}
           name: ${{ inputs.version }}
           body_path: ${{ steps.changelog.outputs.body_file }}
-          draft: true
+          draft: false
           files: build/app/outputs/bundle/release/app-release.aab
+
+      - name: Play Console upload checklist (Nathan)
+        run: |
+          echo "::warning::GitHub Release is PUBLISHED. Play Console upload is still manual — hand app-release.aab + CHANGELOG entry to Nathan (Play account owner) per docs/mobile-release.md step 4b."
 
       - name: Post Discord changelog + updates (n8n Reporter)
         env:
