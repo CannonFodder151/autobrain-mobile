@@ -45,10 +45,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
 
 ### Fixed
-- Mobile release builds failing on `AuthState` (AUT-522): the mobile-only `auth_state.dart` delta had drifted from the web base and was missing the `freeAccount`/`premium` getters the synced Community Garage screens use, so every release build since v0.3.34+69 failed to compile. Re-merged the web base onto the mobile delta (restores the getters plus the refresh-token flow) and added a `flutter analyze` CI guard so a stale delta can never silently break a release again.
+- Mobile release builds failing on `AuthState` (AUT-522): the mobile-only `auth_state.dart` delta in `CannonFodder151/autobrain-mobile` had drifted from this web base and was missing the `freeAccount`/`premium` getters the synced Community Garage screens use, so every mobile release since v0.3.34+69 failed to compile. The mobile delta was re-merged onto the web base (getters + refresh-token flow restored) and a `flutter analyze` CI guard was added to `autobrain-mobile` so a stale delta can never silently break a release again.
+
+## [0.3.44] - 2026-08-13
+
+### Fixed
 - Alembic migration chain unbroken for create_all-hybrid DBs (AUT-510): the social-tables migration `n4p5q6r7s8t9` is reparented onto the logbook head so the chain has a single head again (`alembic upgrade head` no longer fails with "Multiple head revisions"), and every DDL op in the social migrations is guarded to skip already-present tables/columns. Boot on all tiers converges to the schema head automatically; no manual `ALTER TABLE` needed anymore.
 
 ## [0.3.43] - 2026-08-13
