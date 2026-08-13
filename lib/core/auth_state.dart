@@ -15,18 +15,23 @@ import 'version_check.dart';
 
 enum LoginOutcome { ok, mfaRequired, mfaSetupRequired, failed }
 
+/// Credentials live in secure storage (Keystore/Keychain) so they are not
+/// readable as plaintext on disk / from app backups. Non-sensitive prefs
+/// (dark mode, server picker) stay in SharedPreferences.
 class AuthState extends ChangeNotifier {
   AuthState() {
     _restore();
   }
 
   String? _token;
+  String? _refreshToken;
   String? _role;
   String? _userId;
   String? _mfaToken;
   bool _darkMode = true;
   bool _signupEnabled = true;
   bool _licenseEnabled = false;
+  bool _freeAccount = false;
   bool _updateAvailable = false;
   String? _latestVersion;
   String? _installedVersion;
@@ -41,6 +46,9 @@ class AuthState extends ChangeNotifier {
   bool get isLoggedIn => _token != null;
   bool get isAdmin => _role == 'admin';
   bool get isDemo => _role == 'demo';
+  /// Free-tier accounts cannot access premium features (Community Garage).
+  bool get freeAccount => _freeAccount;
+  bool get premium => !_freeAccount;
   /// Whether this server allows self-service signup (from /auth/config).
   bool get signupEnabled => _signupEnabled;
   /// Whether the licence/upgrade feature is enabled on this server
@@ -74,14 +82,15 @@ class AuthState extends ChangeNotifier {
   Future<void> _restore() async {
     final prefs = await SharedPreferences.getInstance();
     await AppConfig.load();
-    final (token, _, role) = await _tokens.read();
+    final (token, refreshToken, role) = await _tokens.read();
     _token = token;
+    _refreshToken = refreshToken;
     _role = role;
     _darkMode = prefs.getBool('dark_mode') ?? true;
     await _loadConfig();
     _loadVersionInfo();
     if (_token != null) {
-      _client = ApiClient(_token);
+      _client = ApiClient(_token, onRefresh: _refreshAccess);
       _refreshProfile();
       notifyListeners();
     }
@@ -176,11 +185,13 @@ class AuthState extends ChangeNotifier {
   /// the client against the new base URL.
   Future<void> serverChanged() async {
     _token = null;
+    _refreshToken = null;
     _role = null;
     _userId = null;
     _client = null;
     _signupEnabled = true;
     _licenseEnabled = false;
+    _freeAccount = false;
     _updateAvailable = false;
     _latestVersion = null;
     _installedVersion = null;
@@ -198,7 +209,8 @@ class AuthState extends ChangeNotifier {
       final data = await _client!.get('/auth/me') as Map<String, dynamic>;
       _role = data['role'] as String?;
       _userId = data['id'] as String?;
-      await _tokens.write(token: _token!, role: _role ?? 'user');
+      _freeAccount = data['free_account'] == true;
+      await _tokens.write(token: _token!, refreshToken: _refreshToken, role: _role ?? 'user');
       notifyListeners();
     } catch (_) {}
   }
@@ -306,15 +318,49 @@ class AuthState extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    final refreshToken = _refreshToken;
     _token = null;
+    _refreshToken = null;
     _role = null;
     _userId = null;
     _client = null;
+    _freeAccount = false;
     await _tokens.clear();
+    if (refreshToken != null) {
+      // Best effort, non-blocking: the server bumps the account's
+      // token_version, killing every outstanding token.
+      _anonymous().post('/auth/logout', {'refresh_token': refreshToken}).ignore();
+    }
     notifyListeners();
   }
 
   ApiClient _anonymous() => ApiClient(null);
+
+  /// Exchanges the refresh token for a fresh pair when an access token expires.
+  /// Returns the new access token, or null (forces re-login) on failure.
+  Future<String?> _refreshAccess() async {
+    final refreshToken = _refreshToken;
+    if (refreshToken == null) return null;
+    try {
+      final data = await _anonymous().post(
+        '/auth/refresh',
+        {'refresh_token': refreshToken},
+      ) as Map<String, dynamic>;
+      final access = data['access_token'] as String?;
+      if (access == null) return null;
+      _token = access;
+      _refreshToken = data['refresh_token'] as String?;
+      await _tokens.write(
+        token: access,
+        refreshToken: _refreshToken,
+        role: _role ?? 'user',
+      );
+      notifyListeners();
+      return access;
+    } catch (_) {
+      return null;
+    }
+  }
 
   Future<void> _persist(Map<String, dynamic> map) async {
     final tokenPair = map['token_pair'];
@@ -322,10 +368,11 @@ class AuthState extends ChangeNotifier {
       map = tokenPair;
     }
     _token = map['access_token'] as String?;
+    _refreshToken = map['refresh_token'] as String?;
     _role = ((map['user'] as Map<String, dynamic>?) ?? {})['role'] as String?;
     _userId = ((map['user'] as Map<String, dynamic>?) ?? {})['id'] as String?;
-    _client = ApiClient(_token!);
-    await _tokens.write(token: _token!, role: _role ?? 'user');
+    _client = ApiClient(_token!, onRefresh: _refreshAccess);
+    await _tokens.write(token: _token!, refreshToken: _refreshToken, role: _role ?? 'user');
     notifyListeners();
   }
 }
