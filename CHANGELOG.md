@@ -62,6 +62,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
+- Community Garage "My Builds" tab now matches the feed's 12px card spacing (AUT-614): `my_builds_screen.dart` switched from `ListView.builder` to `ListView.separated` with a `SizedBox(height: 12)` separator, mirroring `social_screen.dart`.
+
+## [0.3.58] - 2026-08-14
+
+### Fixed
 - Worker log calls no longer crash with `TypeError` on structlog-style `key=` kwargs (AUT-603): `tasks.py` used stdlib `logging.getLogger` but passed kwarg events, so `scheduled_backup` stored its snapshot then failed on the success log line. Switched to the codebase structlog `get_logger`.
 
 ## [0.3.57] - 2026-08-13
