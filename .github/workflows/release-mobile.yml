@@ -94,13 +94,15 @@ jobs:
         run: |
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
-            --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws
+            --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
+            --dart-define=MOBILE_STORE_BUILD=true
 
       - name: Build release APK (same signingConfig, for apksigner scheme check)
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
-            --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws
+            --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
+            --dart-define=MOBILE_STORE_BUILD=true
 
       - name: Verify signing (AAB v1, APK v2/v3)
         run: |

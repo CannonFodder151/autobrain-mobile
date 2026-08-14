@@ -31,6 +31,12 @@ class AppConfig {
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS);
 
+  /// Whether this build is a store build (App Store / Google Play) compiled
+  /// for store-native IAP. Set via --dart-define=MOBILE_STORE_BUILD=true in
+  /// the store release pipeline; web and self-hosted/sideloaded builds leave
+  /// it off and keep the external browser purchase path (AUT-610).
+  static const bool storeBuild = bool.fromEnvironment('MOBILE_STORE_BUILD');
+
   /// Loads a saved server selection (called once at startup).
   static Future<void> load() async {
     // Web and desktop always use the compiled base URL — no picker.

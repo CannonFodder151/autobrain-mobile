@@ -1,13 +1,21 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/auth_state.dart';
+import '../../core/config.dart';
+import '../../services/iap_service.dart';
 
-/// Stripe subscription management: current plan + upgrade/downgrade/cancel.
-/// Prices come from GET /billing/pricing (with the early-adopter sale); the
-/// values below are a fallback for hosts that do not expose /billing/pricing.
+/// License/subscription purchase.
+///
+/// Store builds (MOBILE_STORE_BUILD, IAP catalogue enabled by the backend)
+/// purchase via Apple StoreKit / Google Play Billing. Web and self-hosted
+/// builds keep the external browser (Stripe) path (AUT-531).
 class LicenseScreen extends StatefulWidget {
   const LicenseScreen({super.key});
 
@@ -33,11 +41,20 @@ class _LicenseScreenState extends State<LicenseScreen> {
   bool _busy = false;
   String? _error;
 
+  bool _iapMode = false;
+  Map<String, IapProduct> _iapProducts = const {};
+  Map<String, ProductDetails> _storeProducts = const {};
+  StreamSubscription<PurchaseDetails>? _iapSub;
+
+  String get _platform =>
+      defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
+
   String? get _subStatus => _profile?['subscription_status'] as String?;
   bool get _hasSub =>
       _subStatus == 'active' ||
       _subStatus == 'trialing' ||
-      _subStatus == 'past_due';
+      _subStatus == 'past_due' ||
+      _profile?['iap_status'] == 'active';
   int get _maxVehicles => (_profile?['max_vehicles'] as int?) ?? 1;
 
   @override
@@ -48,6 +65,7 @@ class _LicenseScreenState extends State<LicenseScreen> {
 
   @override
   void dispose() {
+    _iapSub?.cancel();
     _promoController.dispose();
     super.dispose();
   }
@@ -78,9 +96,151 @@ class _LicenseScreenState extends State<LicenseScreen> {
       });
     } catch (_) {
       // keep fallback plans
-    } finally {
-      if (mounted) setState(() => _loading = false);
     }
+    await _initIap();
+    if (mounted) setState(() => _loading = false);
+  }
+
+  /// Switches the screen to store-native IAP when this is a store build and
+  /// the connected server advertises an IAP catalogue. Otherwise (web,
+  /// self-hosted, or IAP not configured) the Stripe/browser path stays.
+  Future<void> _initIap() async {
+    if (!AppConfig.storeBuild || !AppConfig.isMobile) return;
+    final api = context.read<AuthState>().api;
+    IapCatalog catalog;
+    try {
+      catalog = IapCatalog.fromJson(
+        await api.get('/billing/iap/catalog') as Map<String, dynamic>,
+      );
+    } catch (_) {
+      return; // catalogue missing → browser path
+    }
+    final platformProducts = catalog.forPlatform(_platform);
+    if (!catalog.enabled || platformProducts.isEmpty) return;
+
+    IapService.instance.listen();
+    _iapSub ??= IapService.instance.updates.listen(_onIapUpdate);
+    setState(() {
+      _iapMode = true;
+      _iapProducts = platformProducts;
+    });
+    try {
+      final res = await IapService.instance
+          .queryProducts(platformProducts.keys.toSet());
+      setState(() {
+        _storeProducts = {for (final p in res.productDetails) p.id: p};
+      });
+    } catch (_) {
+      // Store unreachable — cards will show and fail gracefully on purchase.
+    }
+  }
+
+  void _onIapUpdate(PurchaseDetails purchase) {
+    if (!mounted) return;
+    switch (purchase.status) {
+      case PurchaseStatus.pending:
+        _setError('Your purchase is pending approval. It will appear here '
+            'once the store confirms it.');
+      case PurchaseStatus.error:
+        _setError(
+            'Purchase failed: ${purchase.error?.message ?? 'unknown error'}');
+        _completeIfNeeded(purchase);
+      case PurchaseStatus.canceled:
+        break;
+      case PurchaseStatus.purchased:
+      case PurchaseStatus.restored:
+        _verifyIap(purchase);
+    }
+  }
+
+  /// Sends the store transaction to the backend for verification. Only once
+  /// the server has granted the entitlement is the purchase completed
+  /// (acknowledged on Android / cleared from Apple's queue on iOS) — that way
+  /// a failed verification re-delivers the purchase instead of losing it.
+  Future<void> _verifyIap(PurchaseDetails purchase) async {
+    if (!mounted) return;
+    final api = context.read<AuthState>().api;
+    final auth = context.read<AuthState>();
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await api.post('/billing/iap/verify', {
+        'platform': _platform,
+        'product_id': purchase.productID,
+        'transaction_id': purchase.purchaseID ?? '',
+        'purchase_token': purchase.verificationData.serverVerificationData,
+        'purchase_time_ms': purchase.transactionDate,
+      });
+      await auth.refreshProfile();
+      if (!mounted) return;
+      final restored = purchase.status == PurchaseStatus.restored;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(restored
+            ? 'Your licence has been restored.'
+            : 'Thank you — your licence is active.'),
+      ));
+      await _completeIfNeeded(purchase);
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = 'The purchase was recorded by the store but your '
+          'licence could not be activated: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _completeIfNeeded(PurchaseDetails purchase) async {
+    if (!purchase.pendingCompletePurchase) return;
+    try {
+      await IapService.instance.complete(purchase);
+    } catch (_) {
+      // Retried on the next purchase-stream delivery.
+    }
+  }
+
+  Future<void> _iapPurchase(String productId) async {
+    final product = _storeProducts[productId];
+    if (product == null) {
+      setState(() => _error = 'This plan is not available from the store yet.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final ok = await IapService.instance.buy(product);
+      if (!ok && mounted) {
+        setState(() => _error = 'The purchase could not be started.');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Could not start the purchase: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _restorePurchases() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await IapService.instance.restorePurchases();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = 'Could not restore purchases: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void _setError(String message) {
+    if (mounted) setState(() => _error = message);
   }
 
   Future<void> _checkout(String plan) async {
@@ -121,6 +281,20 @@ class _LicenseScreenState extends State<LicenseScreen> {
     }
   }
 
+  /// Store subscriptions are managed in the store itself, not a Stripe portal.
+  Future<void> _openStoreSubscriptions() async {
+    final url = _platform == 'ios'
+        ? 'https://apps.apple.com/account/subscriptions'
+        : 'https://play.google.com/store/account/subscriptions';
+    final ok =
+        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the store.')),
+      );
+    }
+  }
+
   Future<void> _openUrl(String url) async {
     final ok =
         await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
@@ -150,43 +324,80 @@ class _LicenseScreenState extends State<LicenseScreen> {
                 padding: const EdgeInsets.all(16),
                 children: [
                   _statusCard(context),
-                  if (_saleActive) ...[
-                    const SizedBox(height: 16),
-                    _saleBanner(context),
-                  ],
-                  const SizedBox(height: 20),
-                  Text('Plans',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700)),
-                  const SizedBox(height: 4),
-                  Text('Upgrade any time — billed monthly or yearly by Stripe. '
-                      'Cancel from your billing portal; your account stays '
-                      'upgraded until the end of the period.',
-                      style: Theme.of(context).textTheme.bodySmall),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      const Text('Billing period'),
-                      const Spacer(),
-                      SegmentedButton<bool>(
-                        segments: const [
-                          ButtonSegment(value: false, label: Text('Monthly')),
-                          ButtonSegment(value: true, label: Text('Yearly')),
-                        ],
-                        selected: {_yearly},
-                        onSelectionChanged: (s) =>
-                            setState(() => _yearly = s.first),
-                      ),
+                  if (!_iapMode) ...[
+                    if (_saleActive) ...[
+                      const SizedBox(height: 16),
+                      _saleBanner(context),
                     ],
-                  ),
-                  const SizedBox(height: 16),
-                  _promoField(context),
-                  const SizedBox(height: 8),
-                  for (final plan in _plans) ...[
-                    _planCard(context, plan),
+                    const SizedBox(height: 20),
+                    Text('Plans',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Text('Upgrade any time — billed monthly or yearly by '
+                        'Stripe. Cancel from your billing portal; your account '
+                        'stays upgraded until the end of the period.',
+                        style: Theme.of(context).textTheme.bodySmall),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Text('Billing period'),
+                        const Spacer(),
+                        SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment(
+                                value: false, label: Text('Monthly')),
+                            ButtonSegment(value: true, label: Text('Yearly')),
+                          ],
+                          selected: {_yearly},
+                          onSelectionChanged: (s) =>
+                              setState(() => _yearly = s.first),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 16),
+                    _promoField(context),
+                    const SizedBox(height: 8),
+                    for (final plan in _plans) ...[
+                      _planCard(context, plan),
+                      const SizedBox(height: 16),
+                    ],
+                  ] else ...[
+                    const SizedBox(height: 20),
+                    Text('Plans',
+                        style: Theme.of(context)
+                            .textTheme
+                            .titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 4),
+                    Text('Upgrade any time — billed monthly or yearly by the '
+                        'app store. Manage or cancel your subscription from '
+                        'your store account.',
+                        style: Theme.of(context).textTheme.bodySmall),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        const Text('Billing period'),
+                        const Spacer(),
+                        SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment(
+                                value: false, label: Text('Monthly')),
+                            ButtonSegment(value: true, label: Text('Yearly')),
+                          ],
+                          selected: {_yearly},
+                          onSelectionChanged: (s) =>
+                              setState(() => _yearly = s.first),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    for (final (iap, store) in _iapPlansForPeriod()) ...[
+                      _iapPlanCard(context, iap, store),
+                      const SizedBox(height: 16),
+                    ],
                   ],
                   if (_error != null) ...[
                     const SizedBox(height: 8),
@@ -199,9 +410,23 @@ class _LicenseScreenState extends State<LicenseScreen> {
     );
   }
 
+  /// IAP plans for the selected billing period, in a stable plan order.
+  List<(IapProduct, ProductDetails)> _iapPlansForPeriod() {
+    const order = {'enthusiast': 0, 'garage': 1};
+    final period = _yearly ? 'yearly' : 'monthly';
+    final result = <(IapProduct, ProductDetails)>[];
+    for (final entry in _iapProducts.entries) {
+      final iap = entry.value;
+      final store = _storeProducts[entry.key];
+      if (iap.billing != period || store == null) continue;
+      result.add((iap, store));
+    }
+    result.sort((a, b) => (order[a.$1.plan] ?? 9) - (order[b.$1.plan] ?? 9));
+    return result;
+  }
+
   Widget _saleBanner(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final code = _sale['code'] as String? ?? 'EARLY40';
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -370,6 +595,96 @@ class _LicenseScreenState extends State<LicenseScreen> {
     );
   }
 
+  Widget _iapPlanCard(
+      BuildContext context, IapProduct iap, ProductDetails store) {
+    final scheme = Theme.of(context).colorScheme;
+    final name = _nameFor(iap.plan);
+    final isGarage = iap.plan == 'garage';
+    final vehicles = isGarage ? 5 : 1;
+
+    return Card(
+      shape: isGarage
+          ? RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: BorderSide(color: scheme.primary, width: 2),
+            )
+          : null,
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(name,
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                ),
+                if (isGarage)
+                  Chip(
+                    label: const Text('Most popular'),
+                    labelStyle: TextStyle(color: scheme.primary, fontSize: 12),
+                    side: BorderSide(color: scheme.primary),
+                    backgroundColor: scheme.primary.withValues(alpha: 0.1),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(store.price,
+                    style: TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
+                        color: scheme.primary)),
+                const SizedBox(width: 4),
+                Text(_yearly ? '/year' : '/month',
+                    style: TextStyle(color: scheme.onSurfaceVariant)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text('$vehicles vehicle${vehicles == 1 ? '' : 's'}',
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 12),
+            ..._featuresFor(iap.plan).map(
+              (f) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    Icon(Icons.check_circle,
+                        size: 18, color: scheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(f)),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _busy ? null : () => _iapPurchase(iap.productId),
+                child: Text('Upgrade to $name'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _nameFor(String key) {
+    for (final plan in _plans) {
+      if (plan['key'] == key) return plan['name'] as String;
+    }
+    return key == 'garage' ? 'Garage' : 'Enthusiast';
+  }
+
   List<String> _featuresFor(String key) {
     return key == 'garage'
         ? const [
@@ -395,8 +710,10 @@ class _LicenseScreenState extends State<LicenseScreen> {
       icon = Icons.verified_user;
       color = Colors.green;
       title = 'Subscription active';
-      subtitle = 'You have full access to AutoBrain. '
-          'Managed by Stripe.';
+      subtitle = _iapMode
+          ? 'You have full access to AutoBrain. Managed by your app store '
+              'account.'
+          : 'You have full access to AutoBrain. Managed by Stripe.';
     } else {
       icon = Icons.info_outline;
       color = Colors.blue;
@@ -422,7 +739,11 @@ class _LicenseScreenState extends State<LicenseScreen> {
                   IconButton(
                     icon: const Icon(Icons.manage_accounts_outlined),
                     tooltip: 'Manage subscription',
-                    onPressed: _busy ? null : _portal,
+                    onPressed: _busy
+                        ? null
+                        : _iapMode
+                            ? _openStoreSubscriptions
+                            : _portal,
                   ),
               ],
             ),
@@ -432,6 +753,17 @@ class _LicenseScreenState extends State<LicenseScreen> {
                     .textTheme
                     .bodySmall
                     ?.copyWith(color: scheme.onSurfaceVariant)),
+            if (_hasSub && _iapMode && _platform == 'ios') ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _busy ? null : _restorePurchases,
+                  icon: const Icon(Icons.restore, size: 18),
+                  label: const Text('Restore purchases'),
+                ),
+              ),
+            ],
           ],
         ),
       ),
