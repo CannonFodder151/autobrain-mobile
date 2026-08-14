@@ -61,7 +61,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- PR run failures (AUT-633): the changelog gate now diffs against the merge-base instead of the live base-branch tip, so a stale PR no longer false-fails (or slips a missing CHANGELOG.md entry when main happened to move one). The mobile sync workflow also rebases onto remote main before pushing, so concurrent sync runs stop reddening with `fetch first` rejections.
+
+## [0.3.61] - 2026-08-14
 
 ### Added
 - Backend store-native IAP (AUT-617): Apple App Store / Google Play receipt verification for the mobile store builds — `GET /billing/iap/catalog`, `POST /billing/iap/verify`, and `POST /billing/iap/webhook/{apple,google}`. Purchases are recorded server-side and durable; active store entitlements grant the same plans as Stripe (`plan_for_user` + `GET /auth/me` now surface `iap_status`). Renewals/refunds propagate via verify-on-refresh on `/auth/me` plus the store webhooks once the store teams configure them.
