@@ -63,7 +63,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- Social upload bounded-read overflow (AUT-660): `read_upload` now runs inside the `MediaError` handler, so a >5MB chunked/misdeclared `Content-Length` body returns `415` as documented instead of an unhandled `500`.
+
+## [0.3.63] - 2026-08-14
 
 ### Fixed
 - `#/license` deep-link race (AUT-629): the Flutter web engine cleared the URL fragment via `history.replaceState` before the logged-in session-restore rebuild, so fresh loads of `/#/license` landed on Home. The fragment is now captured once in `main()` before `runApp` and routing reads the captured value, restoring reliable deep-link navigation to the License screen.
