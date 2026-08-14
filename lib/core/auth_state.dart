@@ -91,7 +91,7 @@ class AuthState extends ChangeNotifier {
     _loadVersionInfo();
     if (_token != null) {
       _client = ApiClient(_token, onRefresh: _refreshAccess);
-      _refreshProfile();
+      refreshProfile();
       notifyListeners();
     }
   }
@@ -204,7 +204,8 @@ class AuthState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _refreshProfile() async {
+  Future<void> refreshProfile() async {
+    if (_client == null) return;
     try {
       final data = await _client!.get('/auth/me') as Map<String, dynamic>;
       _role = data['role'] as String?;
