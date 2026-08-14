@@ -65,7 +65,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Added
+- Community Garage builds can now be named when sharing and fully edited afterwards (AUT-675): "Edit build" on My Builds lets you rename the project, change the caption, and reorder/add/remove photos, and it shows what the build shares (photos, specs, mods, odometer, notes) so you can edit that after the fact too. Photos keep their new order in the feed; dropped photos go back to your uploads. Backed by `POST/PATCH /social/posts` now accepting `title`, ordered `photo_ids` and `share_scope`, plus a new `social_photos.position` column.
+
+## [0.3.65] - 2026-08-14
 
 ### Fixed
 - Celery worker/beat healthcheck (AUT-601): the `autobrain-worker` image healthcheck is now command-aware. The beat scheduler container (which shares the image) previously ran `celery inspect ping` — a check that only a *worker* can answer, so it reported health for the wrong process. It now verifies the `celerybeat-schedule` file exists and stays fresh (missing or stale file flags the wedged scheduler busy-loop behind the 100% CPU incident), and the worker check gets a longer ping reply timeout so AI-task load no longer false-negatives it.
