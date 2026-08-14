@@ -66,7 +66,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Added
+- Community Garage photos per build raised from 6 to 15 (AUT-674): the compose picker (web + mobile) accepts up to 15 photos and the backend `POST /social/posts` validation caps `photo_ids` at 15 (was 12). Regression test asserts 15 IDs pass and 16 are rejected.
+
+### Fixed
+- Community Garage photo upload no longer rejects real phone photos (AUT-674): the social upload input gate was 5MB while receipts/fuel/logbook allow 15MB, and web + iOS multi-pick can't pre-downscale — typical modern phone photos (5–15MB) were returned `413 File too large`. Social uploads now use the same 15MB bounded-read cap as the rest of the app; the backend still downscales to 2048px and re-encodes to webp, so stored media stays small. Regression tests cover a >5MB accepted upload and the 413/415 gate.
+
+## [0.3.66] - 2026-08-14
 
 ### Added
 - Community Garage builds can now be named when sharing and fully edited afterwards (AUT-675): "Edit build" on My Builds lets you rename the project, change the caption, and reorder/add/remove photos, and it shows what the build shares (photos, specs, mods, odometer, notes) so you can edit that after the fact too. Photos keep their new order in the feed; dropped photos go back to your uploads. Backed by `POST/PATCH /social/posts` now accepting `title`, ordered `photo_ids` and `share_scope`, plus a new `social_photos.position` column.
