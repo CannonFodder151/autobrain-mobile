@@ -28,6 +28,11 @@ jobs:
           channel: stable
           cache: true
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - uses: android-actions/setup-android@v3
 
       - name: Verify requested version matches pubspec
