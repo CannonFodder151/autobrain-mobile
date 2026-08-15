@@ -12,7 +12,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Security
+- market-data `POST /search` now checks the X-API-Key in constant time
+  (`hmac.compare_digest`) and enforces per-IP and per-key rate limits, matching
+  the rego-lookup-api and backend auth conventions (AUT-782).
+
+## [0.3.84] - 2026-08-15
 
 ### Fixed
 - Community Garage photo upload no longer crashes for photos whose MIME can't be
