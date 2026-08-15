@@ -14,7 +14,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+## [0.3.86] - 2026-08-15
+
+### Added
+- Issues Blog "My Issues" filter shows only your own posts (AUT-832).
+- Report buttons on issue replies — reports go to a new admin "To review" hub
+  alongside post reports (AUT-832).
+- Admin moderation hub lists every flagged post/comment with the reporting
+  reason and author; admins can delete the entry or ban/unban the author from
+  posting in Community Garage (AUT-832).
 
 ## [0.3.85] - 2026-08-15
 
