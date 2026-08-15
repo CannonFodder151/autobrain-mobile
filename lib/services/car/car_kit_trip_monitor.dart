@@ -56,6 +56,7 @@ class CarKitTripMonitor extends ChangeNotifier {
     required this.recorder,
     CarKitConnection? connection,
     SpeedSource? speed,
+    PositionSource? position,
     DateTime Function()? now,
     this.commitSpeedKmh = 20,
     this.commitSeconds = 5,
@@ -64,6 +65,7 @@ class CarKitTripMonitor extends ChangeNotifier {
   }) : now = now ?? DateTime.now {
     if (connection != null) _subscribeConnection(connection);
     if (speed != null) _subscribeSpeed(speed);
+    if (position != null) _subscribePosition(position);
   }
 
   final ObdTripRecorder recorder;
@@ -118,6 +120,13 @@ class CarKitTripMonitor extends ChangeNotifier {
   void _subscribeSpeed(SpeedSource speed) {
     _subs.add(speed.speedKmh.listen(
       (s) => feedSpeed(s),
+      onError: (_) {},
+    ));
+  }
+
+  void _subscribePosition(PositionSource position) {
+    _subs.add(position.fixes.listen(
+      (f) => recorder.feedPosition(f.lat, f.lng),
       onError: (_) {},
     ));
   }
