@@ -35,6 +35,11 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      - name: Install Android SDK Platform 37 (permission_handler_android compile target)
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platforms;android-37"
+
       - name: Verify requested version matches pubspec
         run: |
           set -euo pipefail
