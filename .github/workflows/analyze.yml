@@ -10,6 +10,14 @@ on:
   push:
     branches: [main]
 
+# Single self-hosted runner (gh-runner-autobrain-mobile): cancel stale runs on
+# the same branch instead of queueing behind each other. Prevents the Analyze
+# + Mobile Release serialization backlog seen in AUT-858 while only one runner
+# exists. Safe: jobs are idempotent re-checks of the same head.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
