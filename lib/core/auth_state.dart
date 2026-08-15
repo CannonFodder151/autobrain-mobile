@@ -36,8 +36,7 @@ class AuthState extends ChangeNotifier {
   String? _latestVersion;
   String? _installedVersion;
   String? _serverVersion;
-  bool _releaseReachable = false;
-  String? _releaseSource; // 'github' | 'server' | null
+  String? _releaseSource; // 'server' | null
   String? get token => _token;
   String? get role => _role;
   String? get userId => _userId;
@@ -54,16 +53,14 @@ class AuthState extends ChangeNotifier {
   /// Whether the licence/upgrade feature is enabled on this server
   /// (LICENSE_ENABLED env var; on for hosted, off for demo/default).
   bool get licenseEnabled => _licenseEnabled;
-  /// Latest known mobile release (GitHub release tag when reachable,
-  /// otherwise the release advertised by this server from /auth/config).
+  /// Latest known mobile release (the release advertised by this server
+  /// from /auth/config).
   String? get latestVersion => _latestVersion;
   /// Installed mobile app version (from PackageInfo).
   String? get installedVersion => _installedVersion;
   /// Version of the connected backend server (from GET /health).
   String? get serverVersion => _serverVersion;
-  /// True when the latest mobile release was read from GitHub directly.
-  bool get releaseReachable => _releaseReachable;
-  /// Where [latestVersion] came from: 'github' or 'server' fallback.
+  /// Where [latestVersion] came from: 'server'.
   String? get releaseSource => _releaseSource;
   /// True when the installed app is older than the latest mobile release.
   bool get updateAvailable => _updateAvailable;
@@ -157,27 +154,10 @@ class AuthState extends ChangeNotifier {
     }
   }
 
-  /// Latest mobile release via the connected server's /version/mobile proxy.
-  /// The autobrain-mobile repo is private, so the app cannot query GitHub
-  /// directly; the server reads it with its GITHUB_TOKEN. Falls back to the
-  /// server-advertised release from /auth/config when the proxy is unavailable.
+  /// Latest mobile release: the release this server distributes
+  /// (/auth/config app_version, already loaded by _loadConfig). The GitHub
+  /// proxy (/version/mobile) was removed — AUT-461.
   Future<void> _loadLatestRelease() async {
-    try {
-      final data = await _anonymous()
-          .get('/version/mobile') as Map<String, dynamic>;
-      final latest = data['latest_version']?.toString();
-      if (latest != null && latest.isNotEmpty) {
-        _releaseReachable = data['reachable'] != false;
-        _releaseSource = 'github';
-        _latestVersion = latest.replaceFirst(RegExp(r'^v'), '');
-        _updateAvailable = await _isBehind(_latestVersion!);
-        return;
-      }
-    } catch (_) {
-      // Proxy unreachable — fall through to the server-advertised release.
-    }
-    // Conservative fallback: the release this server distributes
-    // (/auth/config app_version, already loaded by _loadConfig).
     if (_latestVersion != null) _releaseSource = 'server';
   }
 
@@ -196,7 +176,6 @@ class AuthState extends ChangeNotifier {
     _latestVersion = null;
     _installedVersion = null;
     _serverVersion = null;
-    _releaseReachable = false;
     _releaseSource = null;
     await _tokens.clear();
     await _loadConfig();
