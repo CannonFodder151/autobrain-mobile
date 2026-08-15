@@ -78,7 +78,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- The social federation server key no longer regenerates on every registration attempt (AUT-758). The Ed25519 keypair is now generated once and persisted in `social_server_config.hub_private_key`, so retrying a join reuses the same identity instead of rotating the key mid-join and failing. Regression test in `tests_social/test_social.py`.
+
+## [0.3.78] - 2026-08-15
 
 ### Fixed
 - Unsharing (deleting) a Community Garage build that had photos no longer returns HTTP 500 (AUT-703). The build delete ran the photo deletes through the ORM, which did not order the child deletes before the parent (no `relationship()`/cascade between `SocialBuild` and `SocialPhoto`), so Postgres rejected the delete with a `social_photos_build_id_fkey` FK violation. The photos are now bulk-released back to your unassigned uploads in the same way as dropping photos in Edit build, then the build is deleted. Regression test in `tests_social/test_social.py`.
