@@ -11,7 +11,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- Community Garage photo upload no longer crashes for photos whose MIME can't be
+  detected (e.g. HEIC from the iOS camera roll): `image_picker` returns an empty
+  string for `mimeType`, which used to blow up `MediaType.parse("")` and surface
+  as "Could not save: … Invalid media type". The upload now sanitizes the content
+  type (filename-derived MIME fallback, else `application/octet-stream`) and the
+  photo pickers treat an empty MIME as missing, defaulting to `image/jpeg`
+  (AUT-796, unblocks AUT-793).
+
+## [0.3.83] - 2026-08-15
 
 ### Added
 - Android Auto / car-kit trips now record their GPS route: position fixes are
@@ -46,15 +58,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   transitive CVEs (AUT-794).
 
 ## [0.3.81] - 2026-08-15
-
-### Fixed
-- Community Garage photo upload no longer crashes for photos whose MIME can't be
-  detected (e.g. HEIC from the iOS camera roll): `image_picker` returns an empty
-  string for `mimeType`, which used to blow up `MediaType.parse("")` and surface
-  as "Could not save: … Invalid media type". The upload now sanitizes the content
-  type (filename-derived MIME fallback, else `application/octet-stream`) and the
-  photo pickers treat an empty MIME as missing, defaulting to `image/jpeg`
-  (AUT-796, unblocks AUT-793).
 
 ### Fixed
 - Community Garage photo uploads now accept iPhone/Android camera photos in
