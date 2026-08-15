@@ -8,35 +8,30 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:autobrain/core/auth_state.dart';
 import 'package:autobrain/screens/settings/car_integration_screen.dart';
-import 'package:autobrain/services/obd/obd_connection.dart';
+import 'package:autobrain/services/car/car_kit_trip_monitor.dart';
 
 void main() {
   group('carIntegrationStatusLine', () {
-    test('off and no trips', () {
+    test('not connected and no trips', () {
       expect(
-        carIntegrationStatusLine(
-            connectionStatus: ObdStatus.off,
-            tripActive: false,
-            lastTripAt: null),
+        carIntegrationStatusLine(tripActive: false, lastTripAt: null),
         'Not connected',
       );
     });
 
-    test('connected shows adapter label', () {
+    test('car-kit linked shows the car-kit signal', () {
       expect(
         carIntegrationStatusLine(
-            connectionStatus: ObdStatus.connected,
-            adapterLabel: 'VGate iCar Pro',
-            tripActive: false,
-            lastTripAt: null),
-        'Connected — VGate iCar Pro',
+          tripActive: false,
+          lastTripAt: null,
+          carKitLink: CarKitLinkState.connected,
+        ),
+        'Car-kit connected',
       );
     });
 
     test('active trip shows recording since', () {
       final line = carIntegrationStatusLine(
-        connectionStatus: ObdStatus.connected,
-        adapterLabel: 'VGate',
         tripActive: true,
         tripStartedAt: DateTime(2026, 8, 11, 7, 5),
       );
@@ -45,7 +40,6 @@ void main() {
 
     test('last trip shown when not recording', () {
       final line = carIntegrationStatusLine(
-        connectionStatus: ObdStatus.off,
         tripActive: false,
         lastTripAt: DateTime(2026, 8, 10, 18, 30),
       );
