@@ -77,7 +77,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- Unsharing (deleting) a Community Garage build that had photos no longer returns HTTP 500 (AUT-703). The build delete ran the photo deletes through the ORM, which did not order the child deletes before the parent (no `relationship()`/cascade between `SocialBuild` and `SocialPhoto`), so Postgres rejected the delete with a `social_photos_build_id_fkey` FK violation. The photos are now bulk-released back to your unassigned uploads in the same way as dropping photos in Edit build, then the build is deleted. Regression test in `tests_social/test_social.py`.
+
+## [0.3.77] - 2026-08-15
 
 ### Fixed
 - Community Garage federation: the backend no longer claims `hub_status=registered` right after `POST /admin/social/register`. The hub's approval workflow (AUT-525) returns `status: pending` for new registrations, and the client now stores that state — a pending server stays local-only instead of silently failing every signed hub request with 401. Once the hub operator approves the server, the feed's federation sync polls the hub's public status endpoint and self-heals into `registered` (no manual re-register). The admin UI shows the pending state with a "Registration pending hub-operator approval" hint and a Refresh action. Regression tests in `tests_social/test_social.py` (AUT-731).
