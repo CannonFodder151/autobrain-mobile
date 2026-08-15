@@ -75,7 +75,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Added
+- Issues Blog replies can now carry one photo each (AUT-736). The reply composer has an attach button (one photo, max), the photo uploads through the existing media pipeline on send, reply photos render inline on the post detail (tap to view full size), and they are cleaned up when the post is deleted.
+
+## [0.3.75] - 2026-08-15
 
 ### Fixed
 - License screen now distinguishes **License pending** (orange) from **Subscription active** (green): if a checkout was started but not paid (`incomplete` / `incomplete_expired` / `unpaid`) — or the account was granted but never actually paid for — the status shows "License pending" instead of implying the licence is active. `GET /auth/me` now reports a derived `license_status` (`active` / `pending` / `free`) so web + mobile agree, and never reports `active` without a paid entitlement.
