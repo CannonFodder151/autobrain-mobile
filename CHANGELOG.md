@@ -20,6 +20,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.91] - 2026-08-17
+
+### Fixed
+- Play closed-testing upload sends the `Track` body correctly (a prior build
+  double-nested `releases` and got `400 track_config.releases` from the
+  AndroidPublisher API); the pipeline now assigns the fresh build to the
+  `testing` track and commits it, verified via the Tracks API (AUT-932).
+- The upload step no longer opens a probe edit that Play silently deletes,
+  which killed the main edit with `400 "This Edit has been deleted"` (AUT-952).
+
 ## [0.3.90] - 2026-08-16
 
 ### Added
