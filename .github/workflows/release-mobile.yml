@@ -188,11 +188,8 @@ jobs:
           export PLAY_RELEASE_NOTES="$(awk -v s="## [$semver]" 'index($0,s){f=1;next} f && /^## /{exit} f' CHANGELOG.md \
             | grep -E '^- ' | sed 's/^- //; s/`//g; s/\*\*//g' | head -3 | tr '\n' ' ' | cut -c1-400)"
           export PLAY_RELEASE_NOTES="${PLAY_RELEASE_NOTES% } — autoBrain $RELEASE_VERSION"
-          out="$(bash scripts/play-upload-closed-testing.sh build/app/outputs/bundle/release/app-release.aab 2>&1)"
-          echo "$out"
-          if grep -q "ASK-NATHAN" <<<"$out"; then
-            echo "needs_tester_audience=true" >> "$GITHUB_OUTPUT"
-          fi
+          export PLAY_LOG_FILE="$RUNNER_TEMP/play-upload.log"
+          bash scripts/play-upload-closed-testing.sh build/app/outputs/bundle/release/app-release.aab
 
       - name: Ask Nathan for one-time closed-testing tester audience (approvals)
         if: steps.play_upload.outputs.needs_tester_audience == 'true'
