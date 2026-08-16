@@ -20,6 +20,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.90] - 2026-08-16
+
+### Added
+- Mobile release pipeline now auto-uploads the freshly built `.aab` to the Play
+  Console **closed testing** track (`testing`) as the final release step and
+  commits the edit — the manual "Play Console upload checklist (Nathan)" step
+  is gone. Every new build lands on the track automatically; if the track is
+  missing it is created once (AUT-932).
+
 ### Fixed
 - Android licence/checkout: external payment and billing links now resolve on
   Android 11+ (manifest declares https/http VIEW intents) and fail with an
