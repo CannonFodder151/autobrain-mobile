@@ -18,33 +18,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+
+
 ## [Unreleased]
 
-## [0.3.91] - 2026-08-17
+## [0.3.92] - 2026-08-16
+
+### Security
+- Dongle provisioning (AUT-963): logout / server switch now clear the saved
+  dongle credentials (WiFi password + one-time API key) so a previous
+  account's device can never be re-provisioned from another account, and the
+  app re-links the dongle when the saved device no longer belongs to the
+  current account. SSID and WiFi password lengths are validated (1–32 /
+  8–63 octets) before the BLE write.
 
 ### Fixed
-- Play closed-testing upload sends the `Track` body correctly (a prior build
-  double-nested `releases` and got `400 track_config.releases` from the
-  AndroidPublisher API); the pipeline now assigns the fresh build to the
-  `testing` track and commits it, verified via the Tracks API (AUT-932).
-- The upload step no longer opens a probe edit that Play silently deletes,
-  which killed the main edit with `400 "This Edit has been deleted"` (AUT-952).
+- Dongle BLE provisioning ack (AUT-968): firmware now delivers the ack over a
+  NOTIFY-enabled provisioning characteristic (firmware PR #4), and the app
+  treats a completed BLE write as success when no ack arrives (older
+  firmware) instead of timing out after 25 s and reporting a false failure.
+  `err:already configured` reads as "already provisioned — factory-reset to
+  re-push".
+- Dongle WiFi input guards (AUT-968): SSID/password containing `"` or `\` are
+  rejected up front (the dongle's substring parser cannot unescape them), and
+  the SSID (32) / WPA2 passphrase (63) fields cap input at the firmware buffer
+  sizes. A failed device-list load now shows a "could not reach the server"
+  hint instead of silently showing "no dongle linked".
+
+### Added
+- Mobile dongle WiFi upload setup (AUT-936): Settings → Dongle WiFi upload
+  enables the AutoBrain-Tripper's WiFi auto-upload, links the dongle to the
+  account (one-time API key shown on create), picks a vehicle, and pushes the
+  WiFi credentials over BLE to the dongle. Pairing requires the Bluetooth
+  permission (declared for iOS + Android 12+). Backend + firmware landed in
+  AUT-918.
+
+## [0.3.91] - 2026-08-16
+
+### Added
+- Dongle WiFi trip auto-upload (AUT-918): per-device API key header auth,
+  idempotent POST /devices/{id}/trips upload surface, and the diy_dongle
+  logbook source. Offline-first firmware queue + BLE credential provisioning
+  ship in autobrain-obd2-diy; mobile settings/BLE push is AUT-936.
 
 ## [0.3.90] - 2026-08-16
 
-### Added
-- Mobile release pipeline now auto-uploads the freshly built `.aab` to the Play
-  Console **closed testing** track (`testing`) as the final release step and
-  commits the edit — the manual "Play Console upload checklist (Nathan)" step
-  is gone. Every new build lands on the track automatically; if the track is
-  missing it is created once (AUT-932).
-
 ### Fixed
-- Google Play policy: Android/iOS store builds no longer fall back to the
-  external Stripe checkout when the in-app purchase catalogue is unavailable
-  — they show a clear "update the app" not-configured state with no external
-  payment link or Stripe portal route. Web/sideload builds keep the Stripe
-  path (AUT-931).
 - Android licence/checkout: external payment and billing links now resolve on
   Android 11+ (manifest declares https/http VIEW intents) and fail with an
   actionable error that copies the link, instead of a silent "Could not open
@@ -77,6 +97,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   instead of resurrecting on the next federation sync: the removal is recorded as a
   tombstone and the inbox pull skips it, so a deleted copy does not reappear ~1 minute
   later (AUT-910).
+- Admins can no longer delete Issues Blog posts hosted on another server — the
+  admin delete endpoint now returns 403 for federated (origin="remote") posts;
+  moderating an abusive remote post hides it locally via the existing hide action
+  instead of deleting another server's copy (AUT-935).
 
 ### Added
 - Report buttons on build posts and build comments — reports join the admin
