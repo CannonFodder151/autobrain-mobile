@@ -178,6 +178,7 @@ jobs:
           files: build/app/outputs/bundle/release/app-release.aab
 
       - name: Upload .aab to Play Console closed testing (automated)
+        id: play_upload
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           RELEASE_VERSION: ${{ inputs.version }}
@@ -187,7 +188,25 @@ jobs:
           export PLAY_RELEASE_NOTES="$(awk -v s="## [$semver]" 'index($0,s){f=1;next} f && /^## /{exit} f' CHANGELOG.md \
             | grep -E '^- ' | sed 's/^- //; s/`//g; s/\*\*//g' | head -3 | tr '\n' ' ' | cut -c1-400)"
           export PLAY_RELEASE_NOTES="${PLAY_RELEASE_NOTES% } — autoBrain $RELEASE_VERSION"
-          bash scripts/play-upload-closed-testing.sh build/app/outputs/bundle/release/app-release.aab
+          out="$(bash scripts/play-upload-closed-testing.sh build/app/outputs/bundle/release/app-release.aab 2>&1)"
+          echo "$out"
+          if grep -q "ASK-NATHAN" <<<"$out"; then
+            echo "needs_tester_audience=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ask Nathan for one-time closed-testing tester audience (approvals)
+        if: steps.play_upload.outputs.needs_tester_audience == 'true'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          payload="$(jq -n \
+            --arg channel approvals \
+            --arg title "Play closed-testing upload needs tester audience" \
+            --arg desc "Auto-upload to the testing track worked, but Play blocks submit-for-review until the track has testers. One-time setup in Play Console (Testing > Closed testing > testing track): add testers + country availability (restOfWorld on). After that every release auto-submits for review." \
+            --arg version "$VERSION" \
+            '{channel:$channel,title:$title,description:$desc,color:"0x5865F2",author:"Mobile Release Engineer",fields:[{name:"Version",value:$version,inline:true},{name:"Ask",value:"Configure testers once",inline:true}]}')"
+          curl -sS -o /dev/null -w "approvals embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
+            -H 'Content-Type: application/json' -d "$payload" || true
 
       - name: Post Discord changelog + updates (n8n Reporter)
         env:

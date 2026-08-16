@@ -55,7 +55,9 @@ PRIVKEY="$(jq -r '.private_key' <<<"$SA")"
 
 BASE="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE"
 UPLOAD_BASE="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/$PACKAGE"
-CURL=(curl -sS -f --retry 3 --retry-delay 2 --retry-all-errors --connect-timeout 30)
+# --retry-all-errors requires curl >= 7.71 (missing on older self-hosted runners);
+# plain --retry already covers transient HTTP 5xx/429 and network hiccups.
+CURL=(curl -sS -f --retry 3 --retry-delay 2 --connect-timeout 30)
 CURL_NF=(curl -sS --connect-timeout 30)
 
 # 1. OAuth2 access token via RS256 JWT (scope: androidpublisher)
@@ -118,7 +120,8 @@ if [[ "$commit_code" == "200" ]]; then
   commit_success=true
 elif [[ "$commit_code" == "403" && "$STATUS" == "completed" && "$ALLOW_FALLBACK" == "true" ]] \
   && grep -q "targeting no countries" <<<"$commit_body"; then
-  echo "::warning::Play refuses 'completed' on closed testing track without a tester audience ('targeting no countries'); committing as draft. Configure a tester group in Play Console, then releases go live automatically."
+  echo "::warning::Play refuses 'completed' (submit-for-review) on closed testing track '$TRACK' without a tester audience ('targeting no countries'); committing as draft. Once a tester group + country availability are configured on the track in Play Console, the same pipeline auto-submits for review with no code change."
+  echo "::warning::ASK-NATHAN: Play Console -> Testing -> Closed testing -> $TRACK -> add testers (emails or a Google Group) and set country availability (restOfWorld on). One-time setup; after that every release lands as 'completed' (submitted for review)."
   STATUS="draft"
   release="${release/\"completed\"/\"draft\"}"
   track_body="$(jq -n --argjson r "$release" '{releases:$r}')"
