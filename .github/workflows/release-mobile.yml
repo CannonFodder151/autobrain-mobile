@@ -2,7 +2,8 @@ name: Mobile Release (.aab)
 
 # Manual release pipeline: build + sign + published GitHub Release + Discord notes.
 # Release is auto-published (not a draft) so it never stalls in draft backlog.
-# Play Console upload is still manual (Nathan) — see docs/mobile-release.md step 4b.
+# The .aab is then uploaded to the Play Console closed testing track
+# automatically (scripts/play-upload-closed-testing.sh) — see docs/mobile-release.md.
 # See docs/mobile-release.md (autobrain monorepo). Never runs on push.
 
 on:
@@ -176,9 +177,17 @@ jobs:
           draft: false
           files: build/app/outputs/bundle/release/app-release.aab
 
-      - name: Play Console upload checklist (Nathan)
+      - name: Upload .aab to Play Console closed testing (automated)
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          echo "::warning::GitHub Release is PUBLISHED. Play Console upload is still manual — hand app-release.aab + CHANGELOG entry to Nathan (Play account owner) per docs/mobile-release.md step 4b."
+          set -euo pipefail
+          semver="${{ steps.semver-check.outputs.semver }}"
+          export PLAY_RELEASE_NOTES="$(awk -v s="## [$semver]" 'index($0,s){f=1;next} f && /^## /{exit} f' CHANGELOG.md \
+            | grep -E '^- ' | sed 's/^- //; s/`//g; s/\*\*//g' | head -3 | tr '\n' ' ' | cut -c1-400)"
+          export PLAY_RELEASE_NOTES="${PLAY_RELEASE_NOTES% } — autoBrain $RELEASE_VERSION"
+          bash scripts/play-upload-closed-testing.sh build/app/outputs/bundle/release/app-release.aab
 
       - name: Post Discord changelog + updates (n8n Reporter)
         env:
