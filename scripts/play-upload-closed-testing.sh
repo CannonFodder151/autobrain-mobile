@@ -16,11 +16,19 @@
 #   PLAY_ALLOW_DRAFT_FALLBACK          (optional) default true.
 #   PLAY_LOG_FILE                      (optional) append a full transcript here
 #                                      (used by CI to keep a debuggable log).
+#   PLAY_API_BASE                      (optional) API base URL, default
+#                                      https://androidpublisher.googleapis.com
+#                                      (tests point this at a local mock).
 #   GITHUB_OUTPUT                      (optional) when set and a tester audience
 #                                      is required, appends
 #                                      needs_tester_audience=true.
 #
 # Notes:
+# - Only ONE edit is ever open at a time. Play's edits.insert silently deletes
+#   the previously-open edit, so a "probe edit" flow fails the main edit's
+#   bundle upload with 400 "This Edit has been deleted" (AUT-952). Track
+#   existence is probed edit-free; a missing track is created in its own
+#   committed edit, then the build is released onto it in a fresh edit.
 # - Closed testing tracks have custom names (no fixed API default). If the
 #   configured track does not exist it is created once as CLOSED_TESTING in
 #   its own committed edit, then the build is released onto it.
@@ -66,8 +74,9 @@ TOKEN_URI="$(jq -r '.token_uri' <<<"$SA")"
 PRIVKEY="$(jq -r '.private_key' <<<"$SA")"
 [[ "$EMAIL" == "null" || "$TOKEN_URI" == "null" || "$PRIVKEY" == "null" ]] && { echo "::error::invalid service account JSON"; exit 1; }
 
-BASE="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PACKAGE"
-UPLOAD_BASE="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/$PACKAGE"
+API_BASE="${PLAY_API_BASE:-https://androidpublisher.googleapis.com}"
+BASE="$API_BASE/androidpublisher/v3/applications/$PACKAGE"
+UPLOAD_BASE="$API_BASE/upload/androidpublisher/v3/applications/$PACKAGE"
 # --retry-all-errors requires curl >= 7.71 (missing on older self-hosted runners);
 # plain --retry already covers transient HTTP 5xx/429 and network hiccups.
 CURL=(curl -sS --retry 3 --retry-delay 2 --connect-timeout 30)
@@ -109,30 +118,29 @@ token="$(jq -r '.access_token' <<<"$HTTP_BODY")"
 [[ -n "$token" && "$token" != "null" ]] || { echo "::error::OAuth token exchange returned no access_token"; exit 1; }
 AUTH=(-H "Authorization: Bearer $token")
 
-# 2. Ensure the closed testing track exists — create it in its own committed
-#    edit if missing (creating + releasing in a single edit made commit 500).
-#    NOTE: Play's edits.insert DELETES any previously-open uncommitted edit for
-#    the app, so the probe edit must be resolved BEFORE opening the main edit.
-req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
-[[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (probe)" 200
-probe_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
-req -m 60 "$BASE/edits/$probe_edit/tracks" "${AUTH[@]}"
-[[ "$HTTP_CODE" == "200" ]] || die_http "tracks.list (probe)" 200
-track_ids="$(jq -r '[.tracks[]?.track] | join(",")' <<<"$HTTP_BODY")"
-if [[ ",$track_ids," != *",$TRACK,"* ]]; then
-  echo "track '$TRACK' not found — creating closed testing track"
-  req -m 60 -X POST "$BASE/edits/$probe_edit/tracks" "${AUTH[@]}" \
+# 2. Ensure the closed testing track exists — BEFORE opening the main edit.
+#    The existence check is edit-free (applications.tracks.releases.list — 200 =
+#    track exists, 404 = missing), and a missing track is created in its own
+#    committed edit. Play's edits.insert is NOT multi-edit safe: opening a
+#    second edit while one is open silently deletes the first, so a "probe
+#    edit" flow fails the main edit's bundle upload with 400 "This Edit has
+#    been deleted" (AUT-952). Only one edit is ever open at a time here.
+track_probe="$(curl -sS --connect-timeout 30 -o /dev/null -w '%{http_code}' "$BASE/tracks/$TRACK/releases" "${AUTH[@]}")"
+if [[ "$track_probe" != "200" ]]; then
+  echo "track '$TRACK' not found (releases probe HTTP $track_probe) — creating closed testing track"
+  req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
+  [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (track-create)" 200
+  create_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
+  req -m 60 -X POST "$BASE/edits/$create_edit/tracks" "${AUTH[@]}" \
     -H "Content-Type: application/json" \
     -d "{\"track\":\"$TRACK\",\"type\":\"CLOSED_TESTING\",\"formFactor\":\"DEFAULT\"}"
   [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.create ($TRACK)" 200
-  req -m 120 -X POST "$BASE/edits/$probe_edit:commit" "${AUTH[@]}"
+  req -m 120 -X POST "$BASE/edits/$create_edit:commit" "${AUTH[@]}"
   [[ "$HTTP_CODE" == "200" ]] || die_http "track-create edit commit" 200
   echo "closed testing track '$TRACK' created"
-else
-  "${CURL[@]}" -m 60 -X DELETE "$BASE/edits/$probe_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
 fi
 
-# 3. Open the main edit — AFTER the track probe so no later insert kills it
+# 3. Open the main edit — the ONLY edit held open by this script (see step 2)
 req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
 [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (main)" 200
 edit_id="$(jq -r '.id' <<<"$HTTP_BODY")"
@@ -147,14 +155,16 @@ version_code="$(jq -r '.versionCode' <<<"$HTTP_BODY")"
 [[ -n "$version_code" && "$version_code" != "null" ]] || { echo "::error::bundle upload returned no versionCode"; exit 1; }
 echo "uploaded $AAB -> versionCode $version_code"
 
-# 5. Assign it to the closed testing track
+# 5. Assign it to the closed testing track. $release is already the complete
+#    Track body — Track.releases is a JSON array of TrackRelease, so do not
+#    wrap it again ({releases:$release} would double-nest and Play 400s).
 release="{\"releases\":[{\"name\":\"$TRACK-$version_code\",\"versionCodes\":[\"$version_code\"],\"status\":\"$STATUS\""
 if [[ -n "$NOTES" ]]; then
   notes_json="$(jq -n --arg t "$NOTES" '[{"language":"en-US","text":$t}]')"
   release="$release,\"releaseNotes\":$notes_json"
 fi
 release="$release}]}"
-track_body="$(jq -n --argjson r "$release" '{releases:$r}')"
+track_body="$release"
 req -m 60 -X PUT "$EDIT/tracks/$TRACK" "${AUTH[@]}" \
   -H "Content-Type: application/json" -d "$track_body"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.update ($TRACK)" 200
@@ -178,7 +188,7 @@ elif [[ "$commit_code" == "403" && "$STATUS" == "completed" && "$ALLOW_FALLBACK"
   fi
   STATUS="draft"
   release="${release/\"completed\"/\"draft\"}"
-  track_body="$(jq -n --argjson r "$release" '{releases:$r}')"
+  track_body="$release"
   req -m 60 -X PUT "$EDIT/tracks/$TRACK" "${AUTH[@]}" \
     -H "Content-Type: application/json" -d "$track_body"
   [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.update ($TRACK) as draft" 200
@@ -197,4 +207,6 @@ req -m 60 "$BASE/edits/$verify_edit/tracks/$TRACK" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify ($TRACK)" 200
 vc_on_track="$(jq -r --arg vc "$version_code" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
 [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $version_code not visible on track '$TRACK' after commit"; exit 1; }
+# Drop the read-only verify edit so no open edit is ever left behind.
+"${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
 echo "closed testing ($TRACK) release OK: versionCode $version_code — status $STATUS, committed for review"
