@@ -11,7 +11,9 @@
 #   SERVICE_ACCOUNT_JSON_FILE          (alt) path to that JSON file.
 #   PLAY_PACKAGE_NAME                  (optional) default com.autobrainservice.app
 #   PLAY_RELEASE_NOTES                 (optional) plain-text "what's new".
-#   PLAY_TRACK                         (optional) default "testing".
+#   PLAY_TRACK                         (optional) default "alpha" — the existing
+#                                      closed testing track (has testers). Never
+#                                      create a new track.
 #   PLAY_RELEASE_STATUS                (optional) "completed" (default) or "draft".
 #   PLAY_ALLOW_DRAFT_FALLBACK          (optional) default true.
 #   PLAY_LOG_FILE                      (optional) append a full transcript here
@@ -27,11 +29,11 @@
 # - Only ONE edit is ever open at a time. Play's edits.insert silently deletes
 #   the previously-open edit, so a "probe edit" flow fails the main edit's
 #   bundle upload with 400 "This Edit has been deleted" (AUT-952). Track
-#   existence is probed edit-free; a missing track is created in its own
-#   committed edit, then the build is released onto it in a fresh edit.
-# - Closed testing tracks have custom names (no fixed API default). If the
-#   configured track does not exist it is created once as CLOSED_TESTING in
-#   its own committed edit, then the build is released onto it.
+#   existence is probed edit-free; the release goes onto the EXISTING closed
+#   testing track (alpha) only — a missing track is a hard failure, never
+#   auto-created (AUT-994: do not create new tracks).
+# - Closed testing tracks have custom names. The target is the existing
+#   `alpha` closed testing track which already has a tester audience.
 # - Play rejects a "completed" release on a closed testing track when the track
 #   has no tester audience ("Release in track targeting no countries"). With
 #   PLAY_ALLOW_DRAFT_FALLBACK=true the script then commits the release as a
@@ -47,7 +49,7 @@ set -euo pipefail
 
 AAB="${1:?usage: play-upload-closed-testing.sh <app-release.aab> [track-id]}"
 [[ -f "$AAB" ]] || { echo "::error::AAB not found: $AAB"; exit 1; }
-TRACK="${2:-${PLAY_TRACK:-testing}}"
+TRACK="${2:-${PLAY_TRACK:-alpha}}"
 PACKAGE="${PLAY_PACKAGE_NAME:-com.autobrainservice.app}"
 NOTES="${PLAY_RELEASE_NOTES:-}"
 STATUS="${PLAY_RELEASE_STATUS:-completed}"
@@ -118,26 +120,15 @@ token="$(jq -r '.access_token' <<<"$HTTP_BODY")"
 [[ -n "$token" && "$token" != "null" ]] || { echo "::error::OAuth token exchange returned no access_token"; exit 1; }
 AUTH=(-H "Authorization: Bearer $token")
 
-# 2. Ensure the closed testing track exists — BEFORE opening the main edit.
-#    The existence check is edit-free (applications.tracks.releases.list — 200 =
-#    track exists, 404 = missing), and a missing track is created in its own
-#    committed edit. Play's edits.insert is NOT multi-edit safe: opening a
-#    second edit while one is open silently deletes the first, so a "probe
-#    edit" flow fails the main edit's bundle upload with 400 "This Edit has
-#    been deleted" (AUT-952). Only one edit is ever open at a time here.
+# 2. Verify the target closed testing track exists — edit-free probe (200 =
+#    exists, anything else = fail). A missing track is a HARD FAILURE: this
+#    pipeline must never create a track (AUT-994). The existing `alpha` track
+#    already has a tester audience; if it ever goes missing, someone removed it
+#    in Play Console and the release must stop for a human, not silently fork.
 track_probe="$(curl -sS --connect-timeout 30 -o /dev/null -w '%{http_code}' "$BASE/tracks/$TRACK/releases" "${AUTH[@]}")"
 if [[ "$track_probe" != "200" ]]; then
-  echo "track '$TRACK' not found (releases probe HTTP $track_probe) — creating closed testing track"
-  req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
-  [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (track-create)" 200
-  create_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
-  req -m 60 -X POST "$BASE/edits/$create_edit/tracks" "${AUTH[@]}" \
-    -H "Content-Type: application/json" \
-    -d "{\"track\":\"$TRACK\",\"type\":\"CLOSED_TESTING\",\"formFactor\":\"DEFAULT\"}"
-  [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.create ($TRACK)" 200
-  req -m 120 -X POST "$BASE/edits/$create_edit:commit" "${AUTH[@]}"
-  [[ "$HTTP_CODE" == "200" ]] || die_http "track-create edit commit" 200
-  echo "closed testing track '$TRACK' created"
+  echo "::error::track '$TRACK' not found (releases probe HTTP $track_probe). NOT creating a new track (AUT-994): the build must go onto the existing closed testing track that already has testers. Check the track name in Play Console."
+  exit 1
 fi
 
 # 3. Open the main edit — the ONLY edit held open by this script (see step 2)
