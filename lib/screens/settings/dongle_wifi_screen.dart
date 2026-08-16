@@ -42,6 +42,7 @@ class _DongleWifiScreenState extends State<DongleWifiScreen> {
   bool _loading = true;
   bool _busy = false;
   String? _status;
+  String? _loadError;
 
   bool get _enabled => _config.enabled;
 
@@ -80,19 +81,27 @@ class _DongleWifiScreenState extends State<DongleWifiScreen> {
         _devices = devices;
         _vehicles = vehicles;
         _linked = _resolveLinked(devices, cfg);
+        _loadError = null;
       });
-    } catch (_) {}
-    setState(() => _loading = false);
+    } catch (_) {
+      // Distinct from "no dongle linked": the list/vehicle fetch itself failed
+      // (offline, auth, server) and we cannot say anything about linkage yet
+      // (AUT-968 F4).
+      if (mounted) setState(() => _loadError = 'Could not reach the server.');
+    }
+    if (mounted) setState(() => _loading = false);
   }
 
-  /// Reuse the saved device when it still exists; otherwise fall back to the
-  /// first device (GET /devices is ordered newest-first) or none.
+  /// Reuses the saved device only when it still exists in the current
+  /// account's list; otherwise returns null so the user re-links. Never falls
+  /// back to a different device — that would push the previous account's key
+  /// into a device the user never chose (AUT-963 F1).
   DongleDevice? _resolveLinked(List<DongleDevice> devices, DongleConfig cfg) {
     if (devices.isEmpty) return null;
     for (final d in devices) {
       if (d.id == cfg.deviceId) return d;
     }
-    return devices.first;
+    return null;
   }
 
   String? _apiUrlForSelfHosted() =>
@@ -261,16 +270,17 @@ class _DongleWifiScreenState extends State<DongleWifiScreen> {
     final cfg = _config;
     final ssid = _ssid.text.trim();
     final pass = _pass.text;
-    if (ssid.isEmpty) {
-      setState(() => _status = 'Enter the WiFi network name (SSID) first.');
-      return;
-    }
-    if (pass.isEmpty) {
-      setState(() => _status = 'Enter the WiFi password first.');
+    final inputError = validateWifiInput(ssid: ssid, pass: pass);
+    if (inputError != null) {
+      setState(() => _status = inputError);
       return;
     }
     if (cfg.deviceId == null || cfg.apiKey == null) {
       setState(() => _status = 'Link the dongle to your account first.');
+      return;
+    }
+    if (_linked == null || _linked!.id != cfg.deviceId) {
+      setState(() => _status = 'Re-link the dongle to your account first.');
       return;
     }
     final payload = buildProvisioningPayload(
@@ -356,6 +366,9 @@ class _DongleWifiScreenState extends State<DongleWifiScreen> {
                           TextField(
                             controller: _ssid,
                             enabled: !_busy,
+                            // Firmware buffers ssid[33] and truncates silently
+                            // (AUT-968 F3); cap at the 802.11 limit here.
+                            maxLength: 32,
                             decoration: const InputDecoration(
                               labelText: 'WiFi name (SSID)',
                               prefixIcon: Icon(Icons.wifi),
@@ -366,6 +379,8 @@ class _DongleWifiScreenState extends State<DongleWifiScreen> {
                             controller: _pass,
                             enabled: !_busy,
                             obscureText: true,
+                            // WPA2 passphrase cap (firmware pass[64]).
+                            maxLength: 63,
                             decoration: const InputDecoration(
                               labelText: 'WiFi password',
                               prefixIcon: Icon(Icons.password),
@@ -386,7 +401,7 @@ class _DongleWifiScreenState extends State<DongleWifiScreen> {
                               style: Theme.of(context).textTheme.titleSmall),
                           const SizedBox(height: 8),
                           if (_linked == null)
-                            const Text('No dongle linked yet. Create one to '
+                            Text(_loadError ?? 'No dongle linked yet. Create one to '
                                 'receive its one-time API key.')
                           else ...[
                             ListTile(

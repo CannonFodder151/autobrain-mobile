@@ -77,6 +77,36 @@ void main() {
     });
   });
 
+  group('validateWifiInput (AUT-963 F3)', () {
+    test('accepts boundary sizes (ssid 1–32, pass 8–63)', () {
+      expect(validateWifiInput(ssid: 'A' * 32, pass: '12345678'), isNull);
+      expect(validateWifiInput(ssid: 'A' * 32, pass: 'x' * 63), isNull);
+      expect(validateWifiInput(ssid: 'A', pass: '12345678'), isNull);
+    });
+
+    test('rejects empty or oversize ssid', () {
+      expect(validateWifiInput(ssid: '', pass: '12345678'), isNotNull);
+      expect(validateWifiInput(ssid: 'A' * 33, pass: '12345678'), contains('SSID'));
+    });
+
+    test('rejects short or oversize pass', () {
+      expect(validateWifiInput(ssid: 'Home', pass: '1234567'), contains('at least 8'));
+      expect(validateWifiInput(ssid: 'Home', pass: 'x' * 64), contains('63'));
+    });
+
+    test('counts octets, not characters, for non-ASCII input', () {
+      expect(validateWifiInput(ssid: 'é' * 33, pass: '12345678'), contains('SSID'));
+    });
+
+    test('rejects " or \\ in ssid/pass — firmware cannot unescape (AUT-968 F2)',
+        () {
+      expect(validateWifiInput(ssid: 'Net"5', pass: '12345678'), contains('" or \\'));
+      expect(validateWifiInput(ssid: r'Net\5', pass: '12345678'), isNotNull);
+      expect(validateWifiInput(ssid: 'Home', pass: 'pa"ssword1'), isNotNull);
+      expect(validateWifiInput(ssid: 'Home', pass: r'p\assword1'), isNotNull);
+    });
+  });
+
   group('DongleApi', () {
     test('create posts name + vehicle_id and parses the one-time key', () async {
       final api = _FakeApi()
