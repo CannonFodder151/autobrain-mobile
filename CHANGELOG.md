@@ -15,7 +15,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- Community Garage edit-build screen: tapping the share-scope checkboxes
+  (Photos / Vehicle specs / Mod list / Odometer / Notes) now toggles them. They
+  previously appeared to do nothing because the picker mutated shared state
+  without re-rendering (AUT-893).
+
+## [0.3.87] - 2026-08-15
+
+### Security
+- Backend caps stored GPS samples per trip at 5000 (mirrors the client's 2400
+  cap with headroom), bounding per-trip payload size on logbook create/update
+  (AUT-852).
 
 ## [0.3.86] - 2026-08-15
 
