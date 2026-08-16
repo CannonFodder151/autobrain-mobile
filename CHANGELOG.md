@@ -20,6 +20,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
+- Android licence/checkout: external payment and billing links now resolve on
+  Android 11+ (manifest declares https/http VIEW intents) and fail with an
+  actionable error that copies the link, instead of a silent "Could not open
+  the link" (AUT-926).
 - Build edit PATCH now clears the caption when the client sends an explicit
   `null` (previously an explicit `null` was treated as "leave unchanged" and
   the caption stayed put) (AUT-903).

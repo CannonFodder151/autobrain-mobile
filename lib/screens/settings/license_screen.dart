@@ -7,6 +7,7 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/api_client.dart';
 import '../../core/auth_state.dart';
 import '../../core/config.dart';
 import '../../services/iap_service.dart';
@@ -257,6 +258,13 @@ class _LicenseScreenState extends State<LicenseScreen> {
         if (promo.isNotEmpty) 'promo_code': promo,
       }) as Map<String, dynamic>;
       await _openUrl(data['url'] as String);
+    } on ApiException catch (e) {
+      final notConfigured =
+          e.statusCode == 503 || e.message.contains('not configured');
+      setState(() => _error = notConfigured
+          ? 'Payments are not enabled on this server yet. Contact support to '
+              'upgrade your licence.'
+          : 'Could not start checkout: ${e.message}');
     } catch (e) {
       setState(() => _error = 'Could not start checkout: $e');
     } finally {
@@ -286,22 +294,28 @@ class _LicenseScreenState extends State<LicenseScreen> {
     final url = _platform == 'ios'
         ? 'https://apps.apple.com/account/subscriptions'
         : 'https://play.google.com/store/account/subscriptions';
-    final ok =
-        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open the store.')),
-      );
-    }
+    await _openUrl(url);
   }
 
+  /// Opens [url] in an external browser. Android 11+ hides other apps unless
+  /// the manifest declares the https/http VIEW intents (AUT-926); when no
+  /// handler resolves or the launch still fails, surface an actionable error
+  /// and copy the link to the clipboard instead of a silent "Could not open".
   Future<void> _openUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (!await canLaunchUrl(uri)) {
+      await Clipboard.setData(ClipboardData(text: url));
+      _setError('No browser is installed to open the payment link. '
+          'The link was copied to your clipboard — paste it into any browser.');
+      return;
+    }
     final ok =
-        await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open the link.')),
-      );
+      await Clipboard.setData(ClipboardData(text: url));
+      _setError('The payment page could not be opened. '
+          'The link was copied to your clipboard — paste it into your '
+          'browser and try again.');
     }
   }
 
