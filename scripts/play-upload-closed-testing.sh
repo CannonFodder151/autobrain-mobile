@@ -109,15 +109,10 @@ token="$(jq -r '.access_token' <<<"$HTTP_BODY")"
 [[ -n "$token" && "$token" != "null" ]] || { echo "::error::OAuth token exchange returned no access_token"; exit 1; }
 AUTH=(-H "Authorization: Bearer $token")
 
-# 2. Open the main edit
-req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
-[[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (main)" 200
-edit_id="$(jq -r '.id' <<<"$HTTP_BODY")"
-[[ -n "$edit_id" && "$edit_id" != "null" ]] || { echo "::error::edits.insert returned no id"; exit 1; }
-EDIT="$BASE/edits/$edit_id"
-
-# 3. Ensure the closed testing track exists — create it in its own committed
+# 2. Ensure the closed testing track exists — create it in its own committed
 #    edit if missing (creating + releasing in a single edit made commit 500).
+#    NOTE: Play's edits.insert DELETES any previously-open uncommitted edit for
+#    the app, so the probe edit must be resolved BEFORE opening the main edit.
 req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
 [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (probe)" 200
 probe_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
@@ -136,6 +131,13 @@ if [[ ",$track_ids," != *",$TRACK,"* ]]; then
 else
   "${CURL[@]}" -m 60 -X DELETE "$BASE/edits/$probe_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
 fi
+
+# 3. Open the main edit — AFTER the track probe so no later insert kills it
+req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
+[[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (main)" 200
+edit_id="$(jq -r '.id' <<<"$HTTP_BODY")"
+[[ -n "$edit_id" && "$edit_id" != "null" ]] || { echo "::error::edits.insert returned no id"; exit 1; }
+EDIT="$BASE/edits/$edit_id"
 
 # 4. Upload the AAB (media upload goes to the /upload/ host)
 req -m 600 -X POST "$UPLOAD_BASE/edits/$edit_id/bundles?uploadType=media" "${AUTH[@]}" \
