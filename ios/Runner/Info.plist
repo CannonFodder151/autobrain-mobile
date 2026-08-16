@@ -24,6 +24,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>AutoBrain uses Bluetooth to provision WiFi credentials to the AutoBrain-Tripper dongle and to connect OBD adapters.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>AutoBrain uses the camera to photograph receipts and vehicle parts.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
