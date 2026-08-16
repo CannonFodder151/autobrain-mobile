@@ -14,9 +14,11 @@ import '../../services/iap_service.dart';
 
 /// License/subscription purchase.
 ///
-/// Store builds (MOBILE_STORE_BUILD, IAP catalogue enabled by the backend)
-/// purchase via Apple StoreKit / Google Play Billing. Web and self-hosted
-/// builds keep the external browser (Stripe) path (AUT-531).
+/// Store builds (MOBILE_STORE_BUILD) purchase via Apple StoreKit / Google
+/// Play Billing; a store build with no IAP catalogue available shows a
+/// not-configured state and never falls back to the external Stripe path
+/// (AUT-931, Google Play policy). Web and self-hosted builds keep the
+/// external browser (Stripe) path (AUT-531).
 class LicenseScreen extends StatefulWidget {
   const LicenseScreen({super.key});
 
@@ -57,6 +59,12 @@ class _LicenseScreenState extends State<LicenseScreen> {
       _subStatus == 'past_due' ||
       _profile?['iap_status'] == 'active';
   int get _maxVehicles => (_profile?['max_vehicles'] as int?) ?? 1;
+
+  /// Store build whose server does not advertise an IAP catalogue. Store
+  /// policies (Google Play / App Store) forbid paying outside store billing,
+  /// so this build must never show the external Stripe path (AUT-931).
+  bool get _iapUnavailable =>
+      AppConfig.storeBuild && AppConfig.isMobile && !_iapMode;
 
   @override
   void initState() {
@@ -103,8 +111,9 @@ class _LicenseScreenState extends State<LicenseScreen> {
   }
 
   /// Switches the screen to store-native IAP when this is a store build and
-  /// the connected server advertises an IAP catalogue. Otherwise (web,
-  /// self-hosted, or IAP not configured) the Stripe/browser path stays.
+  /// the connected server advertises an IAP catalogue. On store builds with
+  /// no catalogue the UI shows a not-configured state instead of the Stripe
+  /// path (AUT-931); on web/self-hosted builds the Stripe/browser path stays.
   Future<void> _initIap() async {
     if (!AppConfig.storeBuild || !AppConfig.isMobile) return;
     final api = context.read<AuthState>().api;
@@ -114,7 +123,7 @@ class _LicenseScreenState extends State<LicenseScreen> {
         await api.get('/billing/iap/catalog') as Map<String, dynamic>,
       );
     } catch (_) {
-      return; // catalogue missing → browser path
+      return; // catalogue missing → not-configured state on store builds
     }
     final platformProducts = catalog.forPlatform(_platform);
     if (!catalog.enabled || platformProducts.isEmpty) return;
@@ -338,7 +347,10 @@ class _LicenseScreenState extends State<LicenseScreen> {
                 padding: const EdgeInsets.all(16),
                 children: [
                   _statusCard(context),
-                  if (!_iapMode) ...[
+                  if (_iapUnavailable) ...[
+                    const SizedBox(height: 20),
+                    _iapNotConfigured(context),
+                  ] else if (!_iapMode) ...[
                     if (_saleActive) ...[
                       const SizedBox(height: 16),
                       _saleBanner(context),
@@ -437,6 +449,38 @@ class _LicenseScreenState extends State<LicenseScreen> {
     }
     result.sort((a, b) => (order[a.$1.plan] ?? 9) - (order[b.$1.plan] ?? 9));
     return result;
+  }
+
+  Widget _iapNotConfigured(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.storefront_outlined, color: scheme.primary),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Text('In-app purchase is not configured yet',
+                      style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text('Upgrades are only available through the app store on this '
+                'build. Please update the app to the latest version to buy or '
+                'manage your licence.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant)),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _saleBanner(BuildContext context) {
@@ -749,7 +793,7 @@ class _LicenseScreenState extends State<LicenseScreen> {
                   child: Text(title,
                       style: const TextStyle(fontWeight: FontWeight.w700)),
                 ),
-                if (_hasSub)
+                if (_hasSub && (_iapMode || !AppConfig.storeBuild))
                   IconButton(
                     icon: const Icon(Icons.manage_accounts_outlined),
                     tooltip: 'Manage subscription',

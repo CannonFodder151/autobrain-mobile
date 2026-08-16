@@ -21,6 +21,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Fixed
+- Google Play policy: Android/iOS store builds no longer fall back to the
+  external Stripe checkout when the in-app purchase catalogue is unavailable
+  — they show a clear "update the app" not-configured state with no external
+  payment link or Stripe portal route. Web/sideload builds keep the Stripe
+  path (AUT-931).
 - Android licence/checkout: external payment and billing links now resolve on
   Android 11+ (manifest declares https/http VIEW intents) and fail with an
   actionable error that copies the link, instead of a silent "Could not open
