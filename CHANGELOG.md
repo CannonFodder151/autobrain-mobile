@@ -17,19 +17,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
 
+## [0.3.89] - 2026-08-16
+
 ### Fixed
-- Android licence/checkout: external payment and billing links now resolve on
-  Android 11+ (manifest declares https/http VIEW intents) and fail with an
-  actionable error that copies the link, instead of a silent "Could not open
-  the link" (AUT-926).
 - Build edit PATCH now clears the caption when the client sends an explicit
   `null` (previously an explicit `null` was treated as "leave unchanged" and
   the caption stayed put) (AUT-903).
 - Admin build takedown now deletes the build's photo rows instead of leaving
   them orphaned in the uploader's pool pointing at purged MinIO objects
   (AUT-889).
+- Community Garage takedowns now propagate across the federation (AUT-902): deleting a
+  locally-hosted build or Issues Blog post (by the author or an admin) tells the hub to
+  drop the routed post and fan a `remove` event out, so the deleted post no longer
+  lingers in the community hub on other servers. Servers also apply incoming `remove`
+  events to their federated copies (builds and issue posts). The hub operator's
+  "Remove post" action in the hub admin GUI does the same (hub repo, AUT-902).
+- Community Garage admins can now remove any build post directly from the feed
+  (community pages) — previously the delete button 404'd on posts they didn't author,
+  and federated copies had no delete action at all (AUT-902).
+- Security hardening: servers now ignore hub-relayed `remove` events for their own
+  locally-hosted builds and issue posts — a takedown can only ever reach a federated
+  copy, never the origin's local post. The federation hub also rejects `remove`
+  produced through the generic event relay, closing a bypass of the origin check
+  (AUT-907).
+- Federated build copies that an admin removes from the feed now stay removed
+  instead of resurrecting on the next federation sync: the removal is recorded as a
+  tombstone and the inbox pull skips it, so a deleted copy does not reappear ~1 minute
+  later (AUT-910).
 
 ### Added
 - Report buttons on build posts and build comments — reports join the admin
