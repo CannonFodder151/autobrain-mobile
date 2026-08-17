@@ -23,29 +23,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
-
 ## [Unreleased]
 
 ### Tests
 - Alembic test guard (AUT-1009): new `test_alembic_revision_ids_unique` asserts every
   revision id is unique, catching the add_devices duplicate `a1b2c3d4e5f6` collision.
   Removed stray `a1b2c3d4e5f6_add_devices.bak` from migration versions.
-
-## [0.3.95] - 2026-08-17
-
-### Tests
 - Backup regression net (AUT-1023): full-schema `serialize -> dump -> restore` roundtrip test now seeds one representative row per table across all 32 tables (community garage + market-data included) and every column storage class — guards against silent backup data loss or restore failure if schema/types drift again.
 
 ## [0.3.94] - 2026-08-17
 
 ### Fixed
-- Alembic migration chain (AUT-996): the AUT-918 dongle-devices migration
-  reused revision ID `a1b2c3d4e5f6` (already claimed by
-  `add_user_max_vehicles`), so `alembic upgrade head` failed at bootstrap and
-  every deploy silently fell back to `create_all`. Renamed the revision to
-  `d1e2f3a4b5c6` and added merge `m3rge03` re-unifying the build-flags and
-  remote-tombstones/devices branches — `alembic heads` reports a single head
-  again and fresh or stamped databases migrate cleanly. No schema change.
 - Dongle provisioning (AUT-969): when the dongle rejects a push with a token
   or window error, the app now explains the fix (re-pair and retry right after
   the pairing prompt) instead of echoing the firmware's terse
@@ -367,11 +355,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 ## [Unreleased]
-
-### Tests
-- Alembic test guard (AUT-1009): new `test_alembic_revision_ids_unique` asserts every
-  revision id is unique, catching the add_devices duplicate `a1b2c3d4e5f6` collision.
-  Removed stray `a1b2c3d4e5f6_add_devices.bak` from migration versions.
 
 ## [0.3.79] - 2026-08-15
 
