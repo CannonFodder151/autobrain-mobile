@@ -110,10 +110,14 @@ class _LicenseScreenState extends State<LicenseScreen> {
     if (mounted) setState(() => _loading = false);
   }
 
-  /// Switches the screen to store-native IAP when this is a store build and
-  /// the connected server advertises an IAP catalogue. On store builds with
-  /// no catalogue the UI shows a not-configured state instead of the Stripe
-  /// path (AUT-931); on web/self-hosted builds the Stripe/browser path stays.
+  /// Switches the screen to store-native IAP when this is a store build,
+  /// the connected server advertises an IAP catalogue, AND the store query
+  /// actually resolves at least one of the advertised products. Entering IAP
+  /// mode on the catalogue alone — before confirming the store serves it —
+  /// left the plans list empty (no upgrade buttons, blank License, AUT-1004).
+  /// When the store cannot resolve any product (unavailable, unconfigured, or
+  /// the account lacks them) `_iapMode` stays off and the not-configured state
+  /// renders; it never falls back to Stripe on a store build (AUT-931).
   Future<void> _initIap() async {
     if (!AppConfig.storeBuild || !AppConfig.isMobile) return;
     final api = context.read<AuthState>().api;
@@ -130,19 +134,22 @@ class _LicenseScreenState extends State<LicenseScreen> {
 
     IapService.instance.listen();
     _iapSub ??= IapService.instance.updates.listen(_onIapUpdate);
-    setState(() {
-      _iapMode = true;
-      _iapProducts = platformProducts;
-    });
+    final Map<String, ProductDetails> storeProducts;
     try {
       final res = await IapService.instance
           .queryProducts(platformProducts.keys.toSet());
-      setState(() {
-        _storeProducts = {for (final p in res.productDetails) p.id: p};
-      });
+      storeProducts = {for (final p in res.productDetails) p.id: p};
     } catch (_) {
-      // Store unreachable — cards will show and fail gracefully on purchase.
+      return; // store query failed → not-configured state on store builds
     }
+    if (!platformProducts.keys.any(storeProducts.containsKey)) {
+      return; // store serves none of the advertised products (AUT-1004)
+    }
+    setState(() {
+      _iapMode = true;
+      _iapProducts = platformProducts;
+      _storeProducts = storeProducts;
+    });
   }
 
   void _onIapUpdate(PurchaseDetails purchase) {
@@ -420,10 +427,7 @@ class _LicenseScreenState extends State<LicenseScreen> {
                       ],
                     ),
                     const SizedBox(height: 16),
-                    for (final (iap, store) in _iapPlansForPeriod()) ...[
-                      _iapPlanCard(context, iap, store),
-                      const SizedBox(height: 16),
-                    ],
+                    _IapPlansList(context),
                   ],
                   if (_error != null) ...[
                     const SizedBox(height: 8),
@@ -449,6 +453,25 @@ class _LicenseScreenState extends State<LicenseScreen> {
     }
     result.sort((a, b) => (order[a.$1.plan] ?? 9) - (order[b.$1.plan] ?? 9));
     return result;
+  }
+
+  Widget _IapPlansList(BuildContext context) {
+    final plans = _iapPlansForPeriod();
+    if (plans.isEmpty) {
+      return Text('No plans are available from the store for this '
+          'billing period yet. Try the other period.',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final (iap, store) in plans) ...[
+          _iapPlanCard(context, iap, store),
+          const SizedBox(height: 16),
+        ],
+      ],
+    );
   }
 
   Widget _iapNotConfigured(BuildContext context) {

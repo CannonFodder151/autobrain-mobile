@@ -36,6 +36,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ### Tests
 - Backup regression net (AUT-1023): full-schema `serialize -> dump -> restore` roundtrip test now seeds one representative row per table across all 32 tables (community garage + market-data included) and every column storage class — guards against silent backup data loss or restore failure if schema/types drift again.
 
+### Fixed
+- Android License screen blank upgrade list (AUT-1004): the store IAP path now engages only once the store query actually resolves the advertised products. Previously the screen flipped into IAP mode on the catalogue alone, so a store that returned no resolvable product (unavailable, unconfigured, or the account lacks them) rendered an empty plans list with no upgrade buttons. It now shows the "in-app purchase is not configured yet" state instead — the License screen is never blank, and store builds never fall back to Stripe (AUT-931).
+
 ## [0.3.94] - 2026-08-17
 
 ### Fixed
