@@ -22,7 +22,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Tests
+- Backup regression net (AUT-1023): full-schema `serialize -> dump -> restore` roundtrip test now seeds one representative row per table across all 32 tables (community garage + market-data included) and every column storage class — guards against silent backup data loss or restore failure if schema/types drift again.
+
+## [0.3.94] - 2026-08-17
 
 ### Fixed
 - Dongle provisioning (AUT-969): when the dongle rejects a push with a token
@@ -45,6 +51,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - Dongle BLE provisioning token read: pass the timeout as int seconds to match
   `flutter_blue_plus` 1.32.8 `Characteristic.read()` (AUT-992). A `Duration`
   here broke the mobile sync's analyze gate on main.
+
+### Security
+- CI: weekly full-resolution dependency scan now also audits the `market-data`
+  service tree (`.github/workflows/security-scan.yml` audits
+  `backend`, `ai` and `market-data` requirements each in their own resolution);
+  `rego-lookup-api` (a separate repo) now runs its own identical weekly scan.
+  Previously only backend + AI trees were scheduled for CVE scanning, leaving
+  the Playwright/Selenium and market-data transitive trees uncovered. The scan
+  runs on `ubuntu-latest` (GitHub-hosted, live PyPI) because the self-hosted
+  runner's pip index is a stale mirror that cannot resolve `uvicorn==0.34.0`,
+  which would have failed the scan on every run.
+- Market-data: the newly-enabled scan found `starlette 0.41.3` (via
+  `fastapi==0.115.6`) in the market-data tree carrying the
+  PYSEC-2026-161/248/249/1942/1941/2281/2280 CVE set. Bumped
+  `market-data/requirements.txt` to `fastapi==0.133.0` +
+  `starlette==1.3.1`, matching the backend/AI pins from AUT-794. Local
+  `test_auth.py` + `test_scrape.py` pass against the bumped deps (AUT-1019).
 
 ## [0.3.92] - 2026-08-16
 
