@@ -21,12 +21,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+
 ## [Unreleased]
 
+## [0.3.94] - 2026-08-17
+
 ### Fixed
+- Dongle provisioning (AUT-969): when the dongle rejects a push with a token
+  or window error, the app now explains the fix (re-pair and retry right after
+  the pairing prompt) instead of echoing the firmware's terse
+  "token missing or expired".
+- Community Garage (AUT-992): duplicate `_report()` dropped the post-report
+  path to the single AUT-896 `reportBuild` implementation — the leftover
+  AUT-883 `flagBuild` copy was a merge duplicate that broke the mobile sync's
+  analyze gate on main after PR #160 merged.
+
+## [0.3.93] - 2026-08-17
+
+### Fixed
+- Community Garage (AUT-997): posts deleted by their author (or by an admin)
+  no longer reappear in the feed after the next federation sync — a tombstone
+  now records every removed build (local + remote) so the hub re-routing the
+  post's event cannot resurrect it (mirrors the AUT-910 fix for remote
+  copies).
 - Dongle BLE provisioning token read: pass the timeout as int seconds to match
   `flutter_blue_plus` 1.32.8 `Characteristic.read()` (AUT-992). A `Duration`
   here broke the mobile sync's analyze gate on main.
+
+### Security
+- CI: weekly full-resolution dependency scan now also audits the `market-data`
+  service tree (`.github/workflows/security-scan.yml` adds
+  `-r market-data/requirements.txt`); `rego-lookup-api` (a separate repo) now
+  runs its own identical weekly scan. Previously only backend + AI trees were
+  scheduled for CVE scanning, leaving the Playwright/Selenium and market-data
+  transitive trees uncovered (AUT-1019).
 
 ## [0.3.92] - 2026-08-16
 
@@ -120,6 +149,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   and build comments (AUT-883).
 - Dedicated "My Issues" tab next to Issues Blog showing your own issue blog
   posts (AUT-883).
+- Build posts on the Community Garage hub feed can be reported ("Report post"
+  in the build-detail menu). Reports are recorded locally and sent to the
+  federation hub, where the operator sees them in a new Reported posts queue
+  with the full post content, reason and reporter (AUT-896).
+- Federation hub operator console: the Posts view now shows each post
+  human-readably (title, author, make/model, caption, mod/photo counts) with
+  text wrapping instead of raw JSON, and a Reported posts moderation list with
+  Remove/Dismiss actions (AUT-896).
 
 ## [0.3.88] - 2026-08-16
 

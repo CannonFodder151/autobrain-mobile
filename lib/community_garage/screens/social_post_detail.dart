@@ -139,19 +139,6 @@ class _SocialPostDetailScreenState extends State<SocialPostDetailScreen> {
     return (reason == null || reason.isEmpty) ? null : reason;
   }
 
-  Future<void> _report() async {
-    final reason = await _askReason('Report this build');
-    if (reason == null || !mounted) return;
-    try {
-      await SocialApi(context.read<AuthState>().api).flagBuild(widget.postId, reason);
-      _toast('Thanks — your report has been submitted for review.');
-    } on ApiException catch (e) {
-      _toast(e.message);
-    } catch (e) {
-      _toast('Could not submit report: $e');
-    }
-  }
-
   Future<void> _reportComment(SocialComment comment) async {
     final reason = await _askReason('Report this comment');
     if (reason == null || !mounted) return;
@@ -173,12 +160,64 @@ class _SocialPostDetailScreenState extends State<SocialPostDetailScreen> {
     }
   }
 
+  Future<void> _report() async {
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Report this post'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 3,
+          maxLength: 200,
+          decoration: const InputDecoration(
+            labelText: 'Reason',
+            hintText: 'e.g. spam, misleading, abuse',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Report'),
+          ),
+        ],
+      ),
+    );
+    if (reason == null || reason.isEmpty || !mounted) return;
+    try {
+      await SocialApi(context.read<AuthState>().api)
+          .reportBuild(widget.postId, reason);
+      _toast('Thanks — your report has been submitted for review.');
+    } on ApiException catch (e) {
+      _toast(e.message);
+    } catch (e) {
+      _toast('Could not submit report: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthState>();
     final build = _build;
     return Scaffold(
-      appBar: AppBar(title: const Text('Build details')),
+      appBar: AppBar(
+        title: const Text('Build details'),
+        actions: [
+          if (auth.premium && build != null && !_disabled)
+            PopupMenuButton<String>(
+              tooltip: 'More options',
+              onSelected: (value) {
+                if (value == 'report') _report();
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'report', child: Text('Report post')),
+              ],
+            ),
+        ],
+      ),
       body: auth.freeAccount
           ? const PremiumGate()
           : _disabled
