@@ -46,4 +46,40 @@ void main() {
     expect(catalog.products, isEmpty);
     expect(catalog.forPlatform('android'), isEmpty);
   });
+
+  test('IAP mode engages only when the store serves an advertised product',
+      () {
+    final catalog = IapCatalog.fromJson({
+      'enabled': true,
+      'products': [
+        {
+          'product_id': 'com.autobrainservice.app.enthusiast.monthly',
+          'platform': 'android',
+          'plan': 'enthusiast',
+          'billing': 'monthly',
+        },
+        {
+          'product_id': 'com.autobrainservice.app.garage.monthly',
+          'platform': 'android',
+          'plan': 'garage',
+          'billing': 'monthly',
+        },
+      ],
+    });
+    final advertised = catalog.forPlatform('android');
+
+    final served = {'com.autobrainservice.app.enthusiast.monthly'};
+    expect(advertised.keys.any(served.contains), isTrue,
+        reason: 'store matching an advertised product enables IAP');
+
+    final servedNone = <String>{};
+    expect(advertised.keys.any(servedNone.contains), isFalse,
+        reason: 'store serving nothing must NOT enter IAP mode — a store build '
+            'then shows the not-configured state instead of a blank plans '
+            'list (AUT-1004)');
+
+    final servedUnrelated = {'com.example.unrelated.product'};
+    expect(advertised.keys.any(servedUnrelated.contains), isFalse,
+        reason: 'store serving only unrelated products stays out of IAP mode');
+  });
 }
