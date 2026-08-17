@@ -24,7 +24,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Fixed
+- Alembic migration chain (AUT-1009): renumbered the duplicate `a1b2c3d4e5f6`
+  revision in `add_devices` to `z2a3b4c5d6e7` and added `m3rge03` to merge the
+  two remaining heads (`w5x6y7z8a9b0` + `z2a3b4c5d6e7`). `alembic upgrade head`
+  now works at bootstrap instead of falling back to `create_all`. Added
+  `test_alembic_revision_ids_unique` regression guard (from PR #187) to prevent
+  future duplicate revision IDs.
+
+## [0.3.96] - 2026-08-17
 
 ### Tests
 - Alembic test guard (AUT-1009): new `test_alembic_revision_ids_unique` asserts every
@@ -35,9 +46,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Tests
 - Backup regression net (AUT-1023): full-schema `serialize -> dump -> restore` roundtrip test now seeds one representative row per table across all 32 tables (community garage + market-data included) and every column storage class — guards against silent backup data loss or restore failure if schema/types drift again.
-
-### Fixed
-- Android License screen blank upgrade list (AUT-1004): the store IAP path now engages only once the store query actually resolves the advertised products. Previously the screen flipped into IAP mode on the catalogue alone, so a store that returned no resolvable product (unavailable, unconfigured, or the account lacks them) rendered an empty plans list with no upgrade buttons. It now shows the "in-app purchase is not configured yet" state instead — the License screen is never blank, and store builds never fall back to Stripe (AUT-931).
 
 ## [0.3.94] - 2026-08-17
 
