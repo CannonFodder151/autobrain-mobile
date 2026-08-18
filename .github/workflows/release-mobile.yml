@@ -40,7 +40,8 @@ jobs:
       - name: Install Android SDK Platform 37 (permission_handler_android compile target)
         run: |
           set -euo pipefail
-          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37" ]; then
+          export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37" ] && [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ]; then
             curl -fsSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.0_r02.zip
             rm -rf /tmp/platform-37-extract
             mkdir -p /tmp/platform-37-extract
@@ -49,6 +50,16 @@ jobs:
             sed -i 's/^AndroidVersion.ApiLevel=.*/AndroidVersion.ApiLevel=37/' "$ANDROID_SDK_ROOT/platforms/android-37/source.properties"
             rm -rf /tmp/platform-37.zip /tmp/platform-37-extract
           fi
+          # AGP 8.12.0 recognizes both android-37 and android-37.0 directory naming.
+          # Create symlink android-37 -> android-37.0 as a safety net for any path
+          # where Gradle auto-downloaded the SDK during the build step.
+          for sdk in "$ANDROID_SDK_ROOT" "/root/.android/sdk"; do
+            [ -z "$sdk" ] && continue
+            if [ -d "$sdk/platforms/android-37.0" ] && [ ! -d "$sdk/platforms/android-37" ]; then
+              ln -s android-37.0 "$sdk/platforms/android-37"
+              echo "Created symlink at $sdk/platforms/android-37 -> android-37.0"
+            fi
+          done
           echo "android-37 present: $(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ')"
 
       - name: Verify requested version matches pubspec
