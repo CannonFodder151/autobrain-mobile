@@ -12,7 +12,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Changed
+- Hosted app images (AUT-1114): `docker-compose.hosted.yml` now pulls `backend`, `ai`, `market-data` and `frontend` images from `ghcr.io/cannonfodder151/*:hosted` (multi-arch, incl. arm64) instead of Docker Hub, which only carries amd64 `:hosted` tags (AUT-967). The Oracle host is arm64, so Docker Hub image pulls could run the wrong architecture.
+
+## [0.3.103] - 2026-08-18
 
 ### Fixed
 - Dongle identity confirmation before BLE provisioning write (AUT-966): the app now lists every discovered dongle by name + MAC/remoteId and requires explicit user confirmation before it writes the WiFi SSID/PSK + one-time device API key. It writes only to the confirmed device — never the first BLE scan match, which a spoofed advertisement could previously hijack.
