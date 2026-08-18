@@ -30,7 +30,10 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
+          cache: false
+
+      - name: Clear Flutter pub cache
+        run: flutter pub cache repair || true
 
       - name: Fetch dependencies
         run: flutter pub get --refresh
