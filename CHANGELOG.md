@@ -10,22 +10,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
+
+### Changed
+- Web favicon (AUT-1125): updated home-screen web app icons (`Icon-192.png` /
+  `Icon-512.png`) and wired them into `frontend/web/index.html` so the hosted
+  app shows the new AutoBrain branding as an installable Progressive Web App.
+
+## [0.3.101] - 2026-08-18
 
 ### Fixed
 - Hosted publish (AUT-1114): fixed Dart string-interpolation syntax error in
   the license screen subtitle (`'Managed by Stripe.}')` — unterminated string
   literal broke `flutter build web`, failing the image publish + manifest
   rotation so the `hosted` tag never advanced to 0.3.100.
-
-## [0.3.101] - 2026-08-18
-
-### Changed
-- Android build upgrade (AUT-1124): AGP 8.11.1 → 8.13.2, compileSdk 36 → 37
-  (Android 17 / API 37) for `permission_handler_android` compile parity. SDK
-  platform install step is now `--console`-free (cmdline-tools 16.0 dropped the
-  flag and installs `platforms/android-37.0`); a symlink `android-37 → android-37.0`
-  covers AGP 8.13.2's minor-versioned lookup + Gradle auto-install on cold CI runners.
 
 ## [0.3.100] - 2026-08-18
 
