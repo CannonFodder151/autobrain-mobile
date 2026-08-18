@@ -53,7 +53,7 @@ jobs:
           flutter pub cache repair
 
       - name: Fetch dependencies
-        run: flutter pub get --refresh
+        run: flutter pub get
 
       - name: Analyze
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
