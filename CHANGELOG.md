@@ -25,10 +25,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
 ## [Unreleased]
 
 ### Fixed
 - License screen (AUT-1004): store build shows IAP plans only when the Play Store / App Store actually serves the advertised products. Previously, if the server had IAP products configured but the store hadn't yet published them, the plans list was empty and the License screen appeared blank — users couldn't select upgrades. Now the screen shows a "not configured" message until products are available.
+
+## [0.3.97] - 2026-08-17
+
+### Fixed
 - Alembic migration chain (AUT-1009): renumbered the duplicate `a1b2c3d4e5f6`
   revision in `add_devices` to `z2a3b4c5d6e7` and added `m3rge03` to merge the
   two remaining heads (`w5x6y7z8a9b0` + `z2a3b4c5d6e7`). `alembic upgrade head`
