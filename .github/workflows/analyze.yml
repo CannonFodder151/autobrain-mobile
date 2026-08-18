@@ -6,6 +6,7 @@ name: Analyze
 # the build before a release is ever cut (AUT-522).
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -23,7 +24,8 @@ permissions:
 
 jobs:
   analyze-pr:
-    runs-on: [self-hosted, linux, x64]
+    runs-on:
+  workflow_dispatch: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
 
