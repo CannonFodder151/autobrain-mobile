@@ -33,7 +33,7 @@ jobs:
           cache: true
 
       - name: Fetch dependencies
-        run: flutter pub get
+        run: flutter pub get --refresh
 
       - name: Analyze
         # Warnings/infos are pre-existing in the synced web lineage; only fail
