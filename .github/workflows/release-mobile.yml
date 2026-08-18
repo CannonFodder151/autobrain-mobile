@@ -37,11 +37,20 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK Platform 37.0 (permission_handler_android compile target)
+      - name: Install Android SDK Platform 37 (permission_handler_android compile target)
         run: |
           set -euo pipefail
-          sdkmanager --console "platforms;android-37.0"
-          echo "platforms: $(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ')"
+          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37" ]; then
+            curl -fsSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.0_r02.zip
+            rm -rf /tmp/platform-37-extract
+            mkdir -p /tmp/platform-37-extract
+            unzip -q /tmp/platform-37.zip -d /tmp/platform-37-extract
+            mkdir -p "$ANDROID_SDK_ROOT/platforms"
+            mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
+            sed -i 's/^AndroidVersion.ApiLevel=.*/AndroidVersion.ApiLevel=37/' "$ANDROID_SDK_ROOT/platforms/android-37/source.properties"
+            rm -rf /tmp/platform-37.zip /tmp/platform-37-extract
+          fi
+          echo "android-37 present: $(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ')"
 
       - name: Verify requested version matches pubspec
         run: |
