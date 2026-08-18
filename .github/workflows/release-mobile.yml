@@ -45,7 +45,8 @@ jobs:
             rm -rf /tmp/platform-37-extract
             mkdir -p /tmp/platform-37-extract
             unzip -q /tmp/platform-37.zip -d /tmp/platform-37-extract
-            mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
+            mkdir -p "$ANDROID_SDK_ROOT/platforms"
+          mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
             sed -i 's/^AndroidVersion.ApiLevel=.*/AndroidVersion.ApiLevel=37/' "$ANDROID_SDK_ROOT/platforms/android-37/source.properties"
             rm -rf /tmp/platform-37.zip /tmp/platform-37-extract
           fi
