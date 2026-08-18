@@ -9,7 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 > `CONTRIBUTING.md` for the frontend-parity + changelog rules.
 
 
+
 ## [Unreleased]
+
+### Fixed
+- Hosted publish (AUT-1114): fixed Dart string-interpolation syntax error in
+  the license screen subtitle (`'Managed by Stripe.}')` — unterminated string
+  literal broke `flutter build web`, failing the image publish + manifest
+  rotation so the `hosted` tag never advanced to 0.3.100.
+
+## [0.3.100] - 2026-08-18
 
 ### Fixed
 - Hosted worker/beat SECRET_KEY (AUT-996): added `SECRET_KEY` env var to the
