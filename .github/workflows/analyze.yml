@@ -33,8 +33,21 @@ jobs:
           channel: stable
           cache: false
 
+      - name: Verify Flutter installation
+        run: |
+          flutter --version
+          flutter doctor -v
+
+      - name: Test network connectivity
+        run: |
+          curl -s -o /dev/null -w "%{http_code}" https://pub.dev | grep -q "200" || echo "pub.dev unreachable"
+          curl -s -o /dev/null -w "%{http_code}" https://github.com | grep -q "200" || echo "github.com unreachable"
+
       - name: Clear Flutter pub cache
-        run: flutter pub cache repair || true
+        run: |
+          rm -rf ~/.pub-cache
+          mkdir -p ~/.pub-cache
+          flutter pub cache repair
 
       - name: Fetch dependencies
         run: flutter pub get --refresh
