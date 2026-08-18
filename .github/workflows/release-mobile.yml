@@ -40,7 +40,7 @@ jobs:
       - name: Install Android SDK Platform 37.0 (permission_handler_android compile target)
         run: |
           set -euo pipefail
-          yes | sdkmanager "platforms;android-37.0"
+          sdkmanager --console "platforms;android-37.0"
           echo "platforms: $(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ')"
 
       - name: Verify requested version matches pubspec
