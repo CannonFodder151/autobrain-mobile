@@ -11,7 +11,7 @@ on:
   push:
     branches: [main]
 
-# Single self-hosted runner (gh-runner-autobrain-mobile): cancel stale runs on
+# Self-hosted runner (gh-runner-autobrain-mobile): cancel stale runs on
 # the same branch instead of queueing behind each other. Prevents the Analyze
 # + Mobile Release serialization backlog seen in AUT-858 while only one runner
 # exists. Safe: jobs are idempotent re-checks of the same head.
@@ -24,8 +24,7 @@ permissions:
 
 jobs:
   analyze-pr:
-    runs-on:
-  workflow_dispatch: [self-hosted, linux, x64]
+    runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +40,4 @@ jobs:
         run: flutter pub get --refresh
 
       - name: Analyze
-        # Warnings/infos are pre-existing in the synced web lineage; only fail
-        # on hard errors (undefined symbols, type errors) — that is the build
-        # breaker we gate on (AUT-522).
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
