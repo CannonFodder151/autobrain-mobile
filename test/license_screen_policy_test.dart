@@ -77,7 +77,8 @@ void main() {
 
         expect(find.text('In-app purchase is not configured yet'),
             findsOneWidget);
-        expect(find.textContaining('update the app'), findsOneWidget);
+        expect(find.textContaining('contact support'), findsOneWidget);
+        expect(find.textContaining('update the app'), findsNothing);
         expect(find.textContaining('Upgrade to Enthusiast'), findsNothing);
         expect(find.textContaining('Stripe'), findsNothing);
         expect(find.text('Billing period'), findsNothing);
