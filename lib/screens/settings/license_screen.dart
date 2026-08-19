@@ -494,8 +494,8 @@ class _LicenseScreenState extends State<LicenseScreen> {
             ),
             const SizedBox(height: 8),
             Text('Upgrades are only available through the app store on this '
-                'build. Please update the app to the latest version to buy or '
-                'manage your licence.',
+                'build. In-app purchases are not ready yet — this is being '
+                'prepared. Please check back soon or contact support.',
                 style: Theme.of(context)
                     .textTheme
                     .bodySmall
