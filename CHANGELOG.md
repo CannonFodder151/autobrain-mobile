@@ -9,7 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 > `CONTRIBUTING.md` for the frontend-parity + changelog rules.
 
 
+
 ## [Unreleased]
+
+### Added
+- Embed-on-create smoke test (AUT-1242-C4): new test suite asserting all five
+  entity types produce searchable text, the `_valid_embedding` dimension guard
+  rejects malformed vectors, and an integration test confirms every entity type
+  stores a non-NULL embedding via the `backfill_entity_embedding` path.
+
+## [0.3.115] - 2026-08-21
 
 ### Changed
 - Hosted stack (AUT-1242): `minio-init` one-shot sidecar removed from
