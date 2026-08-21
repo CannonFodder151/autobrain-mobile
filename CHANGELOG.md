@@ -8,7 +8,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 > user-facing change ships with an entry here under `[Unreleased]` — see
 > `CONTRIBUTING.md` for the frontend-parity + changelog rules.
 
+
 ## [Unreleased]
+
+### Fixed
+- Deploy: .env and secrets/ excluded from remote tarball — prevents credential leak during deploy (AUT-1188)
+- Frontend: nginx runs unprivileged (nginx-unprivileged image, USER nginx, port 8080) — root process eliminated (AUT-1188)
+- Hosted & prod stacks: all services hardened — read_only rootfs, cap_drop ALL, tmpfs for /tmp & /var/run (AUT-1188)
+- Systemd: backend service runs as docker user, not root (AUT-1188)
+- Frontend nginx: server_tokens off added — version disclosure removed (AUT-1188)
+
+## [0.3.120] - 2026-08-21
 
 ### Security
 - Frontend: default API/WS to https/wss; AndroidManifest adds `android:usesCleartextTraffic="false"` (F1)
