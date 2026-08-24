@@ -28,6 +28,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 - Docs: OBD2 dongle pin guide now maps every firmware GPIO to its physical devkit pin — added a Board label column (silkscreen names: D5, TX2, RX2, VIN…), a full 38-pin DOIT-style board locator diagram with all used pins marked, clone-variant caveat (trust silkscreen, not position), and boot-time strapping notes for D5/D15/D14. New `docs/obd2-dongle/check-pinmap.py` asserts `config.h` pins stay in sync with the doc.
+- Mobile: app logo replaced everywhere with the new no-text mark — in-app `assets/logo.png` (transparency kept), `assets/app_icon.png`, web icons 192/512, all iOS AppIcon sizes, and Android launcher mipmaps/foregrounds (launcher slots flattened on black per AUT-1575 treatment) (AUT-1545).
+
+### Fixed
+- Mobile: app-list (launcher) icon now uses the current logo on a black background on Android and iOS — adaptive icon background changed from teal `#0B6B6A` to black, and all launcher icon assets regenerated from `assets/app_icon.png` (AUT-1575).
 
 ## [0.3.135] - 2026-08-24
 
