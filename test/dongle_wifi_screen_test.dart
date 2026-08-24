@@ -26,7 +26,9 @@ class _FakeApi extends ApiClient {
   }
 
   @override
-  Future<dynamic> post(String path, [Object? body]) async => null;
+  Future<dynamic> post(String path,
+        [Object? body, Map<String, String>? headers]) async =>
+      null;
 }
 
 class _FailingApi extends ApiClient {
@@ -36,7 +38,8 @@ class _FailingApi extends ApiClient {
   Future<dynamic> get(String path) async => throw Exception('boom');
 
   @override
-  Future<dynamic> post(String path, [Object? body]) async =>
+  Future<dynamic> post(String path,
+          [Object? body, Map<String, String>? headers]) async =>
       throw Exception('boom');
 }
 
