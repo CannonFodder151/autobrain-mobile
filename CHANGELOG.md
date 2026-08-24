@@ -26,6 +26,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- Mobile: app-list (launcher) icon now uses the current logo on a black background on Android and iOS — adaptive icon background changed from teal `#0B6B6A` to black, and all launcher icon assets regenerated from `assets/app_icon.png` (AUT-1575).
+
 ## [0.3.135] - 2026-08-24
 
 ### Added
