@@ -21,7 +21,10 @@ permissions:
 jobs:
   release:
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, linux, x64]
+    # AUT-1661: Moved from self-hosted (offline) to GitHub-hosted.
+    # Flutter + Android SDK + Java available via actions on ubuntu-latest.
+    # Keystore is installed fresh each run from secrets (no persistence needed).
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
