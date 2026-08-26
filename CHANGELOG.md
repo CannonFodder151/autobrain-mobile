@@ -24,14 +24,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+
+
 ## [Unreleased]
+
+### Fixed
+- CI: added `lib/services/iap_service.dart` to the mobile sync delta-restore list so the mobile-only `IapService` singleton, `IapCatalog`, and `IapProduct` classes survive the shared `lib/` overwrite — fixes `flutter analyze` failures in `license_screen.dart` (AUT-1634).
+
+## [0.3.138] - 2026-08-25
+
+### Fixed
+- CI: switched `publish` and `build-hosted` workflows to `ubuntu-latest` runners while x64 self-hosted runners are offline — unblocks Docker image publishing and multi-arch builds (AUT-1586).
+- CI: replaced raw `git` checkout with `actions/checkout` in publish job so it works on fresh GitHub-hosted runners (AUT-1586).
+- Fix: IAP service used `billingClientPurchase` (Android-only API unavailable on web), replaced with cross-platform `verificationData.serverVerificationData` (AUT-1586).
+
+## [0.3.137] - 2026-08-25
+
+### Fixed
+- IAP: added Android `com.android.vending.BILLING` permission to `AndroidManifest.xml` so the Play Store recognises the app as IAP-capable and shows in-app purchases on the listing (AUT-1149).
+- IAP: added `in_app_purchase` Flutter package to monorepo `pubspec.yaml` and wired native Play Store / App Store purchase flow into the license screen — "Buy from Store" button now initiates a native store purchase via Google Play Billing / StoreKit instead of falling back to Stripe browser checkout (AUT-1149).
+
+## [0.3.136] - 2026-08-24
 
 ### Changed
 - Docs: OBD2 dongle pin guide now maps every firmware GPIO to its physical devkit pin — added a Board label column (silkscreen names: D5, TX2, RX2, VIN…), a full 38-pin DOIT-style board locator diagram with all used pins marked, clone-variant caveat (trust silkscreen, not position), and boot-time strapping notes for D5/D15/D14. New `docs/obd2-dongle/check-pinmap.py` asserts `config.h` pins stay in sync with the doc.
-- Mobile: app logo replaced everywhere with the new no-text mark — in-app `assets/logo.png` (transparency kept), `assets/app_icon.png`, web icons 192/512, all iOS AppIcon sizes, and Android launcher mipmaps/foregrounds (launcher slots flattened on black per AUT-1575 treatment) (AUT-1545).
-
-### Fixed
-- Mobile: app-list (launcher) icon now uses the current logo on a black background on Android and iOS — adaptive icon background changed from teal `#0B6B6A` to black, and all launcher icon assets regenerated from `assets/app_icon.png` (AUT-1575).
 
 ## [0.3.135] - 2026-08-24
 
