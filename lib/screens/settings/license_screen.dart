@@ -47,7 +47,16 @@ class _LicenseScreenState extends State<LicenseScreen> {
   bool _iapMode = false;
   Map<String, IapProduct> _iapProducts = const {};
   Map<String, ProductDetails> _storeProducts = const {};
+  Map<String, int> _trialDaysByProduct = const {};
   StreamSubscription<PurchaseDetails>? _iapSub;
+
+  /// Whether the user has not yet claimed their free trial. Server-driven via
+  /// `/auth/me` `trial_available`; trial copy is hidden once it flips false.
+  bool _trialAvailable = true;
+
+  /// Catalogue-wide free-trial days for Stripe plans (`/billing/pricing`
+  /// `trial_days`), per-plan when present, otherwise top-level.
+  int? _stripeTrialDays;
 
   String get _platform =>
       defaultTargetPlatform == TargetPlatform.iOS ? 'ios' : 'android';
@@ -87,7 +96,15 @@ class _LicenseScreenState extends State<LicenseScreen> {
     });
     try {
       final me = await api.get('/auth/me') as Map<String, dynamic>;
-      setState(() => _profile = me);
+      setState(() {
+        _profile = me;
+        // trial_available: true (default) means the user has not yet used
+        // a free trial; false means one has already been claimed. We only
+        // show trial copy when the server explicitly says it is still
+        // available, or when the field is absent (new server before the
+        // trial flag ships) — treat absent as available.
+        _trialAvailable = me['trial_available'] != false;
+      });
     } catch (_) {
       setState(() => _error = 'Could not load your license status.');
     }
@@ -98,6 +115,7 @@ class _LicenseScreenState extends State<LicenseScreen> {
         _currency = (data['currency'] as String?) ?? 'aud';
         _sale = (data['sale'] as Map<String, dynamic>?) ?? const {};
         _saleActive = _sale['active'] == true;
+        _stripeTrialDays = data['trial_days'] as int? ?? _stripeTrialDays;
         _plans = ((data['plans'] as List?) ?? [])
             .map((p) => Map<String, dynamic>.from(p as Map))
             .toList();
@@ -135,10 +153,23 @@ class _LicenseScreenState extends State<LicenseScreen> {
     IapService.instance.listen();
     _iapSub ??= IapService.instance.updates.listen(_onIapUpdate);
     final Map<String, ProductDetails> storeProducts;
+    final trialByProduct = <String, int>{};
     try {
       final res = await IapService.instance
           .queryProducts(platformProducts.keys.toSet());
       storeProducts = {for (final p in res.productDetails) p.id: p};
+      // Trial days per product: prefer the store SDK's introductory offer,
+      // fall back to the catalogue `trial_days` when the SDK exposes none.
+      // Multiple offers for the same id may each mention a trial; take the
+      // largest (AUT-1198).
+      for (final product in res.productDetails) {
+        final days = trialDaysFrom(product) ??
+            platformProducts[product.id]?.trialDays ??
+            0;
+        if (days > (trialByProduct[product.id] ?? 0)) {
+          trialByProduct[product.id] = days;
+        }
+      }
     } catch (_) {
       return; // store query failed → not-configured state on store builds
     }
@@ -149,6 +180,7 @@ class _LicenseScreenState extends State<LicenseScreen> {
       _iapMode = true;
       _iapProducts = platformProducts;
       _storeProducts = storeProducts;
+      _trialDaysByProduct = trialByProduct;
     });
   }
 
@@ -570,6 +602,8 @@ class _LicenseScreenState extends State<LicenseScreen> {
     final saleMonthly = plan['sale_monthly'] as int?;
     final isGarage = key == 'garage';
     final vehicles = isGarage ? 5 : 1;
+    final trialDays = (plan['trial_days'] as int?) ?? _stripeTrialDays;
+    final showTrial = _trialAvailable && trialDays != null && trialDays > 0;
 
     final String price;
     final String period;
@@ -615,6 +649,10 @@ class _LicenseScreenState extends State<LicenseScreen> {
               ],
             ),
             const SizedBox(height: 8),
+            if (showTrial) ...[
+              _TrialBadge(days: trialDays),
+              const SizedBox(height: 6),
+            ],
             Row(
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
@@ -667,7 +705,9 @@ class _LicenseScreenState extends State<LicenseScreen> {
               width: double.infinity,
               child: FilledButton(
                 onPressed: _busy ? null : () => _checkout(key),
-                child: Text('Upgrade to $name'),
+                child: Text(showTrial
+                    ? 'Start $trialDays-day free trial'
+                    : 'Upgrade to $name'),
               ),
             ),
           ],
@@ -682,6 +722,8 @@ class _LicenseScreenState extends State<LicenseScreen> {
     final name = _nameFor(iap.plan);
     final isGarage = iap.plan == 'garage';
     final vehicles = isGarage ? 5 : 1;
+    final trialDays = _trialDaysByProduct[store.id] ?? 0;
+    final showTrial = _trialAvailable && trialDays > 0;
 
     return Card(
       shape: isGarage
@@ -714,6 +756,10 @@ class _LicenseScreenState extends State<LicenseScreen> {
               ],
             ),
             const SizedBox(height: 8),
+            if (showTrial) ...[
+              _TrialBadge(days: trialDays),
+              const SizedBox(height: 6),
+            ],
             Row(
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
@@ -750,7 +796,9 @@ class _LicenseScreenState extends State<LicenseScreen> {
               width: double.infinity,
               child: FilledButton(
                 onPressed: _busy ? null : () => _iapPurchase(iap.productId),
-                child: Text('Upgrade to $name'),
+                child: Text(showTrial
+                    ? 'Start $trialDays-day free trial'
+                    : 'Upgrade to $name'),
               ),
             ),
           ],
@@ -848,6 +896,31 @@ class _LicenseScreenState extends State<LicenseScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// '7-day free trial' badge shown above a plan's price when the offer applies.
+class _TrialBadge extends StatelessWidget {
+  const _TrialBadge({required this.days});
+
+  final int days;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.celebration, size: 16, color: Colors.green.shade700),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text('$days-day free trial',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: Colors.green.shade800,
+              )),
+        ),
+      ],
     );
   }
 }

@@ -1,8 +1,41 @@
 // IAP catalogue parsing + platform filtering (AUT-610).
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:in_app_purchase_android/billing_client_wrappers.dart';
+import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
 import 'package:autobrain/services/iap_service.dart';
+
+ProductDetailsWrapper _subscriptionDetails({
+  required String productId,
+  required List<SubscriptionOfferDetailsWrapper> offers,
+}) =>
+    ProductDetailsWrapper(
+      title: productId,
+      name: productId,
+      productId: productId,
+      productType: ProductType.subs,
+      subscriptionOfferDetails: offers,
+      description: '',
+    );
+
+PricingPhaseWrapper _phase(
+        {required int priceMicros, required String period, bool finite = false}) =>
+    PricingPhaseWrapper(
+      billingCycleCount: 1,
+      billingPeriod: period,
+      formattedPrice: priceMicros == 0 ? 'A\$0.00' : 'A\$19.00',
+      priceAmountMicros: priceMicros,
+      priceCurrencyCode: 'AUD',
+      recurrenceMode:
+          finite ? RecurrenceMode.finiteRecurring : RecurrenceMode.infiniteRecurring,
+    );
+
+GooglePlayProductDetails _googleProduct(
+    String id, List<SubscriptionOfferDetailsWrapper> offers) {
+  return GooglePlayProductDetails.fromProductDetails(
+      _subscriptionDetails(productId: id, offers: offers))[0];
+}
 
 void main() {
   test('IapCatalog.fromJson parses enabled flag and products', () {
@@ -81,5 +114,56 @@ void main() {
     final servedUnrelated = {'com.example.unrelated.product'};
     expect(advertised.keys.any(servedUnrelated.contains), isFalse,
         reason: 'store serving only unrelated products stays out of IAP mode');
+  });
+
+  // AUT-1198 — trial detection helpers.
+
+  test('trialDaysFrom returns 7 for a 7-day free-trial pricing phase', () {
+    final product = _googleProduct('com.example.sub.monthly', [
+      SubscriptionOfferDetailsWrapper(
+        basePlanId: 'base',
+        offerTags: const [],
+        offerIdToken: 'token',
+        pricingPhases: [
+          _phase(priceMicros: 0, period: 'P7D', finite: true),
+          _phase(priceMicros: 1999000, period: 'P1M'),
+        ],
+      ),
+    ]);
+    expect(trialDaysFrom(product), 7);
+  });
+
+  test('trialDaysFrom returns null when all phases have a positive price',
+      () {
+    final product = _googleProduct('com.example.sub.monthly', [
+      SubscriptionOfferDetailsWrapper(
+        basePlanId: 'base',
+        offerTags: const [],
+        offerIdToken: 'token',
+        pricingPhases: [_phase(priceMicros: 999000, period: 'P1M')],
+      ),
+    ]);
+    expect(trialDaysFrom(product), isNull);
+  });
+
+  test('IapProduct.fromJson reads trial_days from the catalogue', () {
+    final product = IapProduct.fromJson({
+      'product_id': 'com.example.sub',
+      'platform': 'android',
+      'plan': 'enthusiast',
+      'billing': 'monthly',
+      'trial_days': 7,
+    });
+    expect(product.trialDays, 7);
+  });
+
+  test('IapProduct.fromJson treats missing trial_days as null', () {
+    final product = IapProduct.fromJson({
+      'product_id': 'com.example.sub',
+      'platform': 'android',
+      'plan': 'enthusiast',
+      'billing': 'monthly',
+    });
+    expect(product.trialDays, isNull);
   });
 }
