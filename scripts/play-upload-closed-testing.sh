@@ -11,9 +11,9 @@
 #   SERVICE_ACCOUNT_JSON_FILE          (alt) path to that JSON file.
 #   PLAY_PACKAGE_NAME                  (optional) default com.autobrainservice.app
 #   PLAY_RELEASE_NOTES                 (optional) plain-text "what's new".
-#   PLAY_TRACK                         (optional) default "testing" — the existing
-#                                      closed testing track (has testers). A missing
-#                                      track is created as CLOSED_TESTING in its own
+#   PLAY_TRACK                         (optional) default "alpha" — the existing
+#                                      Alpha track (has testers). A missing track
+#                                      is created as CLOSED_TESTING in its own
 #                                      committed edit so a fresh Play Console is not a stop.
 #   PLAY_RELEASE_STATUS                (optional) "completed" (default) or "draft".
 #   PLAY_ALLOW_DRAFT_FALLBACK          (optional) default true.
@@ -36,8 +36,8 @@
 #   edit opens (AUT-932), then the build is released onto it — a fresh Play
 #   Console never blocks the first upload. The create edit is committed (closed)
 #   before the main edit opens, so it never trips the AUT-952 failure.
-# - Closed testing tracks have custom names. The target is the existing
-#   `testing` closed testing track which already has a tester audience.
+# - Closed testing tracks have custom names. The default target is the
+#   existing `alpha` track which already has a tester audience.
 # - Play rejects a "completed" release on a closed testing track when the track
 #   has no tester audience ("Release in track targeting no countries"). With
 #   PLAY_ALLOW_DRAFT_FALLBACK=true the script then commits the release as a
@@ -53,7 +53,7 @@ set -euo pipefail
 
 AAB="${1:?usage: play-upload-closed-testing.sh <app-release.aab> [track-id]}"
 [[ -f "$AAB" ]] || { echo "::error::AAB not found: $AAB"; exit 1; }
-TRACK="${2:-${PLAY_TRACK:-testing}}"
+TRACK="${2:-${PLAY_TRACK:-alpha}}"
 PACKAGE="${PLAY_PACKAGE_NAME:-com.autobrainservice.app}"
 NOTES="${PLAY_RELEASE_NOTES:-}"
 STATUS="${PLAY_RELEASE_STATUS:-completed}"

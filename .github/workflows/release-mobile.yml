@@ -2,8 +2,8 @@ name: Mobile Release (.aab)
 
 # Manual release pipeline: build + sign + published GitHub Release + Discord notes.
 # Release is auto-published (not a draft) so it never stalls in draft backlog.
-# The .aab is then uploaded to the existing Play Console closed testing track
-# (testing, which has testers) automatically (scripts/play-upload-closed-testing.sh)
+# The .aab is then uploaded to the existing Play Console Alpha track
+# (alpha, which has testers) automatically (scripts/play-upload-closed-testing.sh)
 # — see docs/mobile-release.md.
 # See docs/mobile-release.md (autobrain monorepo). Never runs on push.
 
@@ -213,7 +213,7 @@ jobs:
           payload="$(jq -n \
             --arg channel approvals \
             --arg title "Play closed-testing upload needs tester audience" \
-            --arg desc "Auto-upload to the closed testing track (testing) worked, but Play blocks submit-for-review until the track has testers. One-time setup in Play Console (Testing > Closed testing > testing): add testers + country availability (restOfWorld on). After that every release auto-submits for review." \
+            --arg desc "Auto-upload to the Alpha track (alpha) worked, but Play blocks submit-for-review until the track has testers. One-time setup in Play Console (Testing > Closed testing > alpha): add testers + country availability (restOfWorld on). After that every release auto-submits for review." \
             --arg version "$VERSION" \
             '{channel:$channel,title:$title,description:$desc,color:"0x5865F2",author:"Mobile Release Engineer",fields:[{name:"Version",value:$version,inline:true},{name:"Ask",value:"Configure testers once",inline:true}]}')"
           curl -sS -o /dev/null -w "approvals embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \

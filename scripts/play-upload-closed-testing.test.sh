@@ -185,20 +185,22 @@ mock_mode() { curl -sS -X POST "http://127.0.0.1:$PORT/__mock__/$1" >/dev/null; 
 echo "== scenario 1: track missing -> create in own edit, then single-edit upload =="
 mock_mode ok
 : > "$LOG"
-out1="$(bash "$SCRIPT" "$AAB" 2>&1)" || fail "scenario 1 failed: $out1"
-grep -q "track 'testing' not found" <<<"$out1" || fail "missing-track path not taken"
-grep -q "closed testing track 'testing' created" <<<"$out1" || fail "track not created"
+# default target is 'alpha' (a track the mock already has); pass an explicit
+# non-existent track to exercise the missing-track create path.
+out1="$(bash "$SCRIPT" "$AAB" missinglane 2>&1)" || fail "scenario 1 failed: $out1"
+grep -q "track 'missinglane' not found" <<<"$out1" || fail "missing-track path not taken"
+grep -q "closed testing track 'missinglane' created" <<<"$out1" || fail "track not created"
 grep -q "uploaded $AAB -> versionCode 999" <<<"$out1" || fail "upload not recorded"
-grep -q "closed testing (testing) release OK" <<<"$out1" || fail "final success line missing"
+grep -q "closed testing (missinglane) release OK" <<<"$out1" || fail "final success line missing"
 grep -q "insert killed previous open edit" "$LOG" && fail "two edits were open simultaneously (AUT-952 regression)"
 echo "OK"
 
-echo "== scenario 2: track already exists -> single-edit upload only =="
+echo "== scenario 2: default alpha track exists -> single-edit upload only =="
 mock_mode ok
 : > "$LOG"
 out2="$(bash "$SCRIPT" "$AAB" 2>&1)" || fail "scenario 2 failed: $out2"
 grep -q "uploaded $AAB -> versionCode 999" <<<"$out2" || fail "upload not recorded"
-grep -q "closed testing (testing) release OK" <<<"$out2" || fail "final success line missing"
+grep -q "closed testing (alpha) release OK" <<<"$out2" || fail "final success line missing"
 n_insert="$(grep -c "^insert edit-" "$LOG")"
 [[ "$n_insert" == "2" ]] || fail "expected 2 edit inserts (main + verify), got $n_insert"
 grep -q "insert killed previous open edit" "$LOG" && { echo "--- mock log ---" >&2; cat "$LOG" >&2; fail "probe-edit regression"; }
