@@ -22,6 +22,8 @@ jobs:
   release:
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64]
+    env:
+      PATH: /home/node/unzip:${{ runner.temp }}:${{ env.PATH }}
     steps:
       - name: Install unzip shim for Android SDK
         run: |
@@ -44,10 +46,10 @@ jobs:
                   for name in z.namelist():
                       print(name)
           '''
-          os.makedirs('/usr/local/bin', exist_ok=True)
-          with open('/usr/local/bin/unzip', 'w') as f:
+          os.makedirs('/home/node/unzip', exist_ok=True)
+          with open('/home/node/unzip/unzip', 'w') as f:
               f.write(code)
-          os.chmod('/usr/local/bin/unzip', 0o755)
+          os.chmod('/home/node/unzip/unzip', 0o755)
           "
 
       - uses: actions/checkout@v4
