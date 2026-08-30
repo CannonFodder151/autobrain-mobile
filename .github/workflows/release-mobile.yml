@@ -25,23 +25,27 @@ jobs:
     steps:
       - name: Install unzip shim for Android SDK
         run: |
-          mkdir -p /home/administrator/.local/bin
-          cat > /home/administrator/.local/bin/unzip <<'PYEOF'
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/unzip" <<'PYEOF'
           #!/usr/bin/env python3
           import sys, zipfile, os
           if len(sys.argv) < 2:
               sys.exit(1)
-          # Parse flags: -o (overwrite), -q (quiet), -d <dir>
+          # Parse flags: -o (overwrite), -q (quiet), -d <dir>, -l (list)
           overwrite = False
           quiet = False
+          list_only = False
           dest = "."
           i = 1
+          path = None
           while i < len(sys.argv):
               arg = sys.argv[i]
               if arg == "-o":
                   overwrite = True
               elif arg == "-q":
                   quiet = True
+              elif arg == "-l":
+                  list_only = True
               elif arg == "-d":
                   i += 1
                   if i < len(sys.argv):
@@ -52,17 +56,23 @@ jobs:
                   path = arg
                   break
               i += 1
-          else:
+          if path is None:
               sys.exit(1)
           if not os.path.exists(path):
               if not quiet:
-                  print("Error: " + path + " not found", file=sys.stderr)
+                  print(f"Error: {path} not found", file=sys.stderr)
               sys.exit(1)
           with zipfile.ZipFile(path) as z:
-              z.extractall(dest)
+              if list_only:
+                  for info in z.infolist():
+                      size = info.file_size
+                      mtime = info.date_time
+                      print(f"{size:>8}  {mtime[0]:04d}-{mtime[1]:02d}-{mtime[2]:02d} {mtime[3]:02d}:{mtime[4]:02d}  {info.filename}")
+              else:
+                  z.extractall(dest)
           PYEOF
-          chmod +x /home/administrator/.local/bin/unzip
-          echo "/home/administrator/.local/bin" >> "$GITHUB_PATH"
+          chmod +x "$HOME/.local/bin/unzip"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v4
 
