@@ -23,7 +23,7 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64]
     env:
-      PATH: /home/node/unzip:${{ runner.temp }}:${{ env.PATH }}
+      PATH: /home/node/unzip:${{ env.PATH }}
     steps:
       - name: Install unzip shim for Android SDK
         run: |
