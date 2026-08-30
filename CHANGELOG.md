@@ -20,6 +20,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+- **CI (AUT-1934):** Release workflow `release-mobile.yml` now installs a Python `unzip` shim at `$HOME/.local/bin/unzip` on the self-hosted runner (which lacks the system `unzip` binary). The shim supports `-o` (overwrite), `-q` (quiet), `-d` (destination), and `-l` (list) flags as required by `android-actions/setup-android@v3`. Uses `$HOME` for portability across runner users instead of hardcoding `/home/administrator`.
+
 ## [0.3.194] - 2026-08-30
 
 ## [0.3.193] - 2026-08-30
