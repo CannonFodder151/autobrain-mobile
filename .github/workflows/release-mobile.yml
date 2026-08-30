@@ -25,8 +25,8 @@ jobs:
     steps:
       - name: Install unzip shim for Android SDK
         run: |
-          mkdir -p "$HOME/.local/bin"
-          cat > "$HOME/.local/bin/unzip" <<'PYEOF'
+          mkdir -p /home/administrator/.local/bin
+          cat > /home/administrator/.local/bin/unzip <<'PYEOF'
           #!/usr/bin/env python3
           import sys, zipfile, os
           if len(sys.argv) < 2:
@@ -43,8 +43,8 @@ jobs:
                   for name in z.namelist():
                       print(name)
           PYEOF
-          chmod +x "$HOME/.local/bin/unzip"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          chmod +x /home/administrator/.local/bin/unzip
+          echo "/home/administrator/.local/bin" >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v4
 
