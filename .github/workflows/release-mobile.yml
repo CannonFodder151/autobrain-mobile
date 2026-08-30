@@ -31,17 +31,35 @@ jobs:
           import sys, zipfile, os
           if len(sys.argv) < 2:
               sys.exit(1)
-          path = sys.argv[1]
-          if not os.path.exists(path):
-              print("Error: " + path + " not found", file=sys.stderr)
-              sys.exit(1)
-          if len(sys.argv) >= 4 and sys.argv[2] == '-d':
-              with zipfile.ZipFile(path) as z:
-                  z.extractall(sys.argv[3])
+          # Parse flags: -o (overwrite), -q (quiet), -d <dir>
+          overwrite = False
+          quiet = False
+          dest = "."
+          i = 1
+          while i < len(sys.argv):
+              arg = sys.argv[i]
+              if arg == "-o":
+                  overwrite = True
+              elif arg == "-q":
+                  quiet = True
+              elif arg == "-d":
+                  i += 1
+                  if i < len(sys.argv):
+                      dest = sys.argv[i]
+                  else:
+                      sys.exit(1)
+              elif not arg.startswith("-"):
+                  path = arg
+                  break
+              i += 1
           else:
-              with zipfile.ZipFile(path) as z:
-                  for name in z.namelist():
-                      print(name)
+              sys.exit(1)
+          if not os.path.exists(path):
+              if not quiet:
+                  print("Error: " + path + " not found", file=sys.stderr)
+              sys.exit(1)
+          with zipfile.ZipFile(path) as z:
+              z.extractall(dest)
           PYEOF
           chmod +x /home/administrator/.local/bin/unzip
           echo "/home/administrator/.local/bin" >> "$GITHUB_PATH"
