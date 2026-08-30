@@ -21,7 +21,7 @@ permissions:
 jobs:
   release:
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, linux, x64, vm2]
     steps:
       - name: Install unzip shim for Android SDK
         run: |
