@@ -20,7 +20,7 @@ class _FakeApi extends ApiClient {
   final Map<String, dynamic> _profile;
 
   @override
-  Future<dynamic> get(String path) async {
+  Future<dynamic> get(String path, {Map<String, String>? query}) async {
     if (path == '/auth/me') return _profile;
     if (path == '/billing/pricing') return _pricing;
     throw ApiException(404, 'no catalogue');

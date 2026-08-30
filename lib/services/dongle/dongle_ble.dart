@@ -39,6 +39,28 @@ class DongleBle {
   static Future<void> clearCodes(String deviceId) =>
       (clearCodesOverride ?? impl.BleImpl.clearCodes)(deviceId);
 
+  /// AUT-1673: reads model, firmware version and serial number over BLE.
+  /// The result is not cached; caller should persist to backend via
+  /// DongleFirmwareApi.reportInstalled for long-term storage.
+  static Future<({String model, String firmwareVersion, String serialNumber})>
+      readDeviceInfo(String deviceId) =>
+          (readDeviceInfoOverride ?? impl.BleImpl.readDeviceInfo)(deviceId);
+
+  /// AUT-1673: OTA update via BLE. The app verifies SHA-256 against the
+  /// manifest first, then writes chunked firmware bytes to the dongle.
+  ///
+  /// Not yet implemented: the firmware's OTA characteristic is not defined.
+  /// Until it is, [isOtaAvailable] is false and this always throws. Gate on
+  /// [isOtaAvailable] before calling rather than relying on a try/catch — there
+  /// is no caller path that should ever reach the throw.
+  static Future<void> applyOta(String deviceId, List<int> blob) =>
+      (applyOtaOverride ?? impl.BleImpl.applyOta)(deviceId, blob);
+
+  /// Whether the OTA flow is wired on this build. False until the firmware
+  /// exposes its dedicated OTA characteristic (AUT-1673). Platforms without the
+  /// BLE plugin (web/desktop) also report false.
+  static bool get isOtaAvailable => impl.BleImpl.isOtaAvailable;
+
   /// Test seams (AUT-966): swap in fakes so widget tests never touch the BLE
   /// plugin. Reset to null in tearDown.
   @visibleForTesting
@@ -50,6 +72,11 @@ class DongleBle {
   static Future<DongleSyncResult> Function(String deviceId)? syncOverride;
   @visibleForTesting
   static Future<void> Function(String deviceId)? clearCodesOverride;
+  @visibleForTesting
+  static Future<({String model, String firmwareVersion, String serialNumber})>
+      Function(String deviceId)? readDeviceInfoOverride;
+  @visibleForTesting
+  static Future<void> Function(String deviceId, List<int>)? applyOtaOverride;
 }
 
 /// Result of one BLE sync pass: completed-trip CSVs keyed by filename and the
