@@ -22,35 +22,29 @@ jobs:
   release:
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64]
-    env:
-      PATH: /home/node/unzip:${{ env.PATH }}
     steps:
       - name: Install unzip shim for Android SDK
         run: |
-          python3 -c "
-          import os
-          code = '''#!/usr/bin/env python3
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/unzip" <<'PYEOF'
+          #!/usr/bin/env python3
           import sys, zipfile, os
           if len(sys.argv) < 2:
               sys.exit(1)
           path = sys.argv[1]
           if not os.path.exists(path):
-              print(f'Error: {path} not found', file=sys.stderr)
+              print("Error: " + path + " not found", file=sys.stderr)
               sys.exit(1)
           if len(sys.argv) >= 4 and sys.argv[2] == '-d':
-              d = sys.argv[3]
               with zipfile.ZipFile(path) as z:
-                  z.extractall(d)
+                  z.extractall(sys.argv[3])
           else:
               with zipfile.ZipFile(path) as z:
                   for name in z.namelist():
                       print(name)
-          '''
-          os.makedirs('/home/node/unzip', exist_ok=True)
-          with open('/home/node/unzip/unzip', 'w') as f:
-              f.write(code)
-          os.chmod('/home/node/unzip/unzip', 0o755)
-          "
+          PYEOF
+          chmod +x "$HOME/.local/bin/unzip"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - uses: actions/checkout@v4
 
