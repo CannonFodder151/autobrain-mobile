@@ -43,7 +43,7 @@ class _FakeApi extends ApiClient {
   };
 
   @override
-  Future<dynamic> get(String path) async {
+  Future<dynamic> get(String path, {Map<String, String>? query}) async {
     if (path.startsWith('/vehicles/') && path.endsWith('/notifications')) {
       return _prefs;
     }

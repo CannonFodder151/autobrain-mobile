@@ -9,7 +9,7 @@ import 'package:autobrain/screens/notifications/notifications_screen.dart';
 class _FakeApi extends ApiClient {
   _FakeApi() : super(null);
   @override
-  Future<dynamic> get(String path) async {
+  Future<dynamic> get(String path, {Map<String, String>? query}) async {
     if (path.startsWith('/vehicles/') && path.endsWith('/notifications')) {
       // Force the error branch so `controller.text` is never assigned.
       throw ApiException(500, 'boom');
@@ -18,7 +18,7 @@ class _FakeApi extends ApiClient {
   }
 
   @override
-  Future<dynamic> put(String path, [Object? body, Map<String, String>? headers]) async => null;
+  Future<dynamic> put(String path, [Object? body]) async => null;
   @override
   Future<dynamic> post(String path, [Object? body, Map<String, String>? headers]) async => null;
   @override
