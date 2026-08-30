@@ -65,7 +65,8 @@ class ApiClient {
   static const Duration _timeout = Duration(seconds: 30);
   Future<String?>? _inflightRefresh;
 
-  Future<dynamic> get(String path) => _send('GET', path);
+  Future<dynamic> get(String path, {Map<String, String>? query}) =>
+      _send('GET', path, null, null, query);
   Future<dynamic> post(String path,
           [Object? body, Map<String, String>? headers]) =>
       _send('POST', path, body, headers);
@@ -108,8 +109,13 @@ class ApiClient {
   }
 
   Future<dynamic> _send(String method, String path,
-      [Object? body, Map<String, String>? extraHeaders]) async {
-    final uri = Uri.parse('${AppConfig.apiBase}$path');
+      [Object? body,
+      Map<String, String>? extraHeaders,
+      Map<String, String>? query]) async {
+    final parsed = Uri.parse('${AppConfig.apiBase}$path');
+    // Only override query params when explicitly supplied; otherwise preserve
+    // any query already present in [path] (callers like social_api embed it).
+    final uri = query == null ? parsed : parsed.replace(queryParameters: query);
     final headers = {
       'Content-Type': 'application/json',
       if (_token != null) 'Authorization': 'Bearer $_token',

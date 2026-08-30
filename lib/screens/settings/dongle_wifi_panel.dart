@@ -17,8 +17,12 @@
 ///    queue hint.
 library;
 
+import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -27,6 +31,7 @@ import '../../core/config.dart';
 import '../../core/models.dart';
 import '../../services/dongle/dongle_api.dart';
 import '../../services/dongle/dongle_ble.dart';
+import '../../services/dongle/dongle_firmware_api.dart';
 import '../../services/dongle/dongle_provisioning.dart';
 import '../../services/dongle/dongle_settings.dart';
 
@@ -49,6 +54,10 @@ class _DongleWifiPanelState extends State<DongleWifiPanel> {
   String? _status;
   String? _loadError;
   String? _confirmedDeviceId;
+  // AUT-1673: firmware telemetry cached from GET /dongle/firmware/installed.
+  DongleInstalledFirmware? _installed;
+  DongleFirmwareVersion? _latest;
+  String? _firmwareStatus;
 
   bool get _enabled => _config.enabled;
 
@@ -89,6 +98,10 @@ class _DongleWifiPanelState extends State<DongleWifiPanel> {
         _linked = _resolveLinked(devices, cfg);
         _loadError = null;
       });
+      // AUT-1673: refresh firmware telemetry once linkage is resolved.
+      if (_linked != null) {
+        await _refreshFirmware();
+      }
     } catch (_) {
       // Distinct from "no dongle linked": the list/vehicle fetch itself failed
       // (offline, auth, server) and we cannot say anything about linkage yet
@@ -96,6 +109,143 @@ class _DongleWifiPanelState extends State<DongleWifiPanel> {
       if (mounted) setState(() => _loadError = 'Could not reach the server.');
     }
     if (mounted) setState(() => _loading = false);
+  }
+
+  /// AUT-1673: fetch this device's installed firmware + the latest published
+  /// manifest so we can render "Update available". Cached; re-reads on demand.
+  ///
+  /// [deviceId] is ``DongleDevice.id`` — the ``Device.id`` UUID the server
+  /// returns from ``GET /devices`` — which is exactly the primary key the
+  /// backend's `installed` endpoint does ``db.get(Device, ...)`` on. It is NOT
+  /// the hardware serial (that is read over BLE in [_readAndRefresh] and only
+  /// sent as the report body, not as the lookup key).
+  Future<void> _refreshFirmware() async {
+    final api = context.read<AuthState>().api;
+    final deviceId = _linked?.id;
+    if (deviceId == null) return;
+    final fw = DongleFirmwareApi(api);
+    DongleInstalledFirmware? installed;
+    DongleFirmwareVersion? latest;
+    try {
+      installed = await fw.installed(deviceId);
+    } catch (_) {
+      installed = null;
+    }
+    if (installed != null && installed.model.isNotEmpty) {
+      try {
+        latest = await fw.latest(installed.model);
+      } catch (_) {
+        latest = null;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _installed = installed;
+      _latest = latest;
+    });
+  }
+
+  /// AUT-1673: read live device info over BLE, persist the report server-side,
+  /// then re-fetch the latest manifest to detect an upgrade.
+  Future<Uint8List> _downloadFirmware(String url) async {
+    final resp = await http.Client().get(Uri.parse(url)).timeout(
+      const Duration(seconds: 30),
+    );
+    if (resp.statusCode != 200) {
+      throw Exception('Firmware download failed (HTTP ${resp.statusCode})');
+    }
+    return Uint8List.fromList(resp.bodyBytes);
+  }
+
+  Future<void> _readAndRefresh() async {
+    final cfg = _config;
+    final link = _linked;
+    if (cfg.deviceId == null || link == null) return;
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _firmwareStatus = 'Reading firmware info over BLE…';
+    });
+    try {
+      final info = await DongleBle.readDeviceInfo(cfg.deviceId!);
+      final api = context.read<AuthState>().api;
+      // Don't POST empty fields: the backend schema rejects min_length=1, and a
+      // partial read (older firmware without the info characteristics) would
+      // 422 instead of surfacing a clear "not reported yet" state. The backend
+      // schema also whitelists the charset, so we only validate presence here.
+      if (info.model.isEmpty ||
+          info.firmwareVersion.isEmpty ||
+          info.serialNumber.isEmpty) {
+        if (!mounted) return;
+        setState(() => _firmwareStatus =
+            'Dongle did not report full firmware info (older firmware?).');
+        return;
+      }
+      await api.post(
+        '/dongle/firmware/report',
+        {
+          'model': info.model,
+          'firmware_version': info.firmwareVersion,
+          'serial_number': info.serialNumber,
+        },
+      );
+      await _refreshFirmware();
+      if (!mounted) return;
+      setState(() {
+        _firmwareStatus = info.firmwareVersion.isNotEmpty
+            ? 'Read firmware: ${info.firmwareVersion} on ${info.model}'
+            : 'Dongle does not report firmware info yet.';
+      });
+    } catch (e) {
+      if (mounted)
+        setState(() => _firmwareStatus = 'Could not read device: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// AUT-1673: triggers an OTA firmware update over BLE.
+  /// Downloads the blob from the signed manifest URL, verifies SHA-256,
+  /// then writes it chunked to the dongle. Currently a no-op until the
+  /// firmware exposes its OTA characteristic — [DongleBle.isOtaAvailable]
+  /// gates the button, so this only runs when the flow is wired.
+  Future<void> _applyOta() async {
+    final latest = _latest;
+    final installed = _installed;
+    final cfg = _config;
+    if (latest == null || installed == null || cfg.deviceId == null) return;
+    if (!DongleBle.isOtaAvailable) {
+      if (!mounted) return;
+      setState(() => _firmwareStatus =
+          'OTA update is not available yet — update your dongle firmware.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _firmwareStatus = 'Downloading firmware update…';
+    });
+    try {
+      final blob = await _downloadFirmware(latest.blobUrl);
+      final shaHex = sha256.convert(blob).toString();
+      if (shaHex != latest.sha256.toLowerCase()) {
+        if (!mounted) return;
+        setState(() => _firmwareStatus =
+            'SHA-256 mismatch — refusing to flash corrupted firmware.');
+        return;
+      }
+      setState(() => _firmwareStatus = 'Flashing over BLE…');
+      await DongleBle.applyOta(cfg.deviceId!, blob);
+      if (!mounted) return;
+      setState(() {
+        _firmwareStatus = 'Firmware updated to ${latest.version}.';
+        _latest = null;
+      });
+      await _readAndRefresh();
+    } catch (e) {
+      if (mounted) setState(() => _firmwareStatus = 'Update failed: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   /// Reuses the saved device only when it still exists in the current
@@ -398,6 +548,38 @@ class _DongleWifiPanelState extends State<DongleWifiPanel> {
     return DateFormat('d MMM yyyy, h:mm a').format(lastSeen.toLocal());
   }
 
+  /// AUT-1673: compact firmware info row. Empty values render a muted
+  /// placeholder instead of a blank row, so users can tell "not reported"
+  /// (older firmware) from a genuinely empty field.
+  Widget _fwRow(String label, String value) {
+    final empty = value.isEmpty;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Text('$label: ',
+              style: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          Expanded(
+            child: Text(
+              empty ? '— not reported' : value,
+              overflow: TextOverflow.ellipsis,
+              style: empty
+                  ? TextStyle(
+                      fontStyle: FontStyle.italic,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurfaceVariant
+                          .withOpacity(0.5))
+                  : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -510,7 +692,78 @@ class _DongleWifiPanelState extends State<DongleWifiPanel> {
               ),
             ),
           ),
+          if (_linked != null) ...[
+            const SizedBox(height: 8),
+            // AUT-1673: firmware info + update affordance.
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Firmware',
+                        style: Theme.of(context).textTheme.titleSmall),
+                    const SizedBox(height: 8),
+                    if (_installed == null)
+                      const Text('Connect the dongle to read its firmware '
+                          'version, model and serial number.'),
+                    if (_installed != null) ...[
+                      _fwRow('Model', _installed!.model),
+                      _fwRow('Firmware', _installed!.firmwareVersion),
+                      _fwRow('Serial', _installed!.serialNumber),
+                      const SizedBox(height: 8),
+                      if (_latest != null) ...[
+                        if (_latest!.version != _installed!.firmwareVersion)
+                          Text('Update available: ${_latest!.version}',
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  fontWeight: FontWeight.bold)),
+                        if (_latest!.version == _installed!.firmwareVersion)
+                          const Text('Up to date'),
+                      ] else
+                        const Text('No firmware release published yet.'),
+                    ],
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        FilledButton.tonalIcon(
+                          onPressed: _busy ? null : _readAndRefresh,
+                          icon: const Icon(Icons.bluetooth_searching),
+                          label: const Text('Read firmware info'),
+                        ),
+                        if (_installed != null &&
+                            _latest != null &&
+                            _latest!.version != _installed!.firmwareVersion)
+                          FilledButton.icon(
+                            onPressed: _busy
+                                ? null
+                                : () => _applyOta(),
+                            icon: const Icon(Icons.system_update),
+                            label: const Text('Update firmware'),
+                          ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
+        if (_firmwareStatus != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: _busy
+                ? const Row(children: [
+                    SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                    SizedBox(width: 8),
+                    Expanded(child: Text('Reading firmware info over BLE…')),
+                  ])
+                : Text(_firmwareStatus!),
+          ),
         if (_status != null)
           Padding(
             padding: const EdgeInsets.only(top: 12),

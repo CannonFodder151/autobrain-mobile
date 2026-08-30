@@ -4,10 +4,11 @@ import 'package:provider/provider.dart';
 import '../../core/auth_state.dart';
 import '../../core/models.dart';
 import 'add_part_screen.dart';
+import 'sca_lookup_results_screen.dart';
 
 class PartsScreen extends StatefulWidget {
-  const PartsScreen({super.key, required this.vehicleId});
-  final String vehicleId;
+  const PartsScreen({super.key, required this.vehicle});
+  final Vehicle vehicle;
 
   @override
   State<PartsScreen> createState() => _PartsScreenState();
@@ -23,12 +24,17 @@ class _PartsScreenState extends State<PartsScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final api = context.read<AuthState>().api;
     setState(() => _loading = true);
     try {
       final data =
-          await api.get('/vehicles/${widget.vehicleId}/parts') as List;
+          await api.get('/vehicles/${widget.vehicle.id}/parts') as List;
       _parts = data
           .map((e) => Part.fromJson(e as Map<String, dynamic>))
           .toList();
@@ -40,7 +46,7 @@ class _PartsScreenState extends State<PartsScreen> {
     final api = context.read<AuthState>().api;
     try {
       await api.post(
-          '/vehicles/${widget.vehicleId}/parts/${p.id}/movement', {
+          '/vehicles/${widget.vehicle.id}/parts/${p.id}/movement', {
         'delta': delta,
         'reason': delta > 0 ? 'purchase' : 'service',
       });
@@ -53,16 +59,51 @@ class _PartsScreenState extends State<PartsScreen> {
     }
   }
 
+  Future<void> _lookupSca(BuildContext context) async {
+    // AUT-1903: drive the lookup from the selected vehicle's plate + state
+    // rather than letting the user type a rego.
+    final rego = (widget.vehicle.rego ?? '').trim();
+    if (rego.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Add a rego to this vehicle to look up parts.'),
+        ));
+      }
+      return;
+    }
+    final state = (widget.vehicle.regoState ?? 'VIC').toUpperCase();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ScaLookupResultsScreen(
+          vehicleId: widget.vehicle.id,
+          rego: rego,
+          state: state,
+        ),
+      ),
+    );
+    if (mounted) _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     final low = _parts.where((p) => p.needsReorder).toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('Parts inventory')),
+      appBar: AppBar(
+        title: const Text('Parts inventory'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.storefront),
+            tooltip: 'Look up Supercheap Auto parts',
+            onPressed: () => _lookupSca(context),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
           await Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (_) => AddPartScreen(vehicleId: widget.vehicleId),
+              builder: (_) => AddPartScreen(vehicleId: widget.vehicle.id),
             ),
           );
           _load();
