@@ -23,8 +23,32 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64]
     steps:
-      - name: Install unzip for Android SDK
-        run: sudo apt-get update && sudo apt-get install -y unzip
+      - name: Install unzip shim for Android SDK
+        run: |
+          python3 -c "
+          import os
+          code = '''#!/usr/bin/env python3
+          import sys, zipfile, os
+          if len(sys.argv) < 2:
+              sys.exit(1)
+          path = sys.argv[1]
+          if not os.path.exists(path):
+              print(f'Error: {path} not found', file=sys.stderr)
+              sys.exit(1)
+          if len(sys.argv) >= 4 and sys.argv[2] == '-d':
+              d = sys.argv[3]
+              with zipfile.ZipFile(path) as z:
+                  z.extractall(d)
+          else:
+              with zipfile.ZipFile(path) as z:
+                  for name in z.namelist():
+                      print(name)
+          '''
+          os.makedirs('/usr/local/bin', exist_ok=True)
+          with open('/usr/local/bin/unzip', 'w') as f:
+              f.write(code)
+          os.chmod('/usr/local/bin/unzip', 0o755)
+          "
 
       - uses: actions/checkout@v4
 
