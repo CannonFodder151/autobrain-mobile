@@ -23,8 +23,8 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64]
     env:
-      ANDROID_SDK_ROOT: "$HOME/.android/sdk"
-      ANDROID_HOME: "$HOME/.android/sdk"
+      ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
+      ANDROID_HOME: "/home/administrator/.android/sdk"
     steps:
       - name: Install unzip shim for Android SDK
         run: |
@@ -116,7 +116,7 @@ jobs:
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           echo "Android SDK cmdline-tools installed to $ANDROID_SDK_ROOT/cmdline-tools/latest"
         env:
-          ANDROID_SDK_ROOT: "$HOME/.android/sdk"
+          ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
       - name: Install Android SDK build-tools + Platform 37
         run: |
           set -euo pipefail
@@ -134,7 +134,7 @@ jobs:
           fi
           echo "android-37 present: $(ls "$ANDROID_SDK_ROOT/platforms" 2>/dev/null | tr '\n' ' ')"
         env:
-          ANDROID_SDK_ROOT: "$HOME/.android/sdk"
+          ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
 
       - name: Verify requested version matches pubspec
         run: |
@@ -199,8 +199,8 @@ jobs:
 
       - name: Build release appbundle
         env:
-          ANDROID_HOME: "$HOME/.android/sdk"
-          ANDROID_SDK_ROOT: "$HOME/.android/sdk"
+          ANDROID_HOME: "/home/administrator/.android/sdk"
+          ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
         run: |
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
@@ -209,8 +209,8 @@ jobs:
 
       - name: Build release APK (same signingConfig, for apksigner scheme check)
         env:
-          ANDROID_HOME: "$HOME/.android/sdk"
-          ANDROID_SDK_ROOT: "$HOME/.android/sdk"
+          ANDROID_HOME: "/home/administrator/.android/sdk"
+          ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
