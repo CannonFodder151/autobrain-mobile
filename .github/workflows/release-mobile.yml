@@ -201,7 +201,6 @@ jobs:
         env:
           ANDROID_HOME: "$HOME/.android/sdk"
           ANDROID_SDK_ROOT: "$HOME/.android/sdk"
-          PATH: "$HOME/.android/sdk/cmdline-tools/latest/bin:$HOME/.android/sdk/build-tools/latest:$HOME/.android/sdk/platform-tools:$PATH"
         run: |
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
@@ -212,7 +211,6 @@ jobs:
         env:
           ANDROID_HOME: "$HOME/.android/sdk"
           ANDROID_SDK_ROOT: "$HOME/.android/sdk"
-          PATH: "$HOME/.android/sdk/cmdline-tools/latest/bin:$HOME/.android/sdk/build-tools/latest:$HOME/.android/sdk/platform-tools:$PATH"
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
