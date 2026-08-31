@@ -92,16 +92,17 @@ jobs:
           export ANDROID_SDK_ROOT="$HOME/.android/sdk"
           mkdir -p "$ANDROID_SDK_ROOT"
           # Download cmdline-tools for Android SDK
-          # Using version that matches AGP/Flutter expectations
           curl -fsSL -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
           mkdir -p /tmp/cmdline-tools-extract
           unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract || python3 -c "import zipfile; zipfile.ZipFile('/tmp/cmdline-tools.zip').extractall('/tmp/cmdline-tools-extract')"
           rm /tmp/cmdline-tools.zip
-          # cmdline-tools latest has flat structure, move to expected path
+          # The zip extracts to cmdline-tools/ subdirectory - move contents to expected path
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-          cp -r /tmp/cmdline-tools-extract/cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" 2>/dev/null || \
-            cp -r /tmp/cmdline-tools-extract/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" 2>/dev/null || \
-            mv /tmp/cmdline-tools-extract/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+          if [ -d "/tmp/cmdline-tools-extract/cmdline-tools" ]; then
+            cp -r /tmp/cmdline-tools-extract/cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+          else
+            cp -r /tmp/cmdline-tools-extract/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+          fi
           rm -rf /tmp/cmdline-tools-extract
           # Accept licenses
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
