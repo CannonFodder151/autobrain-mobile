@@ -22,6 +22,9 @@ jobs:
   release:
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64]
+    env:
+      ANDROID_SDK_ROOT: "$HOME/.android/sdk"
+      ANDROID_HOME: "$HOME/.android/sdk"
     steps:
       - name: Install unzip shim for Android SDK
         run: |
@@ -192,10 +195,6 @@ jobs:
           echo "package identity OK: com.autobrainservice.app"
 
       - name: flutter pub get
-        env:
-          ANDROID_HOME: "$HOME/.android/sdk"
-          ANDROID_SDK_ROOT: "$HOME/.android/sdk"
-          PATH: "$HOME/.android/sdk/cmdline-tools/latest/bin:$HOME/.android/sdk/build-tools/latest:$HOME/.android/sdk/platform-tools:$PATH"
         run: flutter pub get
 
       - name: Build release appbundle
