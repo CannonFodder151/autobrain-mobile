@@ -86,42 +86,47 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Clean stale Android SDK install
+      - name: Install Android SDK cmdline-tools
         run: |
           set -euo pipefail
-          rm -rf "$HOME/.android/sdk/cmdline-tools" "$HOME/.android/sdk/platforms" "$HOME/.android/sdk/build-tools" "$HOME/.android/sdk/emulator" 2>/dev/null || true
+          export ANDROID_SDK_ROOT="$HOME/.android/sdk"
+          mkdir -p "$ANDROID_SDK_ROOT"
+          # Download cmdline-tools for Android SDK
+          # Using version that matches AGP/Flutter expectations
+          curl -fsSL -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
+          mkdir -p /tmp/cmdline-tools-extract
+          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract || python3 -c "import zipfile; zipfile.ZipFile('/tmp/cmdline-tools.zip').extractall('/tmp/cmdline-tools-extract')"
+          rm /tmp/cmdline-tools.zip
+          # cmdline-tools latest has flat structure, move to expected path
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          cp -r /tmp/cmdline-tools-extract/cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" 2>/dev/null || \
+            cp -r /tmp/cmdline-tools-extract/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" 2>/dev/null || \
+            mv /tmp/cmdline-tools-extract/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+          rm -rf /tmp/cmdline-tools-extract
+          # Accept licenses
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          echo "Android SDK cmdline-tools installed to $ANDROID_SDK_ROOT/cmdline-tools/latest"
         env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-      - uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: '16.0'
-
-      - name: Install Android SDK Platform 37 (permission_handler_android compile target)
+          ANDROID_SDK_ROOT: "$HOME/.android/sdk"
+      - name: Install Android SDK build-tools + Platform 37
         run: |
           set -euo pipefail
-          # API 37 publishes only as the minor-versioned package "platforms;android-37.0",
-          # and sdkmanager/cmdline-tools install it to platforms/android-37.0. AGP 8.13.2
-          # (first line with minor-API-level platform resolution) reads that dir; older AGP
-          # and Gradle auto-install look for android-37. Install the real dir and symlink
-          # android-37 -> android-37.0 so a cold runner matches the locally-verified layout.
-          # No sdkmanager here: cmdline-tools 16.0 dropped the --console flag.
-          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37" ] && [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ]; then
-            curl -fsSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.0_r02.zip
-            rm -rf /tmp/platform-37-extract
-            mkdir -p /tmp/platform-37-extract
-            python3 -c "import zipfile; zipfile.ZipFile('/tmp/platform-37.zip').extractall('/tmp/platform-37-extract')"
-            mkdir -p "$ANDROID_SDK_ROOT/platforms"
-            mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37.0"
-            rm -rf /tmp/platform-37.zip /tmp/platform-37-extract
+          export ANDROID_SDK_ROOT="$HOME/.android/sdk"
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/build-tools/latest:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          # Install build-tools and platform 37
+          yes | sdkmanager "build-tools;37.0.0" "platforms;android-37.0" >/dev/null 2>&1 || true
+          # Create expected symlink
+          if [ -d "$ANDROID_SDK_ROOT/build-tools/37.0.0" ] && [ ! -e "$ANDROID_SDK_ROOT/build-tools/latest" ]; then
+            ln -s 37.0.0 "$ANDROID_SDK_ROOT/build-tools/latest"
           fi
-          for sdk in "$ANDROID_SDK_ROOT" "/root/.android/sdk"; do
-            [ -z "$sdk" ] && continue
-            if [ -d "$sdk/platforms/android-37.0" ] && [ ! -d "$sdk/platforms/android-37" ]; then
-              ln -s android-37.0 "$sdk/platforms/android-37"
-              echo "Created symlink $sdk/platforms/android-37 -> android-37.0"
-            fi
-          done
-          echo "android-37 present: $(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ')"
+          # Create platform symlink as expected
+          if [ -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ] && [ ! -e "$ANDROID_SDK_ROOT/platforms/android-37" ]; then
+            ln -s android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
+          fi
+          echo "android-37 present: $(ls "$ANDROID_SDK_ROOT/platforms" 2>/dev/null | tr '\n' ' ')"
+        env:
+          ANDROID_SDK_ROOT: "$HOME/.android/sdk"
 
       - name: Verify requested version matches pubspec
         run: |
