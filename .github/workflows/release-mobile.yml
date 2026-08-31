@@ -192,9 +192,17 @@ jobs:
           echo "package identity OK: com.autobrainservice.app"
 
       - name: flutter pub get
+        env:
+          ANDROID_HOME: "$HOME/.android/sdk"
+          ANDROID_SDK_ROOT: "$HOME/.android/sdk"
+          PATH: "$HOME/.android/sdk/cmdline-tools/latest/bin:$HOME/.android/sdk/build-tools/latest:$HOME/.android/sdk/platform-tools:$PATH"
         run: flutter pub get
 
       - name: Build release appbundle
+        env:
+          ANDROID_HOME: "$HOME/.android/sdk"
+          ANDROID_SDK_ROOT: "$HOME/.android/sdk"
+          PATH: "$HOME/.android/sdk/cmdline-tools/latest/bin:$HOME/.android/sdk/build-tools/latest:$HOME/.android/sdk/platform-tools:$PATH"
         run: |
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
@@ -202,6 +210,10 @@ jobs:
             --dart-define=MOBILE_STORE_BUILD=true
 
       - name: Build release APK (same signingConfig, for apksigner scheme check)
+        env:
+          ANDROID_HOME: "$HOME/.android/sdk"
+          ANDROID_SDK_ROOT: "$HOME/.android/sdk"
+          PATH: "$HOME/.android/sdk/cmdline-tools/latest/bin:$HOME/.android/sdk/build-tools/latest:$HOME/.android/sdk/platform-tools:$PATH"
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
