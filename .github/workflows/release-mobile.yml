@@ -197,6 +197,26 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
+      - name: Verify Android SDK installation
+        run: |
+          set -euo pipefail
+          SDK="/home/administrator/.android/sdk"
+          echo "=== SDK root ==="
+          ls -la "$SDK"
+          echo "=== cmdline-tools ==="
+          ls -la "$SDK/cmdline-tools" 2>/dev/null || true
+          echo "=== platforms ==="
+          ls -la "$SDK/platforms" 2>/dev/null || true
+          echo "=== build-tools ==="
+          ls -la "$SDK/build-tools" 2>/dev/null || true
+          echo "=== sdkmanager ==="
+          ls -la "$SDK/cmdline-tools/latest/bin/sdkmanager" 2>/dev/null || true
+          echo "=== flutter doctor ==="
+          flutter doctor -v || true
+        env:
+          ANDROID_HOME: "/home/administrator/.android/sdk"
+          ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
+
       - name: Build release appbundle
         env:
           ANDROID_HOME: "/home/administrator/.android/sdk"
