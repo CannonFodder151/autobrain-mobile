@@ -93,16 +93,20 @@ jobs:
           mkdir -p "$ANDROID_SDK_ROOT"
           # Download cmdline-tools for Android SDK
           curl -fsSL -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
+          # Extract using Python (reliable across all runner environments)
           mkdir -p /tmp/cmdline-tools-extract
-          unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools-extract || python3 -c "import zipfile; zipfile.ZipFile('/tmp/cmdline-tools.zip').extractall('/tmp/cmdline-tools-extract')"
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/cmdline-tools.zip').extractall('/tmp/cmdline-tools-extract')"
           rm /tmp/cmdline-tools.zip
-          # The zip extracts to cmdline-tools/ subdirectory - move contents to expected path
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-          if [ -d "/tmp/cmdline-tools-extract/cmdline-tools" ]; then
-            cp -r /tmp/cmdline-tools-extract/cmdline-tools/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
-          else
-            cp -r /tmp/cmdline-tools-extract/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+          # Find sdkmanager location in extracted tree and copy contents
+          SDKMGR="$(find /tmp/cmdline-tools-extract -name sdkmanager -type f | head -1)"
+          if [ -z "$SDKMGR" ]; then
+            echo "::error::sdkmanager not found in extracted cmdline-tools"
+            find /tmp/cmdline-tools-extract -type f | head -10
+            exit 1
           fi
+          SDK_TOOLS_DIR="$(dirname "$(dirname "$SDKMGR")")"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          cp -r "$SDK_TOOLS_DIR"/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
           rm -rf /tmp/cmdline-tools-extract
           # Accept licenses
           export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
