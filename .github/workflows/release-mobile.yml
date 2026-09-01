@@ -37,32 +37,50 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK Platform 37 (permission_handler_android compile target)
+      - name: Install Android SDK (platforms;37.0, build-tools;37.0.0, platform-tools)
         run: |
           set -euo pipefail
-          # API 37 publishes only as the minor-versioned package "platforms;android-37.0",
-          # and sdkmanager/cmdline-tools install it to platforms/android-37.0. AGP 8.13.2
-          # (first line with minor-API-level platform resolution) reads that dir; older AGP
-          # and Gradle auto-install look for android-37. Install the real dir and symlink
-          # android-37 -> android-37.0 so a cold runner matches the locally-verified layout.
-          # No sdkmanager here: cmdline-tools 16.0 dropped the --console flag.
-          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37" ] && [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ]; then
+          # Self-hosted gh-runner-autobrain-mobile has no `unzip` and cmdline-tools
+          # 16.0 dropped `sdkmanager --console` (AUT-2064), so install the SDK pieces
+          # we need by direct-download zip + Python zipfile, then symlink so cold
+          # runners match the locally-verified layout. Verified artifacts:
+          #   platform-37.0_r02.zip      -> platforms/android-37.0
+          #   build-tools_r37_linux.zip  -> build-tools/37.0.0 (+ latest symlink)
+          #   platform-tools_r37.0.1-linux.zip -> platform-tools/
+          extract() { python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"; }
+          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ]; then
             curl -fsSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.0_r02.zip
-            rm -rf /tmp/platform-37-extract
-            mkdir -p /tmp/platform-37-extract
-            unzip -q /tmp/platform-37.zip -d /tmp/platform-37-extract
+            rm -rf /tmp/platform-37-extract && mkdir -p /tmp/platform-37-extract
+            extract /tmp/platform-37.zip /tmp/platform-37-extract
             mkdir -p "$ANDROID_SDK_ROOT/platforms"
             mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37.0"
-            rm -rf /tmp/platform-37.zip /tmp/platform-37-extract
+            rm -rf /tmp/platform-37-extract /tmp/platform-37.zip
           fi
+          if [ ! -d "$ANDROID_SDK_ROOT/build-tools/37.0.0" ]; then
+            curl -fsSL -o /tmp/build-tools-37.zip https://dl.google.com/android/repository/build-tools_r37_linux.zip
+            rm -rf /tmp/build-tools-extract && mkdir -p /tmp/build-tools-extract
+            extract /tmp/build-tools-37.zip /tmp/build-tools-extract
+            mkdir -p "$ANDROID_SDK_ROOT/build-tools"
+            mv /tmp/build-tools-extract/android-37.0 "$ANDROID_SDK_ROOT/build-tools/37.0.0"
+            rm -rf /tmp/build-tools-extract /tmp/build-tools-37.zip
+          fi
+          if [ ! -d "$ANDROID_SDK_ROOT/platform-tools" ]; then
+            curl -fsSL -o /tmp/platform-tools.zip https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip
+            rm -rf /tmp/platform-tools-extract && mkdir -p /tmp/platform-tools-extract
+            extract /tmp/platform-tools.zip /tmp/platform-tools-extract
+            mkdir -p "$ANDROID_SDK_ROOT/platform-tools"
+            mv /tmp/platform-tools-extract/platform-tools/* "$ANDROID_SDK_ROOT/platform-tools/"
+            rm -rf /tmp/platform-tools-extract /tmp/platform-tools.zip
+          fi
+          [ -e "$ANDROID_SDK_ROOT/build-tools/latest" ] || ln -s 37.0.0 "$ANDROID_SDK_ROOT/build-tools/latest"
           for sdk in "$ANDROID_SDK_ROOT" "/root/.android/sdk"; do
             [ -z "$sdk" ] && continue
-            if [ -d "$sdk/platforms/android-37.0" ] && [ ! -d "$sdk/platforms/android-37" ]; then
+            if [ -d "$sdk/platforms/android-37.0" ] && [ ! -e "$sdk/platforms/android-37" ]; then
               ln -s android-37.0 "$sdk/platforms/android-37"
               echo "Created symlink $sdk/platforms/android-37 -> android-37.0"
             fi
           done
-          echo "android-37 present: $(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ')"
+          echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') platform-tools=$(ls "$ANDROID_SDK_ROOT/platform-tools" | head -3 | tr '\n' ' ')"
 
       - name: Verify requested version matches pubspec
         run: |
