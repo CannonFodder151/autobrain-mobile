@@ -22,6 +22,16 @@ jobs:
   release:
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64]
+    # Job-level env so every step sees ANDROID_HOME / ANDROID_SDK_ROOT.
+    # The self-hosted runner (gh-runner-autobrain-mobile) has no `unzip`
+    # and `android-actions/setup-android@v3` can't locate the preinstalled
+    # sdkmanager (which() strips PATH-less absolute paths), so we install
+    # everything via direct zip + Python zipfile. Errors are NOT swallowed —
+    # silent `>/dev/null 2>&1 || true` masked the sdkmanager failure for
+    # weeks (AUT-2064 / AUT-2078).
+    env:
+      ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
+      ANDROID_HOME: "/home/administrator/.android/sdk"
     steps:
       - uses: actions/checkout@v4
 
@@ -35,52 +45,107 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK (platforms;37.0, build-tools;37.0.0, platform-tools)
+      - name: Install Android SDK cmdline-tools (manual zip — no unzip on runner)
         run: |
           set -euo pipefail
-          # Self-hosted gh-runner-autobrain-mobile has no `unzip` and cmdline-tools
-          # 16.0 dropped `sdkmanager --console` (AUT-2064), so install the SDK pieces
-          # we need by direct-download zip + Python zipfile, then symlink so cold
-          # runners match the locally-verified layout. Verified artifacts:
-          #   platform-37.0_r02.zip      -> platforms/android-37.0
-          #   build-tools_r37_linux.zip  -> build-tools/37.0.0 (+ latest symlink)
-          #   platform-tools_r37.0.1-linux.zip -> platform-tools/
+          mkdir -p "$ANDROID_SDK_ROOT"
+          curl -fsSL -o /tmp/cmdline-tools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
+          rm -rf /tmp/cmdline-tools-extract && mkdir -p /tmp/cmdline-tools-extract
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/cmdline-tools.zip').extractall('/tmp/cmdline-tools-extract')"
+          rm /tmp/cmdline-tools.zip
+          SDKMGR="$(find /tmp/cmdline-tools-extract -name sdkmanager -type f | head -1)"
+          [ -n "$SDKMGR" ] || { echo "::error::sdkmanager not found in extracted cmdline-tools"; find /tmp/cmdline-tools-extract -type f | head -10; exit 1; }
+          SDK_TOOLS_DIR="$(dirname "$(dirname "$SDKMGR")")"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          cp -r "$SDK_TOOLS_DIR"/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+          rm -rf /tmp/cmdline-tools-extract
+          # Make sure sdkmanager is executable on this runner (matters if
+          # the cp above carried an unexpected mode; previous CI runs hit
+          # "Unable to locate executable file" from android-actions).
+          chmod +x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" || true
+          echo "cmdline-tools installed at $ANDROID_SDK_ROOT/cmdline-tools/latest"
+          ls -la "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+
+      - name: Install Android SDK platforms;37 + build-tools;37.0.0 + platform-tools (direct zip)
+        # self-hosted gh-runner-autobrain-mobile has no `unzip` and
+        # cmdline-tools 16.0's `sdkmanager --console` was removed (AUT-2064).
+        # Skip sdkmanager entirely: download the verified zips directly and
+        # extract with Python zipfile. Idempotent — skips dirs that exist.
+        run: |
+          set -euo pipefail
           extract() { python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"; }
           if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ]; then
-            curl -fsSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.0_r02.zip
+            curl -fsSL -o /tmp/platform-37.zip \
+              https://dl.google.com/android/repository/platform-37.0_r02.zip
             rm -rf /tmp/platform-37-extract && mkdir -p /tmp/platform-37-extract
             extract /tmp/platform-37.zip /tmp/platform-37-extract
             mkdir -p "$ANDROID_SDK_ROOT/platforms"
+            # The zip's top-level is "android-37.0/" — move it in place.
+            [ -d /tmp/platform-37-extract/android-37.0 ] || { echo "::error::platform-37 zip missing android-37.0/"; find /tmp/platform-37-extract -maxdepth 2 -type d; exit 1; }
             mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37.0"
             rm -rf /tmp/platform-37-extract /tmp/platform-37.zip
           fi
           if [ ! -d "$ANDROID_SDK_ROOT/build-tools/37.0.0" ]; then
-            curl -fsSL -o /tmp/build-tools-37.zip https://dl.google.com/android/repository/build-tools_r37_linux.zip
+            curl -fsSL -o /tmp/build-tools-37.zip \
+              https://dl.google.com/android/repository/build-tools_r37_linux.zip
             rm -rf /tmp/build-tools-extract && mkdir -p /tmp/build-tools-extract
             extract /tmp/build-tools-37.zip /tmp/build-tools-extract
             mkdir -p "$ANDROID_SDK_ROOT/build-tools"
+            [ -d /tmp/build-tools-extract/android-37.0 ] || { echo "::error::build-tools zip missing android-37.0/"; find /tmp/build-tools-extract -maxdepth 2 -type d; exit 1; }
             mv /tmp/build-tools-extract/android-37.0 "$ANDROID_SDK_ROOT/build-tools/37.0.0"
             rm -rf /tmp/build-tools-extract /tmp/build-tools-37.zip
           fi
           if [ ! -d "$ANDROID_SDK_ROOT/platform-tools" ]; then
-            curl -fsSL -o /tmp/platform-tools.zip https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip
+            curl -fsSL -o /tmp/platform-tools.zip \
+              https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip
             rm -rf /tmp/platform-tools-extract && mkdir -p /tmp/platform-tools-extract
             extract /tmp/platform-tools.zip /tmp/platform-tools-extract
             mkdir -p "$ANDROID_SDK_ROOT/platform-tools"
+            [ -d /tmp/platform-tools-extract/platform-tools ] || { echo "::error::platform-tools zip missing platform-tools/"; find /tmp/platform-tools-extract -maxdepth 2 -type d; exit 1; }
             mv /tmp/platform-tools-extract/platform-tools/* "$ANDROID_SDK_ROOT/platform-tools/"
             rm -rf /tmp/platform-tools-extract /tmp/platform-tools.zip
           fi
+          # Symlinks some Gradle/AGP lookups expect.
           [ -e "$ANDROID_SDK_ROOT/build-tools/latest" ] || ln -s 37.0.0 "$ANDROID_SDK_ROOT/build-tools/latest"
-          for sdk in "$ANDROID_SDK_ROOT" "/root/.android/sdk"; do
-            [ -z "$sdk" ] && continue
-            if [ -d "$sdk/platforms/android-37.0" ] && [ ! -e "$sdk/platforms/android-37" ]; then
-              ln -s android-37.0 "$sdk/platforms/android-37"
-              echo "Created symlink $sdk/platforms/android-37 -> android-37.0"
+          if [ -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ] && [ ! -e "$ANDROID_SDK_ROOT/platforms/android-37" ]; then
+            ln -s android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
+          fi
+          echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') platform-tools=$(ls "$ANDROID_SDK_ROOT/platform-tools" | head -3 | tr '\n' ' ')"
+
+      - name: Pin Android SDK location for Flutter (local.properties + flutter config)
+        # Flutter on Linux self-hosted runners ignores ANDROID_HOME / ANDROID_SDK_ROOT
+        # unless `android/local.properties` declares sdk.dir (AUT-2078). Drop a
+        # local.properties so Gradle/Flutter both find the SDK at the path the
+        # earlier steps installed it to. `flutter config --android-sdk` is the
+        # belt-and-braces fallback for `flutter doctor` checks.
+        run: |
+          set -euo pipefail
+          SDK="/home/administrator/.android/sdk"
+          mkdir -p android
+          {
+            echo "sdk.dir=$SDK"
+            echo "flutter.versionCode=$(grep -E '^version: ' pubspec.yaml | head -1 | awk -F'+' '{print $2}')"
+            echo "flutter.versionName=$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}' | sed 's/+.*//')"
+          } > android/local.properties
+          cat android/local.properties
+          flutter config --android-sdk "$SDK" || true
+
+      - name: Verify Android SDK installation (fail fast on any missing piece)
+        run: |
+          set -euo pipefail
+          SDK="/home/administrator/.android/sdk"
+          for d in cmdline-tools/latest/bin/sdkmanager platforms/android-37.0 build-tools/37.0.0 platform-tools/adb; do
+            if [ ! -e "$SDK/$d" ]; then
+              echo "::error::missing SDK piece: $SDK/$d"
+              exit 1
             fi
           done
-          echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') platform-tools=$(ls "$ANDROID_SDK_ROOT/platform-tools" | head -3 | tr '\n' ' ')"
+          echo "=== SDK root ==="; ls -la "$SDK"
+          echo "=== platforms ==="; ls "$SDK/platforms"
+          echo "=== build-tools ==="; ls "$SDK/build-tools"
+          echo "=== platform-tools (first 5) ==="; ls "$SDK/platform-tools" | head -5
+          echo "=== sdkmanager ==="; "$SDK/cmdline-tools/latest/bin/sdkmanager" --version || true
 
       - name: Verify requested version matches pubspec
         run: |
