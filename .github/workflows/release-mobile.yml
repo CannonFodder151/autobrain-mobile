@@ -2,7 +2,7 @@ name: Mobile Release (.aab)
 
 # Manual release pipeline: build + sign + published GitHub Release + Discord notes.
 # Release is auto-published (not a draft) so it never stalls in draft backlog.
-# The .aab is then uploaded to the existing Play Console Alpha track
+# The .aab is then uploaded to the existing Play Console closed testing track
 # (alpha, which has testers) automatically (scripts/play-upload-closed-testing.sh)
 # — see docs/mobile-release.md.
 # See docs/mobile-release.md (autobrain monorepo). Never runs on push.
@@ -21,62 +21,8 @@ permissions:
 jobs:
   release:
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, Linux, X64]
-    env:
-      ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
-      ANDROID_HOME: "/home/administrator/.android/sdk"
+    runs-on: [self-hosted, linux, x64]
     steps:
-      - name: Install unzip shim for Android SDK
-        run: |
-          mkdir -p "$HOME/.local/bin"
-          cat > "$HOME/.local/bin/unzip" <<'PYEOF'
-          #!/usr/bin/env python3
-          import sys, zipfile, os
-          if len(sys.argv) < 2:
-              sys.exit(1)
-          # Parse flags: -o (overwrite), -q (quiet), -d <dir>, -l (list)
-          overwrite = False
-          quiet = False
-          list_only = False
-          dest = "."
-          i = 1
-          path = None
-          while i < len(sys.argv):
-              arg = sys.argv[i]
-              if arg == "-o":
-                  overwrite = True
-              elif arg == "-q":
-                  quiet = True
-              elif arg == "-l":
-                  list_only = True
-              elif arg == "-d":
-                  i += 1
-                  if i < len(sys.argv):
-                      dest = sys.argv[i]
-                  else:
-                      sys.exit(1)
-              elif not arg.startswith("-"):
-                  path = arg
-                  break
-              i += 1
-          if path is None:
-              sys.exit(1)
-          if not os.path.exists(path):
-              if not quiet:
-                  print(f"Error: {path} not found", file=sys.stderr)
-              sys.exit(1)
-          with zipfile.ZipFile(path) as z:
-              if list_only:
-                  for info in z.infolist():
-                      size = info.file_size
-                      mtime = info.date_time
-                      print(f"{size:>8}  {mtime[0]:04d}-{mtime[1]:02d}-{mtime[2]:02d} {mtime[3]:02d}:{mtime[4]:02d}  {info.filename}")
-              else:
-                  z.extractall(dest)
-          PYEOF
-          chmod +x "$HOME/.local/bin/unzip"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-
       - uses: actions/checkout@v4
 
       - uses: subosito/flutter-action@v2
@@ -89,52 +35,52 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android SDK cmdline-tools
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK (platforms;37.0, build-tools;37.0.0, platform-tools)
         run: |
           set -euo pipefail
-          export ANDROID_SDK_ROOT="$HOME/.android/sdk"
-          mkdir -p "$ANDROID_SDK_ROOT"
-          # Download cmdline-tools for Android SDK
-          curl -fsSL -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
-          # Extract using Python (reliable across all runner environments)
-          mkdir -p /tmp/cmdline-tools-extract
-          python3 -c "import zipfile; zipfile.ZipFile('/tmp/cmdline-tools.zip').extractall('/tmp/cmdline-tools-extract')"
-          rm /tmp/cmdline-tools.zip
-          # Find sdkmanager location in extracted tree and copy contents
-          SDKMGR="$(find /tmp/cmdline-tools-extract -name sdkmanager -type f | head -1)"
-          if [ -z "$SDKMGR" ]; then
-            echo "::error::sdkmanager not found in extracted cmdline-tools"
-            find /tmp/cmdline-tools-extract -type f | head -10
-            exit 1
+          # Self-hosted gh-runner-autobrain-mobile has no `unzip` and cmdline-tools
+          # 16.0 dropped `sdkmanager --console` (AUT-2064), so install the SDK pieces
+          # we need by direct-download zip + Python zipfile, then symlink so cold
+          # runners match the locally-verified layout. Verified artifacts:
+          #   platform-37.0_r02.zip      -> platforms/android-37.0
+          #   build-tools_r37_linux.zip  -> build-tools/37.0.0 (+ latest symlink)
+          #   platform-tools_r37.0.1-linux.zip -> platform-tools/
+          extract() { python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"; }
+          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ]; then
+            curl -fsSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.0_r02.zip
+            rm -rf /tmp/platform-37-extract && mkdir -p /tmp/platform-37-extract
+            extract /tmp/platform-37.zip /tmp/platform-37-extract
+            mkdir -p "$ANDROID_SDK_ROOT/platforms"
+            mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37.0"
+            rm -rf /tmp/platform-37-extract /tmp/platform-37.zip
           fi
-          SDK_TOOLS_DIR="$(dirname "$(dirname "$SDKMGR")")"
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-          cp -r "$SDK_TOOLS_DIR"/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
-          rm -rf /tmp/cmdline-tools-extract
-          # Accept licenses
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          echo "Android SDK cmdline-tools installed to $ANDROID_SDK_ROOT/cmdline-tools/latest"
-        env:
-          ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
-      - name: Install Android SDK build-tools + Platform 37
-        run: |
-          set -euo pipefail
-          export ANDROID_SDK_ROOT="$HOME/.android/sdk"
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/build-tools/latest:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-          # Install build-tools and platform 37
-          yes | sdkmanager "build-tools;37.0.0" "platforms;android-37.0" >/dev/null 2>&1 || true
-          # Create expected symlink
-          if [ -d "$ANDROID_SDK_ROOT/build-tools/37.0.0" ] && [ ! -e "$ANDROID_SDK_ROOT/build-tools/latest" ]; then
-            ln -s 37.0.0 "$ANDROID_SDK_ROOT/build-tools/latest"
+          if [ ! -d "$ANDROID_SDK_ROOT/build-tools/37.0.0" ]; then
+            curl -fsSL -o /tmp/build-tools-37.zip https://dl.google.com/android/repository/build-tools_r37_linux.zip
+            rm -rf /tmp/build-tools-extract && mkdir -p /tmp/build-tools-extract
+            extract /tmp/build-tools-37.zip /tmp/build-tools-extract
+            mkdir -p "$ANDROID_SDK_ROOT/build-tools"
+            mv /tmp/build-tools-extract/android-37.0 "$ANDROID_SDK_ROOT/build-tools/37.0.0"
+            rm -rf /tmp/build-tools-extract /tmp/build-tools-37.zip
           fi
-          # Create platform symlink as expected
-          if [ -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ] && [ ! -e "$ANDROID_SDK_ROOT/platforms/android-37" ]; then
-            ln -s android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
+          if [ ! -d "$ANDROID_SDK_ROOT/platform-tools" ]; then
+            curl -fsSL -o /tmp/platform-tools.zip https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip
+            rm -rf /tmp/platform-tools-extract && mkdir -p /tmp/platform-tools-extract
+            extract /tmp/platform-tools.zip /tmp/platform-tools-extract
+            mkdir -p "$ANDROID_SDK_ROOT/platform-tools"
+            mv /tmp/platform-tools-extract/platform-tools/* "$ANDROID_SDK_ROOT/platform-tools/"
+            rm -rf /tmp/platform-tools-extract /tmp/platform-tools.zip
           fi
-          echo "android-37 present: $(ls "$ANDROID_SDK_ROOT/platforms" 2>/dev/null | tr '\n' ' ')"
-        env:
-          ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
+          [ -e "$ANDROID_SDK_ROOT/build-tools/latest" ] || ln -s 37.0.0 "$ANDROID_SDK_ROOT/build-tools/latest"
+          for sdk in "$ANDROID_SDK_ROOT" "/root/.android/sdk"; do
+            [ -z "$sdk" ] && continue
+            if [ -d "$sdk/platforms/android-37.0" ] && [ ! -e "$sdk/platforms/android-37" ]; then
+              ln -s android-37.0 "$sdk/platforms/android-37"
+              echo "Created symlink $sdk/platforms/android-37 -> android-37.0"
+            fi
+          done
+          echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') platform-tools=$(ls "$ANDROID_SDK_ROOT/platform-tools" | head -3 | tr '\n' ' ')"
 
       - name: Verify requested version matches pubspec
         run: |
@@ -197,52 +143,7 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
-      - name: Pin Android SDK location for Flutter (autobrain-mobile release pipeline)
-        # Flutter (esp. 3.47+ on self-hosted Linux runners) ignores ANDROID_HOME /
-        # ANDROID_SDK_ROOT unless `android/local.properties` declares sdk.dir or
-        # the SDK is at a well-known system path. The job-level env vars above
-        # were set but Flutter still printed "[!] No Android SDK found." and the
-        # .aab never produced — release-mobile.yml has been red for every
-        # version since at least 33551315419 (AUT-2078). Drop a local.properties
-        # so Gradle/Flutter both find the SDK at the path the earlier steps
-        # installed it to.
-        run: |
-          set -euo pipefail
-          SDK="/home/administrator/.android/sdk"
-          mkdir -p android
-          {
-            echo "sdk.dir=$SDK"
-            # flutter.versionCode pulled from pubspec.yaml so a future Flutter
-            # migration can read build numbers without re-deriving them.
-            echo "flutter.versionCode=$(grep -E '^version: ' pubspec.yaml | head -1 | awk -F'+' '{print $2}')"
-            echo "flutter.versionName=$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}' | sed 's/+.*//')"
-          } > android/local.properties
-          cat android/local.properties
-
-      - name: Verify Android SDK installation
-        run: |
-          set -euo pipefail
-          SDK="/home/administrator/.android/sdk"
-          echo "=== SDK root ==="
-          ls -la "$SDK"
-          echo "=== cmdline-tools ==="
-          ls -la "$SDK/cmdline-tools" 2>/dev/null || true
-          echo "=== platforms ==="
-          ls -la "$SDK/platforms" 2>/dev/null || true
-          echo "=== build-tools ==="
-          ls -la "$SDK/build-tools" 2>/dev/null || true
-          echo "=== sdkmanager ==="
-          ls -la "$SDK/cmdline-tools/latest/bin/sdkmanager" 2>/dev/null || true
-          echo "=== flutter doctor ==="
-          flutter doctor -v || true
-        env:
-          ANDROID_HOME: "/home/administrator/.android/sdk"
-          ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
-
       - name: Build release appbundle
-        env:
-          ANDROID_HOME: "/home/administrator/.android/sdk"
-          ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
         run: |
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
@@ -250,9 +151,6 @@ jobs:
             --dart-define=MOBILE_STORE_BUILD=true
 
       - name: Build release APK (same signingConfig, for apksigner scheme check)
-        env:
-          ANDROID_HOME: "/home/administrator/.android/sdk"
-          ANDROID_SDK_ROOT: "/home/administrator/.android/sdk"
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
@@ -333,7 +231,7 @@ jobs:
           payload="$(jq -n \
             --arg channel approvals \
             --arg title "Play closed-testing upload needs tester audience" \
-            --arg desc "Auto-upload to the Alpha track (alpha) worked, but Play blocks submit-for-review until the track has testers. One-time setup in Play Console (Testing > Closed testing > alpha): add testers + country availability (restOfWorld on). After that every release auto-submits for review." \
+            --arg desc "Auto-upload to the closed testing track (alpha) worked, but Play blocks submit-for-review until the track has testers. One-time setup in Play Console (Testing > Closed testing > alpha): add testers + country availability (restOfWorld on). After that every release auto-submits for review." \
             --arg version "$VERSION" \
             '{channel:$channel,title:$title,description:$desc,color:"0x5865F2",author:"Mobile Release Engineer",fields:[{name:"Version",value:$version,inline:true},{name:"Ask",value:"Configure testers once",inline:true}]}')"
           curl -sS -o /dev/null -w "approvals embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
