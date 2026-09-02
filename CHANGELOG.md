@@ -8,26 +8,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 > user-facing change ships with an entry here under `[Unreleased]` — see
 > `CONTRIBUTING.md` for the frontend-parity + changelog rules.
 
+## [Unreleased]
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+### Fixed
+- CI (AUT-2097): fix buildx cache contamination in `build-hosted.yml` that shipped
+  amd64 layer blobs inside arm64 manifests. Scoped GHA buildx cache per-architecture,
+  disabled cache import for arm64 builds, added pre- and post-build arch verification
+  steps, and gated manifest assembly on both arch checks passing.
 
 
 ## [Unreleased]
+
+### Fix (AUT-2070)
+- fix(docker): pin `nginxinc/nginx-unprivileged:stable-alpine` in `docker/frontend/Dockerfile` to the multi-arch manifest digest `sha256:45ce1e2e…` so the `Pin guard — frontend nginx image` gate stays green (was floating `:stable-alpine`).
+- fix(frontend): Servo Spy list view now exposes an inline fuel-type chip bar so the fuel filter is visible without opening the filter sheet. The selected-fuel price-match fix from PR #410 (AUT-2105) already shipped in 0.3.203.
+
+### Fixed
+- fix(ci): replace the removed `dart pub audit` subcommand in the `Flutter — pub audit` PR gate with `osv-scanner --lockfile=pubspec.lock` so the gate stops failing every PR (Dart 3.6+ removed the subcommand). Repo-wide fix — unblocks merge of all open PRs.
+- fix(docker): pin `redis:7-alpine` in `docker-compose.yml` to `redis:7.2.5-alpine@sha256:6aaf3f5…` so the `Pin guard` PR gate stays green (was the only unpinned compose image left after PR #409 unpinned nginx for arm64 hosted builds).
+
+- fix(frontend): guard `pickPriceForFuel` against malformed price entries (non-Map, non-num/string price) so a bad API row no longer aborts the whole list view. OCR-review advisory.
+- test(frontend): extend `servo_spy_list_sort_test.dart` with cases for `selectedFuelType == null`, missing `prices` key, string-encoded price, and malformed price entries (OCR-review advisory).
+
+### Changed
+- **AI gateway:** Extract router configuration (system prompts, schemas, payload caps, validation helpers) from `router_client.py` into new `router_utils.py` module. `router_client.py` now contains only HTTP transport. (AUT-1969)
+
+### Changed
+- **Servo Spy fuel map:** flip `FUEL_VIC_ENABLED` to `"true"` on Default and
+  Hosted tiers and document the VIC Servo Saver partner-key wiring
+  (`.env.example`, `docs/petrol-price-map.md`). The polling consumer is
+  gated on an approved partner key being present in `/opt/autobrain/secrets`
+  on Hosted, or `FUEL_VIC_API_KEY` on Default; absent the key the source
+  silently skips per the existing `enabled()` check (AUT-1932).
 
 ## [0.3.203] - 2026-09-02
 
