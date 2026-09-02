@@ -37,6 +37,25 @@ jobs:
 
       - uses: android-actions/setup-android@v3
 
+      - name: Fix cmdline-tools execute bits (cold runner AUT-2176)
+        # android-actions/setup-android installs cmdline-tools into
+        # $ANDROID_SDK_ROOT/cmdline-tools/<version>/bin, but on cold runners the
+        # bits arrive non-executable so flutter_tools fails when it shells out to
+        # apkanalyzer ("ProcessException: ... lacked sufficient permissions to
+        # execute .../cmdline-tools/latest/bin/apkanalyzer"). chmod u+x is
+        # idempotent and safe across warm/cold runners (AUT-2064 fixed sdkmanager;
+        # apkanalyzer perms were still open).
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          [[ -n "$sdk" && -d "$sdk/cmdline-tools" ]] || { echo "no cmdline-tools dir under $sdk"; exit 0; }
+          shopt -s nullglob
+          for bin_dir in "$sdk"/cmdline-tools/*/bin; do
+            echo "fixing exec bits in $bin_dir"
+            chmod -R u+x "$bin_dir"
+          done
+          echo "apkanalyzer perms: $(stat -c '%a %n' "$sdk"/cmdline-tools/*/bin/apkanalyzer 2>/dev/null || echo 'n/a')"
+
       - name: Install Android SDK (platforms;37.0, build-tools;37.0.0, platform-tools)
         run: |
           set -euo pipefail
