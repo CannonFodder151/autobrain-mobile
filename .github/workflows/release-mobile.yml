@@ -67,48 +67,15 @@ jobs:
           echo "cmdline-tools installed at $ANDROID_SDK_ROOT/cmdline-tools/latest"
           ls -la "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 
-      - name: Install Android SDK platforms;37 + build-tools;37.0.0 + platform-tools + NDK r27 (sdkmanager)
-        # self-hosted gh-runner-autobrain-mobile has no `unzip` and
-        # cmdline-tools 16.0's `sdkmanager --console` was removed (AUT-2064).
-        # The earlier attempt extracted zips directly with python zipfile,
-        # which left platforms/android-37.0/ with no package.xml; on the
-        # next run AGP errored with "Failed to find target with hash
-        # string 'android-37'" because sdkmanager re-installed at
-        # android-37.0-2/ (it couldn't reconcile the missing metadata
-        # in the stale dir) and AGP couldn't read a hash string from a
-        # package.xml-less dir.
-        # Wipe the stale state, then let sdkmanager install everything
-        # cleanly so it can write package.xml + the right directory
-        # layout. Licenses are pre-accepted in the prior step so
-        # sdkmanager doesn't prompt.
-        # includes NDK r27 because android/app/build.gradle pins
-        # `ndkVersion "27.0.12077973"`; AGP auto-installs NDK otherwise
-        # and trips a LicenceNotAcceptedException.
+      - name: Install Android SDK
         run: |
           set -euo pipefail
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
-          sdkmanager --version
-          # Wipe stale state from earlier failed runs that left dirs
-          # without package.xml (so sdkmanager doesn't refuse to install
-          # into them and AGP can't read their hash strings).
-          rm -rf "$ANDROID_SDK_ROOT/platforms" \
-                 "$ANDROID_SDK_ROOT/build-tools" \
-                 "$ANDROID_SDK_ROOT/ndk" \
-                 "$ANDROID_SDK_ROOT/platform-tools" \
-                 "$ANDROID_SDK_ROOT/.knownPackages"
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
+          rm -rf "$ANDROID_SDK_ROOT/platforms" "$ANDROID_SDK_ROOT/build-tools" "$ANDROID_SDK_ROOT/ndk" "$ANDROID_SDK_ROOT/platform-tools" "$ANDROID_SDK_ROOT/.knownPackages"
           mkdir -p "$ANDROID_SDK_ROOT/platforms" "$ANDROID_SDK_ROOT/build-tools" "$ANDROID_SDK_ROOT/ndk"
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          # Install everything in one call. sdkmanager is idempotent.
-          # Output is NOT redirected — failures surface immediately.
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-37.0" \
-            "build-tools;37.0.0" \
-            "ndk;27.0.12077973"
-          # Symlinks some Gradle/AGP lookups expect.
-          [ -e "$ANDROID_SDK_ROOT/build-tools/latest" ] || ln -s 37.0.0 "$ANDROID_SDK_ROOT/build-tools/latest"
-          [ -e "$ANDROID_SDK_ROOT/platforms/android-37" ] || ln -s android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
-          echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') platform-tools=$(ls "$ANDROID_SDK_ROOT/platform-tools" | head -3 | tr '\n' ' ') ndk=$(ls "$ANDROID_SDK_ROOT/ndk" 2>/dev/null | tr '\n' ' ')"
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
+          echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') ndk=$(ls "$ANDROID_SDK_ROOT/ndk" | tr '\n' ' ')"
 
       - name: Pre-accept Android SDK licenses (NDK + platforms/build-tools accept hashes)
         # AGP fails the build with LicenceNotAcceptedException if it has to
@@ -150,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           SDK="/home/administrator/.android/sdk"
-          for d in cmdline-tools/latest/bin/sdkmanager platforms/android-37.0 build-tools/37.0.0 platform-tools/adb ndk/27.0.12077973/source.properties; do
+          for d in cmdline-tools/latest/bin/sdkmanager platforms/android-36 build-tools/36.0.0 platform-tools/adb ndk/27.0.12077973/source.properties; do
             if [ ! -e "$SDK/$d" ]; then
               echo "::error::missing SDK piece: $SDK/$d"
               exit 1
