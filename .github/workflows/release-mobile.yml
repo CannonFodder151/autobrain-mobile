@@ -67,63 +67,29 @@ jobs:
           echo "cmdline-tools installed at $ANDROID_SDK_ROOT/cmdline-tools/latest"
           ls -la "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 
-      - name: Install Android SDK platforms;37 + build-tools;37.0.0 + platform-tools + NDK r27 (direct zip)
+      - name: Install Android SDK platforms;37 + build-tools;37.0.0 + platform-tools + NDK r27 (sdkmanager)
         # self-hosted gh-runner-autobrain-mobile has no `unzip` and
         # cmdline-tools 16.0's `sdkmanager --console` was removed (AUT-2064).
-        # Skip sdkmanager entirely: download the verified zips directly and
-        # extract with Python zipfile. Idempotent — skips dirs that exist.
-        # NDK r27 is required by android/app/build.gradle (ndkVersion
-        # "27.0.12077973") — AGP auto-downloads it otherwise and trips a
-        # LicenceNotAcceptedException, so we install it here too.
+        # The previous attempt called sdkmanager but masked the exit
+        # status (`>/dev/null 2>&1 || true`) so a silent failure looked
+        # like a success. Don't do that — let sdkmanager fail loudly.
+        # Licenses are pre-accepted in the prior step so sdkmanager
+        # doesn't prompt or auto-re-install packages.
+        # Includes NDK r27 because android/app/build.gradle pins
+        # `ndkVersion "27.0.12077973"`; AGP tries to auto-install NDK
+        # otherwise and trips a LicenceNotAcceptedException.
         run: |
           set -euo pipefail
-          extract() { python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"; }
-          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ]; then
-            curl -fsSL -o /tmp/platform-37.zip \
-              https://dl.google.com/android/repository/platform-37.0_r02.zip
-            rm -rf /tmp/platform-37-extract && mkdir -p /tmp/platform-37-extract
-            extract /tmp/platform-37.zip /tmp/platform-37-extract
-            mkdir -p "$ANDROID_SDK_ROOT/platforms"
-            [ -d /tmp/platform-37-extract/android-37.0 ] || { echo "::error::platform-37 zip missing android-37.0/"; find /tmp/platform-37-extract -maxdepth 2 -type d; exit 1; }
-            mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37.0"
-            rm -rf /tmp/platform-37-extract /tmp/platform-37.zip
-          fi
-          if [ ! -d "$ANDROID_SDK_ROOT/build-tools/37.0.0" ]; then
-            curl -fsSL -o /tmp/build-tools-37.zip \
-              https://dl.google.com/android/repository/build-tools_r37_linux.zip
-            rm -rf /tmp/build-tools-extract && mkdir -p /tmp/build-tools-extract
-            extract /tmp/build-tools-37.zip /tmp/build-tools-extract
-            mkdir -p "$ANDROID_SDK_ROOT/build-tools"
-            [ -d /tmp/build-tools-extract/android-37.0 ] || { echo "::error::build-tools zip missing android-37.0/"; find /tmp/build-tools-extract -maxdepth 2 -type d; exit 1; }
-            mv /tmp/build-tools-extract/android-37.0 "$ANDROID_SDK_ROOT/build-tools/37.0.0"
-            rm -rf /tmp/build-tools-extract /tmp/build-tools-37.zip
-          fi
-          if [ ! -d "$ANDROID_SDK_ROOT/platform-tools" ]; then
-            curl -fsSL -o /tmp/platform-tools.zip \
-              https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip
-            rm -rf /tmp/platform-tools-extract && mkdir -p /tmp/platform-tools-extract
-            extract /tmp/platform-tools.zip /tmp/platform-tools-extract
-            mkdir -p "$ANDROID_SDK_ROOT/platform-tools"
-            [ -d /tmp/platform-tools-extract/platform-tools ] || { echo "::error::platform-tools zip missing platform-tools/"; find /tmp/platform-tools-extract -maxdepth 2 -type d; exit 1; }
-            mv /tmp/platform-tools-extract/platform-tools/* "$ANDROID_SDK_ROOT/platform-tools/"
-            rm -rf /tmp/platform-tools-extract /tmp/platform-tools.zip
-          fi
-          if [ ! -d "$ANDROID_SDK_ROOT/ndk/27.0.12077973" ]; then
-            # NDK zip's top-level is "android-ndk-r27/" — move its contents in.
-            curl -fsSL -o /tmp/ndk-r27.zip \
-              https://dl.google.com/android/repository/android-ndk-r27-linux.zip
-            rm -rf /tmp/ndk-r27-extract && mkdir -p /tmp/ndk-r27-extract
-            extract /tmp/ndk-r27.zip /tmp/ndk-r27-extract
-            mkdir -p "$ANDROID_SDK_ROOT/ndk"
-            [ -d /tmp/ndk-r27-extract/android-ndk-r27 ] || { echo "::error::ndk zip missing android-ndk-r27/"; find /tmp/ndk-r27-extract -maxdepth 2 -type d; exit 1; }
-            mv /tmp/ndk-r27-extract/android-ndk-r27 "$ANDROID_SDK_ROOT/ndk/27.0.12077973"
-            rm -rf /tmp/ndk-r27-extract /tmp/ndk-r27.zip
-          fi
-          # Symlinks some Gradle/AGP lookups expect.
-          [ -e "$ANDROID_SDK_ROOT/build-tools/latest" ] || ln -s 37.0.0 "$ANDROID_SDK_ROOT/build-tools/latest"
-          if [ -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ] && [ ! -e "$ANDROID_SDK_ROOT/platforms/android-37" ]; then
-            ln -s android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
-          fi
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          sdkmanager --version
+          # Install everything in one call. sdkmanager is idempotent.
+          # Output is NOT redirected — failures surface immediately.
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-37" \
+            "build-tools;37.0.0" \
+            "ndk;27.0.12077973"
           echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') platform-tools=$(ls "$ANDROID_SDK_ROOT/platform-tools" | head -3 | tr '\n' ' ') ndk=$(ls "$ANDROID_SDK_ROOT/ndk" 2>/dev/null | tr '\n' ' ')"
 
       - name: Pre-accept Android SDK licenses (NDK + platforms/build-tools accept hashes)
