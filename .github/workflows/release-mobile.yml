@@ -67,11 +67,14 @@ jobs:
           echo "cmdline-tools installed at $ANDROID_SDK_ROOT/cmdline-tools/latest"
           ls -la "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
 
-      - name: Install Android SDK platforms;37 + build-tools;37.0.0 + platform-tools (direct zip)
+      - name: Install Android SDK platforms;37 + build-tools;37.0.0 + platform-tools + NDK r27 (direct zip)
         # self-hosted gh-runner-autobrain-mobile has no `unzip` and
         # cmdline-tools 16.0's `sdkmanager --console` was removed (AUT-2064).
         # Skip sdkmanager entirely: download the verified zips directly and
         # extract with Python zipfile. Idempotent — skips dirs that exist.
+        # NDK r27 is required by android/app/build.gradle (ndkVersion
+        # "27.0.12077973") — AGP auto-downloads it otherwise and trips a
+        # LicenceNotAcceptedException, so we install it here too.
         run: |
           set -euo pipefail
           extract() { python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"; }
@@ -81,7 +84,6 @@ jobs:
             rm -rf /tmp/platform-37-extract && mkdir -p /tmp/platform-37-extract
             extract /tmp/platform-37.zip /tmp/platform-37-extract
             mkdir -p "$ANDROID_SDK_ROOT/platforms"
-            # The zip's top-level is "android-37.0/" — move it in place.
             [ -d /tmp/platform-37-extract/android-37.0 ] || { echo "::error::platform-37 zip missing android-37.0/"; find /tmp/platform-37-extract -maxdepth 2 -type d; exit 1; }
             mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37.0"
             rm -rf /tmp/platform-37-extract /tmp/platform-37.zip
@@ -106,12 +108,41 @@ jobs:
             mv /tmp/platform-tools-extract/platform-tools/* "$ANDROID_SDK_ROOT/platform-tools/"
             rm -rf /tmp/platform-tools-extract /tmp/platform-tools.zip
           fi
+          if [ ! -d "$ANDROID_SDK_ROOT/ndk/27.0.12077973" ]; then
+            # NDK zip's top-level is "android-ndk-r27/" — move its contents in.
+            curl -fsSL -o /tmp/ndk-r27.zip \
+              https://dl.google.com/android/repository/android-ndk-r27-linux.zip
+            rm -rf /tmp/ndk-r27-extract && mkdir -p /tmp/ndk-r27-extract
+            extract /tmp/ndk-r27.zip /tmp/ndk-r27-extract
+            mkdir -p "$ANDROID_SDK_ROOT/ndk"
+            [ -d /tmp/ndk-r27-extract/android-ndk-r27 ] || { echo "::error::ndk zip missing android-ndk-r27/"; find /tmp/ndk-r27-extract -maxdepth 2 -type d; exit 1; }
+            mv /tmp/ndk-r27-extract/android-ndk-r27 "$ANDROID_SDK_ROOT/ndk/27.0.12077973"
+            rm -rf /tmp/ndk-r27-extract /tmp/ndk-r27.zip
+          fi
           # Symlinks some Gradle/AGP lookups expect.
           [ -e "$ANDROID_SDK_ROOT/build-tools/latest" ] || ln -s 37.0.0 "$ANDROID_SDK_ROOT/build-tools/latest"
           if [ -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ] && [ ! -e "$ANDROID_SDK_ROOT/platforms/android-37" ]; then
             ln -s android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37"
           fi
-          echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') platform-tools=$(ls "$ANDROID_SDK_ROOT/platform-tools" | head -3 | tr '\n' ' ')"
+          echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') platform-tools=$(ls "$ANDROID_SDK_ROOT/platform-tools" | head -3 | tr '\n' ' ') ndk=$(ls "$ANDROID_SDK_ROOT/ndk" 2>/dev/null | tr '\n' ' ')"
+
+      - name: Pre-accept Android SDK licenses (NDK + platforms/build-tools accept hashes)
+        # AGP fails the build with LicenceNotAcceptedException if it has to
+        # auto-install any SDK package (e.g. NDK) and the matching license
+        # hash isn't already on disk. The well-known SHA1 hashes for SDK
+        # and NDK accept-licenses are written to $ANDROID_SDK_ROOT/licenses
+        # before the build runs. Same hashes the local autobrain dev
+        # workstation has.
+        run: |
+          set -euo pipefail
+          mkdir -p "$ANDROID_SDK_ROOT/licenses"
+          printf "\\n24333f8a63b6825ea9c5514f83c2829b004d1fee\\nd56f5187479451eabf01fb78af6dfcb131a6481e" > "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
+          printf "\\n84831b9409646a918e30573bab4c9c91346d8abd" > "$ANDROID_SDK_ROOT/licenses/android-sdk-preview-license"
+          printf "\\n859f317696f67ef3d7f30a50a5560e7834b43903" > "$ANDROID_SDK_ROOT/licenses/android-sdk-arm-dbt-license"
+          printf "\\nd975f751698a77b662f1254ddbeed3901e976f5a" > "$ANDROID_SDK_ROOT/licenses/intel-android-extra-license"
+          cat "$ANDROID_SDK_ROOT/licenses/android-sdk-license"
+          echo "---"
+          ls -la "$ANDROID_SDK_ROOT/licenses"
 
       - name: Pin Android SDK location for Flutter (local.properties + flutter config)
         # Flutter on Linux self-hosted runners ignores ANDROID_HOME / ANDROID_SDK_ROOT
@@ -135,7 +166,7 @@ jobs:
         run: |
           set -euo pipefail
           SDK="/home/administrator/.android/sdk"
-          for d in cmdline-tools/latest/bin/sdkmanager platforms/android-37.0 build-tools/37.0.0 platform-tools/adb; do
+          for d in cmdline-tools/latest/bin/sdkmanager platforms/android-37.0 build-tools/37.0.0 platform-tools/adb ndk/27.0.12077973/source.properties; do
             if [ ! -e "$SDK/$d" ]; then
               echo "::error::missing SDK piece: $SDK/$d"
               exit 1
@@ -145,6 +176,7 @@ jobs:
           echo "=== platforms ==="; ls "$SDK/platforms"
           echo "=== build-tools ==="; ls "$SDK/build-tools"
           echo "=== platform-tools (first 5) ==="; ls "$SDK/platform-tools" | head -5
+          echo "=== ndk ==="; ls "$SDK/ndk"
           echo "=== sdkmanager ==="; "$SDK/cmdline-tools/latest/bin/sdkmanager" --version || true
 
       - name: Verify requested version matches pubspec
