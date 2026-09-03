@@ -90,8 +90,15 @@ class _ServoSpyMap extends StatefulWidget {
 class _FuelPriceEntry {
   final String fuelType;
   final double? priceCents; // null = no price
+  final double? costPerKm; // $/km (AUT-2201/2202, null without vehicle_id)
+  final double? avgFillCost; // $ per fill (AUT-2201/2202)
 
-  const _FuelPriceEntry({required this.fuelType, this.priceCents});
+  const _FuelPriceEntry({
+    required this.fuelType,
+    this.priceCents,
+    this.costPerKm,
+    this.avgFillCost,
+  });
 }
 
 class _MapStation {
@@ -132,6 +139,8 @@ class _MapStation {
           .map((p) => _FuelPriceEntry(
                 fuelType: p['fuel_type'] as String? ?? '',
                 priceCents: p['price'] != null ? (p['price'] as num).toDouble() : null,
+                costPerKm: (p['cost_per_km'] as num?)?.toDouble(),
+                avgFillCost: (p['avg_fill_cost'] as num?)?.toDouble(),
               ))
           .toList(),
     );
@@ -154,6 +163,7 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
   List<_MapStation> _stations = const [];
   List<String> _fuelTypes = List<String>.from(defaultFuelTypes);
   String? _selectedFuelType;
+  String? _vehicleId;
   double _maxDistanceKm = 25;
   final MapController _mapController = MapController();
 
@@ -192,6 +202,7 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
           .map((e) => Vehicle.fromJson(e as Map<String, dynamic>))
           .toList();
       final current = Vehicle.resolveSelection(vehicles, null);
+      _vehicleId = current?.id;
       _selectedFuelType = current?.fuelType;
 
       _fuelTypes = await fetchFuelTypes(api);
@@ -222,6 +233,7 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
         'radius_km': _maxDistanceKm.toInt().toString(),
         'limit': '50',
       };
+      if (_vehicleId != null) params['vehicle_id'] = _vehicleId!;
       final qs = params.entries
           .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
           .join('&');
@@ -362,6 +374,10 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
           ),
         ),
     ];
+    final showEmpty = !_loading &&
+        _error == null &&
+        _userLoc != null &&
+        _stations.isEmpty;
     return Column(
       children: [
         if (_locationDenied)
@@ -420,6 +436,7 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
         Expanded(
           child: Stack(
             children: [
+              Container(color: scheme.surfaceContainerHighest),
               FlutterMap(
                 mapController: _mapController,
                 options: MapOptions(
@@ -442,21 +459,75 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
               ),
               if (_loading)
                 const Positioned.fill(
-                  child: Center(child: CircularProgressIndicator()),
+                  child: ColoredBox(
+                    color: Color(0x66000000),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                ),
+              if (showEmpty)
+                Positioned.fill(
+                  child: Center(
+                    child: Container(
+                      margin: const EdgeInsets.all(24),
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: scheme.surface.withValues(alpha: 0.95),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.local_gas_station_outlined,
+                              size: 40, color: scheme.onSurfaceVariant),
+                          const SizedBox(height: 8),
+                          Text(
+                            'No fuel stations within ${_maxDistanceKm.toInt()} km.',
+                            style: Theme.of(context).textTheme.titleSmall,
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Try increasing the distance in Filters.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 12),
+                          FilledButton.tonal(
+                            onPressed: _openFilter,
+                            child: const Text('Adjust filters'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
               if (_error != null && !_loading)
                 Positioned(
                   left: 16,
                   right: 16,
-                  bottom: 16,
+                  top: 16,
                   child: Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: scheme.error.withValues(alpha: 0.9),
+                      color: scheme.errorContainer,
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Text('Prices unavailable: $_error',
-                        style: TextStyle(color: scheme.onError)),
+                    child: Row(
+                      children: [
+                        Icon(Icons.error_outline, color: scheme.onErrorContainer),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Prices unavailable: $_error',
+                            style: TextStyle(color: scheme.onErrorContainer),
+                          ),
+                        ),
+                        TextButton(onPressed: _bootstrap, child: const Text('Retry')),
+                      ],
+                    ),
                   ),
                 ),
               Positioned(
@@ -620,6 +691,13 @@ class _StationSheet extends StatelessWidget {
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.local_gas_station, color: scheme.primary),
               title: Text(p.fuelType),
+              subtitle: Text(
+                p.costPerKm != null
+                    ? '\$${p.costPerKm!.toStringAsFixed(3)}/km'
+                        '${p.avgFillCost != null ? '  ·  fill \$${p.avgFillCost!.toStringAsFixed(2)}' : ''}'
+                    : '—',
+                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+              ),
               trailing: Text(
                 p.priceCents == null
                     ? '—'
@@ -656,6 +734,7 @@ class _ServoSpyListState extends State<_ServoSpyList> {
   List<ServoStationRow> _stations = const [];
   List<String> _fuelTypes = List<String>.from(defaultFuelTypes);
   String? _selectedFuelType;
+  String? _vehicleId;
   double _maxDistanceKm = 25;
   ServoSortMetric _sortMetric = ServoSortMetric.price;
   late final ApiClient _api;
@@ -688,6 +767,7 @@ class _ServoSpyListState extends State<_ServoSpyList> {
           .map((e) => Vehicle.fromJson(e as Map<String, dynamic>))
           .toList();
       final current = Vehicle.resolveSelection(vehicles, null);
+      _vehicleId = current?.id;
       _selectedFuelType = current?.fuelType;
 
       _fuelTypes = await fetchFuelTypes(_api);
@@ -716,6 +796,7 @@ class _ServoSpyListState extends State<_ServoSpyList> {
         'radius_km': _maxDistanceKm.toInt().toString(),
       };
       if (_selectedFuelType != null) params['fuel_type'] = _selectedFuelType!;
+      if (_vehicleId != null) params['vehicle_id'] = _vehicleId!;
       final qs = params.entries
           .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
           .join('&');
@@ -915,6 +996,12 @@ class _ServoSpyListState extends State<_ServoSpyList> {
                             final distLabel = s.distanceKm != null
                                 ? '${s.distanceKm!.toStringAsFixed(1)} km'
                                 : '';
+                            final ckmLabel = s.costPerKm != null
+                                ? '\$${s.costPerKm!.toStringAsFixed(3)}/km'
+                                : '—';
+                            final afcLabel = s.avgFillCost != null
+                                ? 'fill \$${s.avgFillCost!.toStringAsFixed(2)}'
+                                : '';
                             return ListTile(
                               leading: CircleAvatar(
                                 backgroundColor: scheme.surfaceContainerHighest,
@@ -933,7 +1020,22 @@ class _ServoSpyListState extends State<_ServoSpyList> {
                                       ),
                               ),
                               title: Text(s.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-                              subtitle: Text(distLabel),
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(distLabel),
+                                  Text(
+                                    afcLabel.isEmpty
+                                        ? ckmLabel
+                                        : '$ckmLabel  ·  $afcLabel',
+                                    style: TextStyle(
+                                      color: scheme.onSurfaceVariant,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
                               trailing: Text(
                                 priceLabel,
                                 style: Theme.of(context).textTheme.titleSmall?.copyWith(

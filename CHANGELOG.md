@@ -11,11 +11,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.217] - 2026-09-03
+### Security
+- **CI security gate / AUT-2066:** replace the broken `dart pub audit` step in
+  `.github/workflows/security-pr-gate.yml` (the subcommand does not exist on
+  current Flutter/Dart stable and was failing every PR at the audit step,
+  blocking [AUT-1899](/AUT/issues/AUT-1899) and any other PR touching
+  `frontend/`) with `osv-scanner` against `frontend/pubspec.lock`, gated to
+  fail on HIGH/CRITICAL. Pinned to osv-scanner v1.7.3 for reproducibility.
+  No more phantom Flutter gate failure; the gate now fails only on real
+  package vulnerabilities.
+
+## [0.3.216] - 2026-09-03
+
+### Fixed (AUT-2233)
+- fix(docker): bump `autobrain-dongle-server:hosted` digest in `docker-compose.hosted.yml` to `sha256:c5768948…`. The new image contains the `AUTOBRIAN_BACKEND_URL` → `AUTOBRAIN_BACKEND_URL` rename at the pydantic-settings source (AUT-1978 follow-up); the running container now reads the field by its canonical spelling and any caller that drops the env override falls back to `http://backend:8006` (the field default, harmless because the running stack sets `AUTOBRAIN_BACKEND_URL=http://backend:8000`).
+- chore(ci, autobrain-dongle-server): fix `build-and-push` push to the private GHCR package by falling back to the `GHCR_PAT` secret (mirrors autobrain monorepo `build-hosted.yml`). The default GITHUB_TOKEN lacks cross-package write scope; without the fallback, every `hosted`-tag push failed with `permission_denied: read_package`. Repo secret `GHCR_PAT` populated.
+
 ### Fixed (AUT-2256)
 - workers (`scheduled_backup`): skip-with-loud-log when `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY` are empty (was previously a silent Celery FAIL on every daily beat tick). The hosted stack runs the same compose service as the in-app worker but the secret-file loader (`docker/lib-load-secrets.sh`) only exports what it finds; missing or misordered `*_FILE` mounts now surface as `scheduled_backup_skipped reason=minio_credentials_missing` instead of opaque stack traces.
 - workers (`scheduled_backup`): isolate retention prune behind a try/except so a transient prune error no longer turns a successful upload into a Celery FAIL — a successful put with a logged prune error is the right outcome.
 - workers (`scheduled_backup`): log `duration_seconds`, `size`, `tables` on success so hosted Grafana / log greps can alert on a stalled backup without parsing stack traces.
 - workers (`_run`): recover from a wedged persistent event loop on `RuntimeError` ("Event loop is closed" / "Future attached to a different loop") — recreate the loop on the next call instead of poisoning every subsequent Celery task for the lifetime of the worker process.
+
+### Added (AUT-2202)
+- Servo Spy: surface backend per-vehicle `cost_per_km` ($/km) and `avg_fill_cost` ($ per fill) in the list rows and station detail sheet alongside the existing $/L price. List + detail requests now send the active `vehicle_id`; metrics fall back to `—` when the API omits them (no vehicle selected or no fuel logs). Tests extended in `servo_spy_list_sort_test.dart`.
+### Fixed (AUT-2208)
+- fix(frontend): Servo Spy map can no longer render as a blank white screen. Added a `surfaceContainerHighest` background under the `FlutterMap` so the map area is never pure white, surfaced a centred empty-state overlay ("No fuel stations within N km — Try increasing the distance in Filters") when `/fuel/stations` returns `[]`, and moved the fetch-error banner from the bottom of the map to the top with a Retry action so it is impossible to look at the map and miss a station-fetch failure. Loading spinner now sits on a translucent scrim so the user always sees the map area behind it. New tests: `frontend/test/servo_spy_map_render_test.dart` covers render-with-stations, stations-fetch-error banner, and empty-state overlay paths.
 
 ## [0.3.215] - 2026-09-03
 
@@ -81,6 +103,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.3.203] - 2026-09-02
 
 ### Fixed
+- fix(market-data): tighten valuation year window from ±2y to ±1y so the
+  median stops anchoring on listings too new for the target vehicle. When
+  the exact-year sample is <3, the fallback "nearby" set now includes only
+  listings within 1 year of the target year (was 2). CarsGuide + BikesGuide
+  both share the helper. Below the ±1y floor the unscraped wider set is
+  still returned so the valuation pipeline never collapses to 0 listings
+  (AUT-2079).
 - fix(servo-spy): map view no longer renders a second inner `Scaffold` +
   `AppBar`, which was duplicating the back button and constraining the
   map so tiles failed to lay out. The map view now sits directly under
