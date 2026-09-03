@@ -8,7 +8,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 > user-facing change ships with an entry here under `[Unreleased]` — see
 > `CONTRIBUTING.md` for the frontend-parity + changelog rules.
 
+
 ## [Unreleased]
+
+### Fixed
+- fix(docker, AUT-1978): rename typo `AUTOBRIAN_BACKEND_URL` → `AUTOBRAIN_BACKEND_URL` in `docker-compose.hosted.yml` dongle-server block (typo silently broke backend→dongle backchannel since the AUT-1673 dongle-server wiring landed).
+- fix(docker, AUT-1978): remove the duplicated `dongle-server` service definition in `docker-compose.hosted.yml`. Docker Compose takes the LAST occurrence on duplicate keys, so the first block (plain `DONGLE_SERVER_API_KEY`, no MinIO/SECRETS_FILE wiring) was dead config; only the second block (with `_FILE` secrets anchor, AUT-2211 overrides) was live. Single source of truth restored.
+
+## [0.3.214] - 2026-09-03
 
 ### Added (AUT-2218)
 - chore(docker): wire `FUEL_QLD_API_KEY` into `docker-compose.prod.yml` backend block (mirrors NSW/VIC pattern; empty value disables the feed, see `backend/app/services/fuel_feeds.py:493`).
@@ -100,7 +107,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   the arm64 hosted VM (`exec format error`, restart loop every ~60s). The
   new pin (`sha256:8937c2bb…`) is a true OCI image index with both amd64
   and arm64 manifests (AUT-2077).
-## [Unreleased]
 
 ### AUT-1868: petrol price map + servo-spy favourites selector (frontend)
 - Petrol price map screen added with NSW Fuel API integration (AUT-1813)
@@ -127,7 +133,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   identity opens and approves the PR) never turns the advisory OCR
   gate red. The Discord report still surfaces the OCR outcome
   unchanged (AUT-1894).
-
 
 ## [0.3.200] - 2026-09-02
 
@@ -167,7 +172,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   failing-strike healthcheck backlog on EP5 `autobrain-hosted-worker-1` (AUT-2056).
 - fix(hosted): bump worker image digest to the latest `:hosted` build carrying
   the AUT-2056 bash healthcheck.
-
 
 ## [0.3.198] - 2026-09-01
 
