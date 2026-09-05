@@ -14,6 +14,11 @@ on:
         description: 'Release tag to build, e.g. v0.3.4+21 (must match pubspec.yaml version X.Y.Z+N)'
         required: true
         type: string
+      bypass_apk_throttle:
+        description: 'Bypass the 48h APK throttle (true/false). Use only for hotfix releases that need an APK the same day as the last one.'
+        required: false
+        type: string
+        default: 'false'
 
 permissions:
   contents: write
@@ -24,6 +29,11 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # fetch-depth:0 so the apk-decision step can diff against the
+          # previous release tag (parent commit) and read the floating
+          # apk-built tag ref.
+          fetch-depth: 0
 
       - uses: subosito/flutter-action@v2
         with:
@@ -181,20 +191,69 @@ jobs:
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
             --dart-define=MOBILE_STORE_BUILD=true
 
+      - name: Decide whether to build the APK (2-day throttle + meaningful change gate)
+        id: apk-decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # actions/checkout@v4 defaults to fetch-depth:1, so parent commits
+          # and the floating apk-built tag ref are not fetched. Unshallow so
+          # the meaningful-change diff + 48h throttle read both work.
+          git fetch --unshallow 2>/dev/null || true
+          git fetch origin apk-built 2>/dev/null || true
+          semver="$(echo '${{ inputs.version }}' | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+          echo "semver=$semver" >> "$GITHUB_OUTPUT"
+          prev_tag="$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || true)"
+          if [ -n "$prev_tag" ]; then
+            changed_files="$(git diff --name-only "$prev_tag" HEAD -- lib/ assets/ 2>/dev/null || true)"
+          else
+            changed_files="lib/"
+          fi
+          has_meaningful=false
+          [ -n "$changed_files" ] && has_meaningful=true
+          echo "has_meaningful=$has_meaningful" >> "$GITHUB_OUTPUT"
+          apk_built_at="$(git show -s --format=%cI apk-built 2>/dev/null || echo '')"
+          echo "apk_built_at=${apk_built_at:-<none>}" >> "$GITHUB_OUTPUT"
+          bypass="${{ inputs.bypass_apk_throttle }}"
+          echo "bypass_apk_throttle=${bypass}" >> "$GITHUB_OUTPUT"
+          build_apk=false
+          if [ "$bypass" = "true" ]; then
+            echo "APK throttle bypassed by dispatch override" >&2
+            build_apk=true
+          else
+            if [ "$has_meaningful" = "true" ]; then
+              if [ -z "$apk_built_at" ]; then
+                build_apk=true
+              else
+                last_epoch="$(date -d "$apk_built_at" +%s 2>/dev/null || echo 0)"
+                now_epoch="$(date -u +%s)"
+                age_hours=$(( (now_epoch - last_epoch) / 3600 ))
+                echo "hours_since_last_apk=$age_hours" >> "$GITHUB_OUTPUT"
+                [ "$age_hours" -ge 48 ] && build_apk=true
+              fi
+            fi
+          fi
+          echo "build_apk=$build_apk" >> "$GITHUB_OUTPUT"
+
       - name: Build release APK (same signingConfig, for apksigner scheme check)
+        if: steps.apk-decision.outputs.build_apk == 'true'
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
             --dart-define=MOBILE_STORE_BUILD=true
 
-      - name: Verify signing (AAB v1, APK v2/v3)
+      - name: Skip APK build — throttled (AUT-2619)
+        if: steps.apk-decision.outputs.build_apk == 'false'
+        run: |
+          echo "::notice::APK build skipped: no meaningful lib/asset change since last APK build, or within 48h cooldown. .aab already produced for Play Console."
+
+      - name: Verify .aab signing (v1/JAR) — always runs
         run: |
           set -euo pipefail
           aab=build/app/outputs/bundle/release/app-release.aab
-          apk=build/app/outputs/flutter-apk/app-release.apk
           [[ -f "$aab" ]] || { echo "::error::$aab not found"; exit 1; }
-          [[ -f "$apk" ]] || { echo "::error::$apk not found"; exit 1; }
           if ! command -v jarsigner >/dev/null 2>&1 && [[ -n "${JAVA_HOME:-}" ]]; then
             export PATH="$JAVA_HOME/bin:$PATH"
           fi
@@ -205,15 +264,22 @@ jobs:
           echo "== upload-key fingerprint guard (Play expects machine keystore) =="
           expected_sha1="F3:79:19:3F:F7:28:54:BE:46:01:6E:CB:FF:43:DC:15:DF:BF:FB:4C"
           actual_sha1="$(keytool -printcert -jarfile "$aab" 2>/dev/null | grep -E '^\s*SHA1:' | head -1 | awk '{print $2}')"
-          [[ "$actual_sha1" == "$expected_sha1" ]] || { echo "::error::AAB signer SHA1 ${actual_sha1:-<none>} != expected $expected_sha1 (wrong upload keystore in CI secrets)"; exit 1; }
+          [[ "$actual_sha1" == "$expected_sha1" ]] || { echo "::error::AAB signer SHA1 ${actual_sha1:-<none> } != expected $expected_sha1 (wrong upload keystore in CI secrets)"; exit 1; }
           echo "AAB signer SHA1 matches Play upload key: $actual_sha1"
+
+      - name: Verify APK signing (v2+v3 scheme check) — only when APK was built
+        if: steps.apk-decision.outputs.build_apk == 'true'
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          [[ -f "$apk" ]] || { echo "::error::$apk not found"; exit 1; }
           apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
           echo "== $apksigner verify --verbose --print-certs $apk =="
           out="$("$apksigner" verify --verbose --print-certs "$apk")"
           echo "$out"
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" <<<"$out" || { echo "::error::APK missing v2 scheme (Play requires it)"; exit 1; }
           grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" <<<"$out" || { echo "::error::APK missing v3 scheme (Play requires it)"; exit 1; }
-          grep -q "Verified using v1 scheme (JAR signing): true" <<<"$out" || echo "note: APK has no v1 (JAR) scheme — expected with minSdk >= 24; Play requires v2/v3"
+          grep -q "Verified using v1 scheme (JAR signing): true" <<<"$out" || echo "note: APK has no v1 (JAR) scheme — expected with minSdk >= 24; Play requires v2+v3"
           expected_sha1_hex="f379193ff72854be46016ecbff43dc15dfbffb4c"
           actual_sha1_hex="$(echo "$out" | grep 'certificate SHA-1 digest' | awk '{print $NF}')"
           [[ "$actual_sha1_hex" == "$expected_sha1_hex" ]] || { echo "::error::APK signer SHA-1 ${actual_sha1_hex:-<none>} != expected $expected_sha1_hex (wrong upload keystore in CI secrets)"; exit 1; }
@@ -239,6 +305,18 @@ jobs:
           body_path: ${{ steps.changelog.outputs.body_file }}
           draft: false
           files: build/app/outputs/bundle/release/app-release.aab
+
+      - name: Mark APK build time (gates 2-day throttle)
+        if: steps.apk-decision.outputs.build_apk == 'true'
+        run: |
+          set -euo pipefail
+          # Floating tag ref stores the last APK build time. Update it after
+          # each successful APK build so the 2-day cooldown gate sees the
+          # new timestamp on the next release-mobile run.
+          git config user.name "AutoBrain Release Bot"
+          git config user.email "release@autobrainservice.app"
+          git tag -f apk-built HEAD
+          git push -f origin apk-built
 
       - name: Upload .aab to Play Console closed testing (automated)
         id: play_upload
