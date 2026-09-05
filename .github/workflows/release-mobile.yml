@@ -14,6 +14,11 @@ on:
         description: 'Release tag to build, e.g. v0.3.4+21 (must match pubspec.yaml version X.Y.Z+N)'
         required: true
         type: string
+      bypass_apk_throttle:
+        description: 'Bypass the 48h APK throttle (true/false). Use only for hotfix releases.'
+        required: false
+        type: string
+        default: 'false'
 
 permissions:
   contents: write
@@ -181,14 +186,62 @@ jobs:
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
             --dart-define=MOBILE_STORE_BUILD=true
 
+      - name: APK throttle gate (AUT-2619)
+        # Build at most one APK per 48h unless AUTO_BYPASS_APK_THROTTLE=true is
+        # passed as a workflow_dispatch input override (used for hotfix releases).
+        # The .aab upload above is mandatory for Play Console; only the side
+        # APK for the apksigner v2/v3 scheme check is suppressed.
+        id: apk-throttle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          state_dir="$RUNNER_TOOL_CACHE/apk-throttle-AUT-2619"
+          mkdir -p "$state_dir"
+          state_file="$state_dir/last_apk_build"
+          cooldown=172800
+          bypass="${{ inputs.bypass_apk_throttle }}"
+          throttled=false
+          reason=""
+          if [[ -f "$state_file" ]]; then
+            last_epoch="$(cat "$state_file" 2>/dev/null | head -1 || echo 0)"
+            if [[ "$last_epoch" =~ ^[0-9]+$ ]] && [[ "$last_epoch" -gt 0 ]]; then
+              diff=$(( $(date +%s) - last_epoch ))
+              if [[ "$diff" -lt "$cooldown" ]]; then
+                throttled=true
+                reason="last APK ${diff}s ago < 48h cooldown"
+              fi
+            fi
+          fi
+          if [[ "$bypass" == "true" ]]; then
+            echo "::notice::APK throttle bypassed by dispatch override"
+            throttled=false
+            reason="bypass"
+          fi
+          if [[ "$throttled" == "true" ]]; then
+            echo "::notice::APK throttle: $reason — skipping APK build, .aab already produced"
+            echo "throttled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$now" > "$state_file" 2>/dev/null || true
+            date +%s > "$state_file"
+            echo "throttled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build release APK (same signingConfig, for apksigner scheme check)
+        if: steps.apk-throttle.outputs.throttled != 'true'
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
             --dart-define=MOBILE_STORE_BUILD=true
 
+      - name: Skip APK build — throttled (AUT-2619)
+        if: steps.apk-throttle.outputs.throttled == 'true'
+        run: |
+          echo "::notice::APK build skipped (48h throttle active). .aab already uploaded for Play Console."
+
       - name: Verify signing (AAB v1, APK v2/v3)
+        if: steps.apk-throttle.outputs.throttled != 'true'
         run: |
           set -euo pipefail
           aab=build/app/outputs/bundle/release/app-release.aab
