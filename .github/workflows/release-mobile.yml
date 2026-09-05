@@ -24,6 +24,11 @@ jobs:
     runs-on: [self-hosted, linux, x64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # fetch-depth:0 so the apk-decision step can diff against the
+          # previous release tag (parent commit) and read the floating
+          # apk-built tag ref.
+          fetch-depth: 0
 
       - uses: subosito/flutter-action@v2
         with:
@@ -181,14 +186,54 @@ jobs:
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
             --dart-define=MOBILE_STORE_BUILD=true
 
+      - name: Decide whether to build the APK (2-day throttle + meaningful change gate)
+        id: apk-decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # actions/checkout@v4 defaults to fetch-depth:1, so parent commits
+          # and the floating apk-built tag ref are not fetched. Unshallow so
+          # the meaningful-change diff + 48h throttle read both work.
+          git fetch --unshallow 2>/dev/null || true
+          git fetch origin apk-built 2>/dev/null || true
+          semver="$(echo '${{ inputs.version }}' | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+          echo "semver=$semver" >> "$GITHUB_OUTPUT"
+          prev_tag="$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || true)"
+          if [ -n "$prev_tag" ]; then
+            changed_files="$(git diff --name-only "$prev_tag" HEAD -- lib/ assets/ 2>/dev/null || true)"
+          else
+            changed_files="lib/"
+          fi
+          has_meaningful=false
+          [ -n "$changed_files" ] && has_meaningful=true
+          echo "has_meaningful=$has_meaningful" >> "$GITHUB_OUTPUT"
+          apk_built_at="$(git show -s --format=%cI apk-built 2>/dev/null || echo '')"
+          echo "apk_built_at=${apk_built_at:-<none>}" >> "$GITHUB_OUTPUT"
+          build_apk=false
+          if [ "$has_meaningful" = "true" ]; then
+            if [ -z "$apk_built_at" ]; then
+              build_apk=true
+            else
+              last_epoch="$(date -d "$apk_built_at" +%s 2>/dev/null || echo 0)"
+              now_epoch="$(date -u +%s)"
+              age_hours=$(( (now_epoch - last_epoch) / 3600 ))
+              echo "hours_since_last_apk=$age_hours" >> "$GITHUB_OUTPUT"
+              [ "$age_hours" -ge 48 ] && build_apk=true
+            fi
+          fi
+          echo "build_apk=$build_apk" >> "$GITHUB_OUTPUT"
+
       - name: Build release APK (same signingConfig, for apksigner scheme check)
+        if: steps.apk-decision.outputs.build_apk == 'true'
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
             --dart-define=MOBILE_STORE_BUILD=true
 
-      - name: Verify signing (AAB v1, APK v2/v3)
+      - name: Verify signing (AAB v1, APK v2+v3)
+        if: steps.apk-decision.outputs.build_apk == 'true'
         run: |
           set -euo pipefail
           aab=build/app/outputs/bundle/release/app-release.aab
@@ -239,6 +284,18 @@ jobs:
           body_path: ${{ steps.changelog.outputs.body_file }}
           draft: false
           files: build/app/outputs/bundle/release/app-release.aab
+
+      - name: Mark APK build time (gates 2-day throttle)
+        if: steps.apk-decision.outputs.build_apk == 'true'
+        run: |
+          set -euo pipefail
+          # Floating tag ref stores the last APK build time. Update it after
+          # each successful APK build so the 2-day cooldown gate sees the
+          # new timestamp on the next release-mobile run.
+          git config user.name "AutoBrain Release Bot"
+          git config user.email "release@autobrainservice.app"
+          git tag -f apk-built HEAD
+          git push -f origin apk-built
 
       - name: Upload .aab to Play Console closed testing (automated)
         id: play_upload
