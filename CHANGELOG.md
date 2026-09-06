@@ -11,6 +11,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.220] - 2026-09-06
+
+### Fixed (AUT-2116)
+- ci(AUT-2116): bump mobile pubspec version to `0.3.220+227` to clear the Play Console "version code 226 has already been used" collision that was blocking the Mobile Release (.aab) workflow on reruns.
+
 ## [0.3.218] - 2026-09-03
 
 ### Changed (AUT-2231)
