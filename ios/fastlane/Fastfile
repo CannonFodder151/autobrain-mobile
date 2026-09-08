@@ -1,0 +1,51 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Run CI lane: patch deployment target + archive + export"
+  lane :ci do
+    # AUT-2983: lock minimum iOS 15.0 and universal binary on every CI run.
+    # The generated project.pbxproj is committed without the lock; the workflow
+    # patches it after flutter pub get. This lane mirrors the same lock so a
+    # developer who runs fastlane locally gets the same build target.
+    proj = "ios/Runner.xcodeproj/project.pbxproj"
+    if File.exist?(proj)
+      Text.replace_in_file(proj, "IPHONEOS_DEPLOYMENT_TARGET = 13.0;", "IPHONEOS_DEPLOYMENT_TARGET = 15.0;")
+      Text.merge_in_file(proj, "TARGETED_DEVICE_FAMILY = \"1\";", "TARGETED_DEVICE_FAMILY = \"1,2\";")
+    end
+
+    # Build + sign + archive
+    build_app(
+      workspace: "ios/Runner.xcworkspace",
+      scheme: "Runner",
+      export_method: Actions.lane_context[SharedValues::ENV]["EXPORT_METHOD"] || "app-store",
+      output_directory: "build/ios/ipa",
+      output_name: "Runner.ipa",
+      include_bitcode: false,
+      include_symbols: false,
+      export_options: {
+        destination: "export"
+      }
+    )
+  end
+
+  desc "Beta lane: build + upload to TestFlight (internal testing)"
+  lane :beta do
+    ENV["EXPORT_METHOD"] = "development"
+    ci
+    pilot(
+      skip_waiting_for_build_processing: false,
+      distribute_external: false
+    )
+  end
+
+  desc "Release lane: build + upload to App Store Connect (review)"
+  lane :release do
+    ENV["EXPORT_METHOD"] = "app-store"
+    ci
+    deliver(
+      skip_screenshots: true,
+      skip_metadata: true,
+      force: true
+    )
+  end
+end

@@ -1,0 +1,3 @@
+# AUT-2983: platform locked to iOS 15.0
+# flutter run will auto-generate the rest of the Podfile during build.
+platform :ios, '15.0'
