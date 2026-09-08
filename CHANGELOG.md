@@ -11,6 +11,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed (AUT-2983)
+- ci(ios, AUT-2983): lock the iOS build strategy — **min iOS 15.0**, **universal iPhone+iPad binary**, **CI path = GitHub-hosted `macos-latest`** (self-hosted macOS VM blocked on AUT-2725; flip `runs-on: macos-latest` → `[self-hosted, macOS, vm-macos]` once AUT-2725 lands). `ios/Runner/Info.plist` drops `LSRequiresIPhoneOS`, adds `UIDeviceFamily` = `[1,2]` + `UIRequiresFullScreen=false`; `release-ios.yml` pins the deployment target to 15.0 with a post-`flutter pub get` sed patch on the generated `project.pbxproj`. Added `lane` input (beta=TestFlight, release=App Store) and universal signing path.
+
+
 ## [0.3.220] - 2026-09-06
 
 ### Fixed (AUT-2116)

@@ -1,0 +1,20 @@
+# AUT-2983: universal iPhone+iPad binary. ExportOptions.plist is created by
+# release-ios.yml on every run, so this file is the committed default (method
+# is overridden per lane by the workflow). See AUT-2983 for the locked strategy:
+# min iOS 15.0, TARGETED_DEVICE_FAMILY=1,2, CI = GitHub-hosted macos-latest.
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>app-store</string>
+  <key>uploadBitcode</key>
+  <false/>
+  <key>compileBitcode</key>
+  <false/>
+  <key>stripSwiftSymbols</key>
+  <true/>
+  <key>destination</key>
+  <string>export</string>
+</dict>
+</plist>
