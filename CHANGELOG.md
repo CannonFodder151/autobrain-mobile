@@ -10,6 +10,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 ## [Unreleased]
+### Fixed (AUT-3124)
+- mobile: set `android:allowBackup="false"` in `autobrain-mobile/android/app/src/main/AndroidManifest.xml` to block ADB/cloud backup of secure storage. Verified no debug signing path remains — `build.gradle` only defines `signingConfigs.release` (no `debug` signingConfig), and `key.properties` + `*.keystore` are gitignored. Parent: AUT-3105.
 
 ## [0.3.275] - 2026-09-21
 
