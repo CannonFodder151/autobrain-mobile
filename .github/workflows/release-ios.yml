@@ -169,24 +169,24 @@ jobs:
       - name: Create ExportOptions.plist (if not present)
         run: |
           if [[ ! -f ios/ExportOptions.plist ]]; then
-            cat > ios/ExportOptions.plist <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>method</key>
-  <string>app-store</string>
-  <key>uploadBitcode</key>
-  <false/>
-  <key>compileBitcode</key>
-  <false/>
-  <key>stripSwiftSymbols</key>
-  <true/>
-  <key>destination</key>
-  <string>export</string>
-</dict>
-</plist>
-PLIST
+            cat > ios/ExportOptions.plist <<-'PLIST'
+            	<?xml version="1.0" encoding="UTF-8"?>
+            	<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            	<plist version="1.0">
+            	<dict>
+            	  <key>method</key>
+            	  <string>app-store</string>
+            	  <key>uploadBitcode</key>
+            	  <false/>
+            	  <key>compileBitcode</key>
+            	  <false/>
+            	  <key>stripSwiftSymbols</key>
+            	  <true/>
+            	  <key>destination</key>
+            	  <string>export</string>
+            	</dict>
+            	</plist>
+            	PLIST
             echo "ExportOptions.plist created"
           else
             echo "ExportOptions.plist already present"
