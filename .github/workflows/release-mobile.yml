@@ -8,6 +8,8 @@ name: Mobile Release (.aab)
 # See docs/mobile-release.md (autobrain monorepo). Never runs on push.
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -34,6 +36,22 @@ jobs:
           # previous release tag (parent commit) and read the floating
           # apk-built tag ref.
           fetch-depth: 0
+
+      - name: Resolve release version (input or pubspec)
+        # Push-triggered runs have no inputs.version — derive it from
+        # pubspec.yaml so sync commits to main build + publish automatically.
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.version }}" ]; then
+            tag="${{ inputs.version }}"
+          else
+            version="$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}')"
+            tag="v${version}"
+          fi
+          tag="${tag#v}"
+          tag="v${tag}"
+          echo "Resolved release tag: $tag"
+          echo "RELEASE_VERSION=$tag" >> "$GITHUB_ENV"
 
       - uses: subosito/flutter-action@v2
         with:
@@ -128,8 +146,8 @@ jobs:
           set -euo pipefail
           version="$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}')"
           tag="v${version}"
-          if [[ "$tag" != "${{ inputs.version }}" ]]; then
-            echo "::error::pubspec.yaml version is ${tag} but requested ${{ inputs.version }}. Run bump-version.sh --mobile in the autobrain monorepo first."
+          if [[ "$tag" != "${{ env.RELEASE_VERSION }}" ]]; then
+            echo "::error::pubspec.yaml version is ${tag} but requested ${{ env.RELEASE_VERSION }}. Run bump-version.sh --mobile in the autobrain monorepo first."
             exit 1
           fi
           echo "Building release ${tag}"
@@ -141,7 +159,7 @@ jobs:
         run: |
           set -euo pipefail
           # Semantic version (X.Y.Z) of the requested release, e.g. v0.3.7+30 -> 0.3.7.
-          req_semver="$(echo '${{ inputs.version }}' | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+          req_semver="$(echo "$RELEASE_VERSION" | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
           echo "semver=$req_semver" >> "$GITHUB_OUTPUT"
           # Has any release (draft or published, build series included) already
           # announced this semantic version? One announcement per version.
@@ -202,7 +220,7 @@ jobs:
           # the meaningful-change diff + 48h throttle read both work.
           git fetch --unshallow 2>/dev/null || true
           git fetch origin apk-built 2>/dev/null || true
-          semver="$(echo '${{ inputs.version }}' | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+          semver="$(echo '${{ env.RELEASE_VERSION }}' | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
           echo "semver=$semver" >> "$GITHUB_OUTPUT"
           prev_tag="$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || true)"
           if [ -n "$prev_tag" ]; then
@@ -291,7 +309,7 @@ jobs:
         run: |
           awk -v s="## [$SEMVER]" 'index($0,s){f=1;next} f && /^## /{exit} f' CHANGELOG.md > "$RUNNER_TEMP/release-body.md"
           [[ -s "$RUNNER_TEMP/release-body.md" ]] || { echo "::error::CHANGELOG.md has no section for [$SEMVER]"; exit 1; }
-          { echo "# ${{ inputs.version }}"; echo; cat "$RUNNER_TEMP/release-body.md"; } > "$RUNNER_TEMP/release-body-full.md"
+          { echo "# ${{ env.RELEASE_VERSION }}"; echo; cat "$RUNNER_TEMP/release-body.md"; } > "$RUNNER_TEMP/release-body-full.md"
           echo "body_file=$RUNNER_TEMP/release-body-full.md" >> "$GITHUB_OUTPUT"
         env:
           SEMVER: ${{ steps.semver-check.outputs.semver }}
@@ -300,8 +318,8 @@ jobs:
         id: release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.version }}
-          name: ${{ inputs.version }}
+          tag_name: ${{ env.RELEASE_VERSION }}
+          name: ${{ env.RELEASE_VERSION }}
           body_path: ${{ steps.changelog.outputs.body_file }}
           draft: false
           files: build/app/outputs/bundle/release/app-release.aab
@@ -322,7 +340,7 @@ jobs:
         id: play_upload
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
         run: |
           set -euo pipefail
           semver="${{ steps.semver-check.outputs.semver }}"
@@ -335,7 +353,7 @@ jobs:
       - name: Ask Nathan for one-time closed-testing tester audience (approvals)
         if: steps.play_upload.outputs.needs_tester_audience == 'true'
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.RELEASE_VERSION }}
         run: |
           payload="$(jq -n \
             --arg channel approvals \
@@ -374,7 +392,7 @@ jobs:
           # Staff #updates: every build stays visible internally.
           updates_payload="$(jq -n \
             --arg channel updates \
-            --arg title "Mobile .aab ${{ inputs.version }} released" \
+            --arg title "Mobile .aab ${{ env.RELEASE_VERSION }} released" \
             --arg url "$RELEASE_URL" \
             '{channel:$channel,title:$title,description:"Release notes + .aab live.",color:"0x3498DB",author:"Mobile Release Engineer",fields:[{name:"Artifact",value:"app-release.aab",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true},{name:"Download",value:$url,inline:true}]}')"
           # Discord embeds are best-effort: a transient n8n outage must not fail the
