@@ -9,6 +9,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 > `CONTRIBUTING.md` for the frontend-parity + changelog rules.
 
 ## [Unreleased]
+### Fixed (AUT-3124)
+- mobile: set `android:allowBackup="false"` in `autobrain-mobile/android/app/src/main/AndroidManifest.xml` to block ADB/cloud backup of secure storage. Verified no debug signing path remains — `build.gradle` only defines `signingConfigs.release` (no `debug` signingConfig), and `key.properties` + `*.keystore` are gitignored. Parent: AUT-3105.
+
 ### Fixed (AUT-5368)
 - fix(ci): `release-ios.yml` `Extract changelog entry` and `Post Discord changelog` steps now declare `set -euo pipefail`, matching the rest of the workflow (PR #150)
 
@@ -29,24 +32,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed (AUT-5612)
 - `devices.vehicle_type` rollback data loss: `aut5092_dev_veh_type` is a no-op
-  on the hosted `create_all` database it exists to repair (the column is already
-  there), yet its `downgrade()` dropped the column anyway, destroying real data
-  on rollback. `upgrade()` now stamps the column it adds with a provenance
-  marker (`COMMENT ON COLUMN`) and `downgrade()` drops only a column carrying
-  that marker — a pre-existing column is left alone, while a genuine rollback of
-  a column this revision created still drops it. Covered by
-  `tests/test_alembic_heads.py` (offline) and two new cases in
-  `tests/test_alembic_migration_only.py` (real Postgres, `alembic-migrations` CI
-  job).
-- `BACKUP_OFFSITE_INGEST_KEY`'s docstring still said `/api/backup/ingest`, an
-  endpoint that 404s; the value is the `X-Ingest-Key` for `/ingest`.
-
-### Removed (AUT-5718)
-- Removed the dead `POST /api/v1/ci/webhook` CI triage receiver. The GitHub Actions `ci-triage-webhook.yml` fire job has never posted to the AutoBrain backend — it fires `secrets.CI_TRIAGE_WEBHOOK_URL`, the Paperclip routine trigger on the `CI Triage` routine, and that routine trigger is the only thing that wakes the CI Triage Agent. The backend route had no callers: AutoBrain-Hosted answered `503 CI triage webhook not configured` to every request since at least 2026-09-03 because `docker-compose.hosted.yml` wired `CI_TRIAGE_WEBHOOK_SECRET`/`CI_TRIAGE_PARENT_ISSUE_ID`/`CI_TRIAGE_GOAL_ID` to empty defaults the Hosted env file never set, and the Hosted access log contains no POST from any Actions runner to that path. Deletes `backend/app/api/v1/ci.py`, its router registration, the `CI_TRIAGE_*` + server-side `PAPERCLIP_*` settings in `backend/app/core/config.py`, the same block in `docker-compose.hosted.yml`, the `CI_TRIAGE_*` block in `.env.example`, and the `/ci/webhook` row in `docs/Engineering/api-spec.md`; `ci-triage-webhook.yml` and the deployment guide now state that the Paperclip routine trigger is the canonical receiver so the route is not re-added or repointed. The Hosted stack no longer needs `PAPERCLIP_API_KEY`/`CI_TRIAGE_WEBHOOK_SECRET` to boot. `backend/tests/test_ci_receiver_removed_aut5718.py` asserts the route is gone (404) and the settings no longer exist, so a re-added receiver fails CI.
-
-### Fixed (AUT-5368)
-- ci: added `set -euo pipefail` to the "Extract changelog entry" and "Post Discord changelog" steps in `.github/workflows/release-ios.yml` so every step in the iOS release pipeline fails closed on errors. Matches the existing convention across the workflow (AUT-5123).
-
 ### Fixed (AUT-4812)
 - fix(backend): `tests/test_advisor_value.py` could not import `BAND_LOW_RATIO` / `BAND_HIGH_RATIO` from `app.services.advisor`, so the entire backend suite failed at collection — masked by `ci-tests.yml` running the suite as `pytest … || true`. The `app.services.advisor` package `__init__.py` already re-exports both constants from `advisor/value.py`; the stale `backend/app/services/advisor.py` module that shadowed the package is deleted (no imports referenced it). Removed `|| true` from the full-suite step in `.github/workflows/ci-tests.yml` so future collection errors fail the build. All 16 `test_advisor_value.py` tests pass; full suite collects without import errors.
 
