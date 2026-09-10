@@ -46,3 +46,6 @@ app.*.map.json
 /ios/Flutter/
 /ios/Runner/GeneratedPluginRegistrant.h
 /ios/Runner/GeneratedPluginRegistrant.m
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
