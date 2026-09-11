@@ -151,6 +151,35 @@ jobs:
             --export-method="$EXPORT_METHOD" \
             --build-number="$(grep -E '^version: ' pubspec.yaml | head -1 | awk -F'[+]' '{print $2}')"
 
+      - name: Create ExportOptions.plist (lane-aware)
+        # beta lane -> development (TestFlight), release lane -> app-store.
+        # The flutter build step passes --export-method but xcodebuild -exportArchive
+        # reads this plist, so it must match the lane or the export fails.
+        # Must run BEFORE archive+export (AUT-3214).
+        run: |
+          set -euo pipefail
+          METHOD="${{ env.EXPORT_METHOD }}"
+          cat > ios/ExportOptions.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>__METHOD__</string>
+            <key>uploadBitcode</key>
+            <false/>
+            <key>compileBitcode</key>
+            <false/>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>destination</key>
+            <string>export</string>
+          </dict>
+          </plist>
+          PLIST
+          sed -i '' "s/__METHOD__/${METHOD}/" ios/ExportOptions.plist
+          echo "ExportOptions.plist method=$METHOD"
+
       - name: Archive + export .ipa (Xcode, universal device+sim build)
         run: |
           set -euo pipefail
@@ -167,33 +196,6 @@ jobs:
             -exportPath "$BUILD_DIR" \
             -exportOptionsPlist ios/ExportOptions.plist \
             -allowProvisioningUpdates
-
-      - name: Create ExportOptions.plist (lane-aware)
-        # beta lane -> development (TestFlight), release lane -> app-store.
-        # The flutter build step passes --export-method but xcodebuild -exportArchive
-        # reads this plist, so it must match the lane or the export fails.
-        run: |
-          set -euo pipefail
-          METHOD="${{ env.EXPORT_METHOD }}"
-          cat > ios/ExportOptions.plist <<PLIST
-              <?xml version="1.0" encoding="UTF-8"?>
-              <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-              <plist version="1.0">
-              <dict>
-                <key>method</key>
-                <string>${METHOD}</string>
-                <key>uploadBitcode</key>
-                <false/>
-                <key>compileBitcode</key>
-                <false/>
-                <key>stripSwiftSymbols</key>
-                <true/>
-                <key>destination</key>
-                <string>export</string>
-              </dict>
-              </plist>
-          PLIST
-          echo "ExportOptions.plist method=$METHOD"
 
       - name: Verify .ipa produced
         run: |
