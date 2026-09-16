@@ -63,21 +63,23 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Flutter pub get
+        # Generates ios/Runner.xcodeproj (checked into .gitignore, regenerated
+        # on every pub get). Must run BEFORE the deployment-target patch below.
+        run: flutter pub get
+
       - name: Pin minimum iOS version to 15.0 in generated Xcode project
-        # Flutter generates a fresh ios/Runner.xcodeproj on every `flutter pub get`
-        # with IPHONEOS_DEPLOYMENT_TARGET=13.0. The only way to lock it is a
+        # Flutter generates a fresh ios/Runner.xcodeproj with
+        # IPHONEOS_DEPLOYMENT_TARGET=13.0. The only way to lock it is a
         # post-pub sed patch. IOS_DEPLOYMENT_TARGET=15.0 matches the issue
         # decision: iOS 15+ min, TARGETED_DEVICE_FAMILY=1,2 (iPhone+iPad=universal).
         run: |
           set -euo pipefail
           PROJ="ios/Runner.xcodeproj/project.pbxproj"
-          [[ -f "$PROJ" ]] || { flutter pub get; }
+          [[ -f "$PROJ" ]] || { echo "::error::$PROJ not found after flutter pub get"; exit 1; }
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' "$PROJ"
           sed -i '' 's/TARGETED_DEVICE_FAMILY = "1";/TARGETED_DEVICE_FAMILY = "1,2";/g' "$PROJ"
           grep -c "IPHONEOS_DEPLOYMENT_TARGET = 15.0" "$PROJ" | awk '{print "Locked iOS 15.0 deployment target in $PROJ ("$1" occurrences)"}'
-
-      - name: Flutter pub get
-        run: flutter pub get
 
       - name: Verify requested version matches pubspec
         run: |
@@ -149,6 +151,35 @@ jobs:
             --export-method="$EXPORT_METHOD" \
             --build-number="$(grep -E '^version: ' pubspec.yaml | head -1 | awk -F'[+]' '{print $2}')"
 
+      - name: Create ExportOptions.plist (lane-aware)
+        # beta lane -> development (TestFlight), release lane -> app-store.
+        # The flutter build step passes --export-method but xcodebuild -exportArchive
+        # reads this plist, so it must match the lane or the export fails.
+        # Must run BEFORE archive+export (AUT-3214).
+        run: |
+          set -euo pipefail
+          METHOD="${{ env.EXPORT_METHOD }}"
+          cat > ios/ExportOptions.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>__METHOD__</string>
+            <key>uploadBitcode</key>
+            <false/>
+            <key>compileBitcode</key>
+            <false/>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>destination</key>
+            <string>export</string>
+          </dict>
+          </plist>
+          PLIST
+          sed -i '' "s/__METHOD__/${METHOD}/" ios/ExportOptions.plist
+          echo "ExportOptions.plist method=$METHOD"
+
       - name: Archive + export .ipa (Xcode, universal device+sim build)
         run: |
           set -euo pipefail
@@ -165,32 +196,6 @@ jobs:
             -exportPath "$BUILD_DIR" \
             -exportOptionsPlist ios/ExportOptions.plist \
             -allowProvisioningUpdates
-
-      - name: Create ExportOptions.plist (if not present)
-        run: |
-          if [[ ! -f ios/ExportOptions.plist ]]; then
-            cat > ios/ExportOptions.plist <<-'PLIST'
-            	<?xml version="1.0" encoding="UTF-8"?>
-            	<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-            	<plist version="1.0">
-            	<dict>
-            	  <key>method</key>
-            	  <string>app-store</string>
-            	  <key>uploadBitcode</key>
-            	  <false/>
-            	  <key>compileBitcode</key>
-            	  <false/>
-            	  <key>stripSwiftSymbols</key>
-            	  <true/>
-            	  <key>destination</key>
-            	  <string>export</string>
-            	</dict>
-            	</plist>
-            	PLIST
-            echo "ExportOptions.plist created"
-          else
-            echo "ExportOptions.plist already present"
-          fi
 
       - name: Verify .ipa produced
         run: |
