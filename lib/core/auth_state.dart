@@ -16,6 +16,41 @@ import '../services/dongle/dongle_settings.dart';
 
 enum LoginOutcome { ok, mfaRequired, mfaSetupRequired, failed }
 
+/// Details of a server reachability probe or login-time network failure.
+class ServerReachability {
+  final bool healthy;
+  final String? apiBaseUrl;
+  final String? errorMessage;
+  final String? errorType; // 'timeout', 'connection_refused', 'dns', 'other'
+  final DateTime? probedAt;
+
+  const ServerReachability({
+    required this.healthy,
+    this.apiBaseUrl,
+    this.errorMessage,
+    this.errorType,
+    this.probedAt,
+  });
+
+  static const ServerReachability unknown = ServerReachability(healthy: false);
+  static ServerReachability healthyResult(String apiBaseUrl) => ServerReachability(
+        healthy: true,
+        apiBaseUrl: apiBaseUrl,
+        probedAt: DateTime.now(),
+      );
+  static ServerReachability failure({
+    required String apiBaseUrl,
+    required String errorMessage,
+    required String errorType,
+  }) => ServerReachability(
+        healthy: false,
+        apiBaseUrl: apiBaseUrl,
+        errorMessage: errorMessage,
+        errorType: errorType,
+        probedAt: DateTime.now(),
+      );
+}
+
 /// Credentials live in secure storage (Keystore/Keychain) so they are not
 /// readable as plaintext on disk / from app backups. Non-sensitive prefs
 /// (dark mode, server picker) stay in SharedPreferences.
