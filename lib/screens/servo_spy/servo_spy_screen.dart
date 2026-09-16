@@ -125,7 +125,7 @@ class _MapStation {
   });
 
   factory _MapStation.fromApi(Map<String, dynamic> m) {
-    final rawPrices = (m['prices'] as List? ?? []) as List;
+    final rawPrices = (m['prices'] as List? ?? []);
     return _MapStation(
       id: m['id'] as String? ?? '',
       brand: m['brand'] as String?,
@@ -166,14 +166,12 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
   String? _vehicleId;
   double _maxDistanceKm = 25;
   final MapController _mapController = MapController();
-  LatLng? _mapCenter;
   bool _drifted = false;
 
   void _onMapEvent(MapEvent event) {
     if (event is MapEventMoveEnd) {
-      final c = event.camera.center;
-      _mapCenter = c;
       if (_userLoc != null) {
+        final c = event.camera.center;
         final d = _userLoc!.latitude - c.latitude;
         final e = _userLoc!.longitude - c.longitude;
         _drifted = d * d + e * e > 0.0001;
