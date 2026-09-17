@@ -1,0 +1,113 @@
+# AUT-2177: Pre-merge release build verification for AGP/Gradle bumps.
+# Runs `flutter build appbundle --release` on every PR that touches Android
+# build configuration (AGP, Gradle wrapper, pubspec.yaml, etc.) to catch
+# incompatibilities BEFORE merge. Blocks the PR if the release build fails.
+#
+# This is the CI-level gate for the Mobile Release Engineer pre-merge rule.
+# A green run on this workflow satisfies the "CI-green verification" path of
+# the AGENTS.md gate for AGP/Gradle bump PRs.
+
+name: CI — Mobile release build verification
+
+on:
+  pull_request:
+    paths:
+      - 'android/**'
+      - 'gradle/**'
+      - 'pubspec.yaml'
+      - 'pubspec.lock'
+      - 'lib/**/*.dart'
+      - 'assets/**'
+
+concurrency:
+  group: mobile-release-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  release-build:
+    name: flutter build appbundle --release
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Fix SDK execute bits (cold runner AUT-2176)
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          shopt -s nullglob
+          if [[ -n "$sdk" && -d "$sdk/cmdline-tools" ]]; then
+            for bin_dir in "$sdk"/cmdline-tools/*/bin; do
+              chmod -R u+x "$bin_dir"
+            done
+          fi
+          if [[ -n "$sdk" && -d "$sdk/build-tools" ]]; then
+            for bt_dir in "$sdk"/build-tools/*; do
+              [[ -d "$bt_dir" ]] || continue
+              chmod -R u+x "$bt_dir"
+            done
+          fi
+
+      - name: Install Android SDK (platforms;37.0, build-tools;37.0.0, platform-tools)
+        run: |
+          set -euo pipefail
+          extract() { python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"; }
+          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ]; then
+            curl -fsSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.0_r02.zip
+            rm -rf /tmp/platform-37-extract && mkdir -p /tmp/platform-37-extract
+            extract /tmp/platform-37.zip /tmp/platform-37-extract
+            mkdir -p "$ANDROID_SDK_ROOT/platforms"
+            mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37.0"
+            rm -rf /tmp/platform-37-extract /tmp/platform-37.zip
+          fi
+          if [ ! -d "$ANDROID_SDK_ROOT/build-tools/37.0.0" ]; then
+            curl -fsSL -o /tmp/build-tools-37.zip https://dl.google.com/android/repository/build-tools_r37_linux.zip
+            rm -rf /tmp/build-tools-extract && mkdir -p /tmp/build-tools-extract
+            extract /tmp/build-tools-37.zip /tmp/build-tools-extract
+            mkdir -p "$ANDROID_SDK_ROOT/build-tools"
+            mv /tmp/build-tools-extract/android-37.0 "$ANDROID_SDK_ROOT/build-tools/37.0.0"
+            rm -rf /tmp/build-tools-extract /tmp/build-tools-37.zip
+          fi
+          if [ ! -d "$ANDROID_SDK_ROOT/platform-tools" ]; then
+            curl -fsSL -o /tmp/platform-tools.zip https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip
+            rm -rf /tmp/platform-tools-extract && mkdir -p /tmp/platform-tools-extract
+            extract /tmp/platform-tools.zip /tmp/platform-tools-extract
+            mkdir -p "$ANDROID_SDK_ROOT/platform-tools"
+            mv /tmp/platform-tools-extract/platform-tools/* "$ANDROID_SDK_ROOT/platform-tools/"
+            rm -rf /tmp/platform-tools-extract /tmp/platform-tools.zip
+          fi
+          [ -e "$ANDROID_SDK_ROOT/build-tools/latest" ] || ln -s 37.0.0 "$ANDROID_SDK_ROOT/build-tools/latest"
+
+      - name: flutter pub get
+        run: flutter pub get
+
+      - name: flutter build appbundle --release
+        run: |
+          set -euo pipefail
+          flutter build appbundle --release \
+            --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
+            --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
+            --dart-define=MOBILE_STORE_BUILD=true
+
+      - name: Verify .aab produced
+        run: |
+          set -euo pipefail
+          aab="$(ls build/app/outputs/bundle/release/app-release.aab 2>/dev/null | head -1)"
+          [[ -n "$aab" ]] || { echo "::error::app-release.aab not found after build"; exit 1; }
+          echo "✅ Release appbundle built: $aab ($(du -h "$aab" | cut -f1))"
