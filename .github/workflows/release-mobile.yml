@@ -64,6 +64,13 @@ jobs:
           java-version: '17'
 
       - uses: android-actions/setup-android@v3
+        # On cold self-hosted runners (gh-runner-autobrain-mobile), sdkmanager
+        # fails with "Failed to find package tools" (exit code 1). The manual
+        # SDK install step below handles this case by direct-downloading the
+        # exact SDK components we need. Mark this step non-critical so the
+        # manual install can take over. AUT-2176.
+        continue-on-error: true
+        id: setup-android
 
       - name: Fix SDK execute bits (cold runner AUT-2176)
         # android-actions/setup-android installs cmdline-tools and build-tools with

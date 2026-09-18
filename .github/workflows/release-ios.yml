@@ -144,12 +144,22 @@ jobs:
           PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.IOS_PROVISIONING_PROFILE_SPECIFIER }}
         run: |
           set -euo pipefail
-          flutter build ios --release \
-            --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
-            --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
-            --dart-define=MOBILE_STORE_BUILD=true \
-            --export-method="$EXPORT_METHOD" \
+          SPECIFIER="${PROVISIONING_PROFILE_SPECIFIER:-}"
+          BUILD_ARGS=(
+            --release
+            --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1
+            --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws
+            --dart-define=MOBILE_STORE_BUILD=true
+            --export-method="$EXPORT_METHOD"
             --build-number="$(grep -E '^version: ' pubspec.yaml | head -1 | awk -F'[+]' '{print $2}')"
+          )
+          if [[ -n "$SPECIFIER" ]]; then
+            echo "Using provisioning profile specifier: $SPECIFIER"
+            export PROVISIONING_PROFILE_SPECIFIER="$SPECIFIER"
+          else
+            echo "WARNING: IOS_PROVISIONING_PROFILE_SPECIFIER secret not set; Xcode will auto-resolve profile from keychain"
+          fi
+          flutter build ios "${BUILD_ARGS[@]}"
 
       - name: Create ExportOptions.plist (lane-aware)
         # beta lane -> development (TestFlight), release lane -> app-store.
@@ -254,7 +264,7 @@ jobs:
           RELEASE_URL: ${{ steps.release.outputs.url }}
           SEMVER: ${{ steps.semver-check.outputs.semver }}
           POST_CHANGELOG: ${{ steps.semver-check.outputs.post_discord }}
-          LANE: ${{ env.LANE }}
+          LANE: ${{ inputs.lane }}
         run: |
           notes="$(awk -v s="## [$SEMVER]" 'index($0,s){f=1;next} f && /^## /{exit} f' CHANGELOG.md \
             | grep -E '^- ' | sed 's/^- //; s/`//g; s/\*\*//g' \
