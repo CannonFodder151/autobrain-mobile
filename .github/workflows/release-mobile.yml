@@ -63,83 +63,43 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Fix SDK execute bits (cold runner AUT-2176)
-        # android-actions/setup-android installs cmdline-tools and build-tools with
-        # non-executable bits on cold gh-runner-autobrain-mobile runners. Two
-        # failures seen:
-        #   - flutter_tools -> apkanalyzer:
-        #       ProcessException: ... lacked sufficient permissions to execute
-        #       .../cmdline-tools/latest/bin/apkanalyzer
-        #   - signing verify -> apksigner:
-        #       /bin/sh: .../build-tools/latest/apksigner: Permission denied
-        # chmod u+x is idempotent and safe across warm/cold runners. AUT-2064
-        # fixed sdkmanager; this step closes the apkanalyzer + apksigner halves.
+      - name: Install Android SDK cmdline-tools (no unzip on self-hosted runner)
         run: |
           set -euo pipefail
-          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          shopt -s nullglob
-          if [[ -n "$sdk" && -d "$sdk/cmdline-tools" ]]; then
-            for bin_dir in "$sdk"/cmdline-tools/*/bin; do
-              echo "fixing exec bits in $bin_dir"
-              chmod -R u+x "$bin_dir"
-            done
-          fi
-          if [[ -n "$sdk" && -d "$sdk/build-tools" ]]; then
-            for bt_dir in "$sdk"/build-tools/*; do
-              [[ -d "$bt_dir" ]] || continue
-              echo "fixing exec bits in $bt_dir"
-              chmod -R u+x "$bt_dir"
-            done
-          fi
-          echo "apkanalyzer perms: $(stat -c '%a %n' "$sdk"/cmdline-tools/*/bin/apkanalyzer 2>/dev/null || echo 'n/a')"
-          echo "apksigner perms: $(stat -c '%a %n' "$sdk"/build-tools/*/apksigner 2>/dev/null || echo 'n/a')"
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          curl -fsSL -o /tmp/cmdline-tools.zip \
+            https://dl.google.com/android/repository/commandlinetools-linux-12266719_latest.zip
+          rm -rf /tmp/cmdline-tools-extract && mkdir -p /tmp/cmdline-tools-extract
+          python3 -c "import zipfile; zipfile.ZipFile('/tmp/cmdline-tools.zip').extractall('/tmp/cmdline-tools-extract')"
+          rm /tmp/cmdline-tools.zip
+          SDKMGR="$(find /tmp/cmdline-tools-extract -name sdkmanager -type f | head -1)"
+          [ -n "$SDKMGR" ] || { echo "::error::sdkmanager not found in extracted cmdline-tools"; find /tmp/cmdline-tools-extract -type f | head -10; exit 1; }
+          SDK_TOOLS_DIR="$(dirname "$(dirname "$SDKMGR")")"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
+          cp -r "$SDK_TOOLS_DIR"/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/"
+          rm -rf /tmp/cmdline-tools-extract
+          chmod -R u+x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/" || true
+          echo "cmdline-tools installed at $ANDROID_SDK_ROOT/cmdline-tools/latest"
 
-      - name: Install Android SDK (platforms;37.0, build-tools;37.0.0, platform-tools)
+      - name: Install Android SDK + NDK + accept licenses
         run: |
           set -euo pipefail
-          # Self-hosted gh-runner-autobrain-mobile has no `unzip` and cmdline-tools
-          # 16.0 dropped `sdkmanager --console` (AUT-2064), so install the SDK pieces
-          # we need by direct-download zip + Python zipfile, then symlink so cold
-          # runners match the locally-verified layout. Verified artifacts:
-          #   platform-37.0_r02.zip      -> platforms/android-37.0
-          #   build-tools_r37_linux.zip  -> build-tools/37.0.0 (+ latest symlink)
-          #   platform-tools_r37.0.1-linux.zip -> platform-tools/
-          extract() { python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"; }
-          if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ]; then
-            curl -fsSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.0_r02.zip
-            rm -rf /tmp/platform-37-extract && mkdir -p /tmp/platform-37-extract
-            extract /tmp/platform-37.zip /tmp/platform-37-extract
-            mkdir -p "$ANDROID_SDK_ROOT/platforms"
-            mv /tmp/platform-37-extract/android-37.0 "$ANDROID_SDK_ROOT/platforms/android-37.0"
-            rm -rf /tmp/platform-37-extract /tmp/platform-37.zip
-          fi
-          if [ ! -d "$ANDROID_SDK_ROOT/build-tools/37.0.0" ]; then
-            curl -fsSL -o /tmp/build-tools-37.zip https://dl.google.com/android/repository/build-tools_r37_linux.zip
-            rm -rf /tmp/build-tools-extract && mkdir -p /tmp/build-tools-extract
-            extract /tmp/build-tools-37.zip /tmp/build-tools-extract
-            mkdir -p "$ANDROID_SDK_ROOT/build-tools"
-            mv /tmp/build-tools-extract/android-37.0 "$ANDROID_SDK_ROOT/build-tools/37.0.0"
-            rm -rf /tmp/build-tools-extract /tmp/build-tools-37.zip
-          fi
-          if [ ! -d "$ANDROID_SDK_ROOT/platform-tools" ]; then
-            curl -fsSL -o /tmp/platform-tools.zip https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip
-            rm -rf /tmp/platform-tools-extract && mkdir -p /tmp/platform-tools-extract
-            extract /tmp/platform-tools.zip /tmp/platform-tools-extract
-            mkdir -p "$ANDROID_SDK_ROOT/platform-tools"
-            mv /tmp/platform-tools-extract/platform-tools/* "$ANDROID_SDK_ROOT/platform-tools/"
-            rm -rf /tmp/platform-tools-extract /tmp/platform-tools.zip
-          fi
-          [ -e "$ANDROID_SDK_ROOT/build-tools/latest" ] || ln -s 37.0.0 "$ANDROID_SDK_ROOT/build-tools/latest"
-          for sdk in "$ANDROID_SDK_ROOT" "/root/.android/sdk"; do
-            [ -z "$sdk" ] && continue
-            if [ -d "$sdk/platforms/android-37.0" ] && [ ! -e "$sdk/platforms/android-37" ]; then
-              ln -s android-37.0 "$sdk/platforms/android-37"
-              echo "Created symlink $sdk/platforms/android-37 -> android-37.0"
-            fi
-          done
-          echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') platform-tools=$(ls "$ANDROID_SDK_ROOT/platform-tools" | head -3 | tr '\n' ' ')"
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH"
+          # Wipe stale SDK dirs (prevents "inconsistent location" from sdkmanager on self-hosted runners)
+          rm -rf "$ANDROID_SDK_ROOT/platforms" "$ANDROID_SDK_ROOT/build-tools" "$ANDROID_SDK_ROOT/ndk" "$ANDROID_SDK_ROOT/platform-tools" "$ANDROID_SDK_ROOT/.knownPackages"
+          mkdir -p "$ANDROID_SDK_ROOT/platforms" "$ANDROID_SDK_ROOT/build-tools" "$ANDROID_SDK_ROOT/ndk"
+          # Accept all licenses up front (prevents AGP LicenceNotAcceptedException for NDK)
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
+          # Fix exec bits on self-hosted runners (cold runner AUT-2176)
+          chmod -R u+x "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/" || true
+          chmod -R u+x "$ANDROID_SDK_ROOT/build-tools/"*/  || true
+          echo "Android SDK ready:"
+          echo "  platforms: $(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ')"
+          echo "  build-tools: $(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ')"
+          echo "  ndk: $(ls "$ANDROID_SDK_ROOT/ndk" | tr '\n' ' ')"
+          echo "  platform-tools: $(ls "$ANDROID_SDK_ROOT/platform-tools/" | head -3 | tr '\n' ' ')"
 
       - name: Verify requested version matches pubspec
         run: |
@@ -201,6 +161,18 @@ jobs:
 
       - name: flutter pub get
         run: flutter pub get
+
+      - name: Write local.properties for Flutter (SDK path)
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          # Flutter's Gradle plugin reads local.properties for sdk.dir
+          if [ -f android/local.properties ]; then
+            sed -i "s|^sdk.dir=.*|sdk.dir=$sdk|" android/local.properties || true
+          else
+            echo "sdk.dir=$sdk" > android/local.properties
+          fi
+          cat android/local.properties
 
       - name: Build release appbundle
         run: |
