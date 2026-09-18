@@ -90,7 +90,7 @@ jobs:
             echo "::error::pubspec.yaml version is ${tag} but requested ${{ env.RELEASE_VERSION }}. Run bump-version.sh --mobile in the autobrain monorepo first."
             exit 1
           fi
-          echo "Building release ${tag} for iOS (lane: ${{ env.LANE }})"
+          echo "Building release ${tag} for iOS (lane: ${{ inputs.lane }})"
 
       - name: Detect semantic version iteration (Discord changelog gate)
         id: semver-check
@@ -108,6 +108,31 @@ jobs:
             echo "post_discord=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate required Apple signing secrets
+        run: |
+          set -euo pipefail
+          if [[ -z "${{ secrets.IOS_CERT_P12_BASE64 }}" ]]; then
+            echo "::error::IOS_CERT_P12_BASE64 secret is empty or not set. Export a .p12 certificate from Keychain Access (File > Export) and set it as a base64-encoded secret."
+            exit 1
+          fi
+          if [[ -z "${{ secrets.IOS_CERT_PASSWORD }}" ]]; then
+            echo "::error::IOS_CERT_PASSWORD secret is empty or not set."
+            exit 1
+          fi
+          if [[ -z "${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}" ]]; then
+            echo "::error::IOS_PROVISIONING_PROFILE_BASE64 secret is empty or not set."
+            exit 1
+          fi
+          if [[ -z "${{ secrets.IOS_TEAM_ID }}" ]]; then
+            echo "::error::IOS_TEAM_ID secret is empty or not set."
+            exit 1
+          fi
+          if [[ -z "${{ secrets.APPLE_STORE_API_KEY }}" ]]; then
+            echo "::error::APPLE_STORE_API_KEY secret is empty or not set."
+            exit 1
+          fi
+          echo "All required Apple signing secrets are present."
+
       - name: Install Apple distribution certificate
         env:
           CERT_P12_B64: ${{ secrets.IOS_CERT_P12_BASE64 }}
@@ -120,6 +145,10 @@ jobs:
           security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
           security unlock-keychain -p "" "$KEYCHAIN_PATH"
           echo "$CERT_P12_B64" | base64 --decode > /tmp/dist-cert.p12
+          if [[ ! -s /tmp/dist-cert.p12 ]]; then
+            echo "::error::Decoded P12 file is empty. IOS_CERT_P12_BASE64 secret appears to be invalid base64."
+            exit 1
+          fi
           security import /tmp/dist-cert.p12 -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
           security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KEYCHAIN_PATH"
           security list-keychains -s "$KEYCHAIN_PATH"
@@ -170,23 +199,23 @@ jobs:
           set -euo pipefail
           METHOD="${{ env.EXPORT_METHOD }}"
           cat > ios/ExportOptions.plist <<'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>__METHOD__</string>
-            <key>uploadBitcode</key>
-            <false/>
-            <key>compileBitcode</key>
-            <false/>
-            <key>stripSwiftSymbols</key>
-            <true/>
-            <key>destination</key>
-            <string>export</string>
-          </dict>
-          </plist>
-          PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>__METHOD__</string>
+  <key>uploadBitcode</key>
+  <false/>
+  <key>compileBitcode</key>
+  <false/>
+  <key>stripSwiftSymbols</key>
+  <true/>
+  <key>destination</key>
+  <string>export</string>
+</dict>
+</plist>
+PLIST
           sed -i '' "s/__METHOD__/${METHOD}/" ios/ExportOptions.plist
           echo "ExportOptions.plist method=$METHOD"
 
@@ -244,8 +273,12 @@ jobs:
             echo "APP_STORE_CONNECT_API_ISSUER_ID=$issuer_id" >> "$GITHUB_ENV"
           fi
           echo "Uploading $ipa (${{ inputs.lane }} lane) to App Store Connect"
-          xcrun altool --upload-app -t ios -f "$ipa" -u "$(jq -r '.username' "$auth_key" 2>/dev/null || echo '')" -p "$APPLE_STORE_API_KEY" --output-format xml 2>&1 | tee "$RUNNER_TEMP/altool-output.xml" || true
-          xcrun notarytool submit "$ipa" --key "$HOME/.app-store-connect/AuthKey_${key_id}.p8" --key-id "$key_id" --issuer "$issuer_id" --wait 2>&1 || echo "notarytool skipped (may already be notarized)"
+          xcrun altool --upload-app -t ios -f "$ipa" -u "$(jq -r '.username' "$auth_key" 2>/dev/null || echo '')" -p "$APPLE_STORE_API_KEY" --output-format xml 2>&1 | tee "$RUNNER_TEMP/altool-output.xml"
+          altool_exit=$?
+          if [[ $altool_exit -ne 0 ]]; then
+            echo "::warning::altool upload failed (exit $altool_exit). Checking notarytool as fallback."
+          fi
+          xcrun notarytool submit "$ipa" --key "$HOME/.app-store-connect/AuthKey_${key_id}.p8" --key-id "$key_id" --issuer "$issuer_id" --wait 2>&1
 
       - name: Conditionally publish GitHub Release (release lane only)
         if: ${{ inputs.lane == 'release' }}
