@@ -83,6 +83,9 @@ jobs:
         #       /bin/sh: .../build-tools/latest/apksigner: Permission denied
         # chmod u+x is idempotent and safe across warm/cold runners. AUT-2064
         # fixed sdkmanager; this step closes the apkanalyzer + apksigner halves.
+        # continue-on-error: safe because the manual SDK install step below
+        # handles the case where setup-android failed entirely.
+        continue-on-error: true
         run: |
           set -euo pipefail
           sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
