@@ -109,6 +109,8 @@ jobs:
       - name: Install Android SDK (platforms;37.0, build-tools;37.0.0, platform-tools)
         run: |
           set -euo pipefail
+          # Ensure ANDROID_SDK_ROOT is set; the self-hosted runner may not have it.
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}"
           # Self-hosted gh-runner-autobrain-mobile has no `unzip` and cmdline-tools
           # 16.0 dropped `sdkmanager --console` (AUT-2064), so install the SDK pieces
           # we need by direct-download zip + Python zipfile, then symlink so cold
