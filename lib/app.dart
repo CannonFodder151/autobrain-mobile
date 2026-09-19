@@ -1,9 +1,12 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'core/auth_state.dart';
+import 'core/connectivity_service.dart';
 import 'core/config.dart';
 import 'core/theme.dart';
+import 'widgets/stale_hint.dart';
 import 'community_garage/screens/share_link_view.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/reset_password.dart';
@@ -12,18 +15,11 @@ import 'screens/auth/signup_screen.dart';
 import 'screens/home/home_screen.dart';
 import 'screens/settings/license_screen.dart';
 
-class AutoBrainApp extends StatelessWidget {
+class AutoBrainApp extends StatefulWidget {
   const AutoBrainApp({super.key});
 
-  /// Deep-link fragment captured at startup, before the Flutter web engine
-  /// normalizes the URL (clears `#/license` via `history.replaceState`
-  /// within ~2-4s of load). Without this, the logged-in rebuild reads an
-  /// already-cleared fragment and Home mounts instead of License. Set once
-  /// from `main()`; null falls back to the live `Uri.base.fragment`.
   static String? initialFragment;
 
-  /// True when the app was opened from a password-reset email link
-  /// (…/reset-password#token=…) — fragment kept out of query logs/history.
   static String? resetTokenFromUrl() {
     final uri = Uri.base;
     if (uri.pathSegments.isEmpty || uri.pathSegments.last != 'reset-password') return null;
@@ -39,9 +35,6 @@ class AutoBrainApp extends StatelessWidget {
     return null;
   }
 
-  /// True when opened from a shared-build deep link — routes to the Community
-  /// Garage share viewer. Accepts `{origin}/s/{token}` (design) and the
-  /// server-relative `{origin}/social/share/{token}` forms.
   static String? shareTokenFromUrl() {
     final segs = Uri.base.pathSegments;
     if (segs.length >= 2 && segs.last == 's') {
@@ -55,17 +48,12 @@ class AutoBrainApp extends StatelessWidget {
     return null;
   }
 
-  /// True when opened from a website "Get started" button
-  /// (…/?signup=1) — routes a logged-out user straight to account creation.
   static bool signupRequested() {
     final uri = Uri.base;
     return uri.queryParameters['signup'] == '1' ||
         uri.pathSegments.contains('signup');
   }
 
-  /// True when opened from the mobile app's License link
-  /// ({origin}/#/license) — routes a logged-in user to the License screen so
-  /// purchases happen in the browser, not in the store-published app.
   static bool licenseRequested() {
     final fragment =
         (initialFragment ?? Uri.base.fragment).replaceAll('/', '').toLowerCase();
@@ -73,10 +61,29 @@ class AutoBrainApp extends StatelessWidget {
   }
 
   @override
+  State<AutoBrainApp> createState() => _AutoBrainAppState();
+}
+
+class _AutoBrainAppState extends State<AutoBrainApp> {
+  @override
+  void initState() {
+    super.initState();
+    ConnectivityService.instance.addListener(_rebuild);
+  }
+
+  @override
+  void dispose() {
+    ConnectivityService.instance.removeListener(_rebuild);
+    super.dispose();
+  }
+
+  void _rebuild() => setState(() {});
+
+  @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthState>();
-    final resetToken = resetTokenFromUrl();
-    final shareToken = shareTokenFromUrl();
+    final resetToken = AutoBrainApp.resetTokenFromUrl();
+    final shareToken = AutoBrainApp.shareTokenFromUrl();
 
     Widget home;
     if (resetToken != null) {
@@ -86,8 +93,8 @@ class AutoBrainApp extends StatelessWidget {
     } else if (shareToken != null) {
       home = ShareLinkView(token: shareToken);
     } else if (auth.isLoggedIn) {
-      home = licenseRequested() ? const LicenseScreen() : const HomeScreen();
-    } else if (signupRequested() && auth.signupEnabled) {
+      home = AutoBrainApp.licenseRequested() ? const LicenseScreen() : const HomeScreen();
+    } else if (AutoBrainApp.signupRequested() && auth.signupEnabled) {
       home = const SignupScreen();
     } else {
       home = const LoginScreen();
@@ -100,6 +107,74 @@ class AutoBrainApp extends StatelessWidget {
       darkTheme: AppTheme.dark(),
       themeMode: auth.darkMode ? ThemeMode.dark : ThemeMode.light,
       home: home,
+      builder: (context, child) {
+        final content = child ?? const SizedBox.shrink();
+        final banner = ConnectivityService.instance.isOnline
+            ? null
+            : MaterialBanner(
+                leading: const Icon(Icons.wifi_off, size: 18),
+                content: Text(
+                  'Offline — showing cached data',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.onErrorContainer),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                elevation: 1,
+                backgroundColor: Theme.of(context).colorScheme.errorContainer,
+                actions: [
+                  TextButton(
+                    onPressed: () => ConnectivityService.instance.check(),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              );
+        final body = banner == null
+            ? content
+            : Column(children: [banner, Expanded(child: content)]);
+        final wrapped = MediaQuery(
+          data: MediaQuery.of(context).copyWith(
+            textScaler: TextScaler.linear(1.0),
+          ),
+          child: body,
+        );
+        if (!(kDebugMode || kProfileMode)) {
+          return wrapped;
+        }
+        final ok = AppConfig.lastValidationOk;
+        final validation = ok == null
+            ? 'not run'
+            : ok
+                ? 'ok'
+                : 'fail';
+        final apiHost = Uri.tryParse(AppConfig.apiBase)?.host ?? AppConfig.apiBase;
+        return Stack(
+          children: [
+            wrapped,
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: SafeArea(
+                bottom: false,
+                child: Container(
+                  width: double.infinity,
+                  color: Colors.black.withOpacity(0.55),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  child: Text(
+                    'api: $apiHost  probe: $validation',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
