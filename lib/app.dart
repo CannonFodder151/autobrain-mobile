@@ -6,8 +6,10 @@ import 'core/auth_state.dart';
 import 'core/connectivity_service.dart';
 import 'core/config.dart';
 import 'core/theme.dart';
+import 'core/models.dart';
 import 'widgets/stale_hint.dart';
 import 'community_garage/screens/share_link_view.dart';
+import 'screens/advisor/overview_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/reset_password.dart';
 import 'screens/auth/server_setup_screen.dart';
@@ -30,7 +32,9 @@ class AutoBrainApp extends StatefulWidget {
     if (frag.isEmpty) return null;
     for (final part in frag.split('&')) {
       final kv = part.split('=');
-      if (kv.length == 2 && kv[0] == 'token' && kv[1].isNotEmpty) return Uri.decodeComponent(kv[1]);
+      if (kv.length == 2 && kv[0] == 'token' && kv[1].isNotEmpty) {
+        return Uri.decodeComponent(kv[1]);
+      }
     }
     return null;
   }
@@ -60,6 +64,21 @@ class AutoBrainApp extends StatefulWidget {
     return fragment == 'license';
   }
 
+  static int? advisorTabFromUrl() {
+    final segs = Uri.base.pathSegments;
+    if (segs.isEmpty || segs.first != 'advisor') return null;
+    if (segs.length == 1) return 0;
+    switch (segs[1]) {
+      case 'value': return 1;
+      case 'replace': return 2;
+      case 'upgrade': return 3;
+      case 'finance': return 4;
+      case 'dream': return 5;
+      case 'ai': return 6;
+      default: return 0;
+    }
+  }
+
   @override
   State<AutoBrainApp> createState() => _AutoBrainAppState();
 }
@@ -84,6 +103,7 @@ class _AutoBrainAppState extends State<AutoBrainApp> {
     final auth = context.watch<AuthState>();
     final resetToken = AutoBrainApp.resetTokenFromUrl();
     final shareToken = AutoBrainApp.shareTokenFromUrl();
+    final advisorTab = AutoBrainApp.advisorTabFromUrl();
 
     Widget home;
     if (resetToken != null) {
@@ -93,7 +113,13 @@ class _AutoBrainAppState extends State<AutoBrainApp> {
     } else if (shareToken != null) {
       home = ShareLinkView(token: shareToken);
     } else if (auth.isLoggedIn) {
-      home = AutoBrainApp.licenseRequested() ? const LicenseScreen() : const HomeScreen();
+      if (AutoBrainApp.licenseRequested()) {
+        home = const LicenseScreen();
+      } else if (advisorTab != null) {
+        home = _AdvisorDeepLink(tabIndex: advisorTab);
+      } else {
+        home = const HomeScreen();
+      }
     } else if (AutoBrainApp.signupRequested() && auth.signupEnabled) {
       home = const SignupScreen();
     } else {
@@ -175,6 +201,79 @@ class _AutoBrainAppState extends State<AutoBrainApp> {
           ],
         );
       },
+    );
+  }
+}
+
+class _AdvisorDeepLink extends StatefulWidget {
+  const _AdvisorDeepLink({required this.tabIndex});
+  final int tabIndex;
+
+  @override
+  State<_AdvisorDeepLink> createState() => _AdvisorDeepLinkState();
+}
+
+class _AdvisorDeepLinkState extends State<_AdvisorDeepLink> {
+  Vehicle? _vehicle;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final auth = context.read<AuthState>();
+    // Cache-first: render immediately from cache if available.
+    try {
+      final cached = await auth.api.getCachedDecoded('/vehicles', null);
+      if (cached != null) {
+        final data = cached as List;
+        final vehicles = data
+            .map((e) => Vehicle.fromJson(e as Map<String, dynamic>))
+            .toList();
+        if (!mounted) return;
+        setState(() {
+          _vehicle = Vehicle.resolveSelection(vehicles, null);
+          _loading = false;
+        });
+      }
+    } catch (_) {
+      // Cache read failed (e.g. IndexedDB unavailable on web). Continue
+      // to the network path so the spinner does not hang.
+    }
+    // Background refresh if online.
+    if (!ConnectivityService.instance.isOnline) return;
+    try {
+      final data = await auth.api.get('/vehicles') as List;
+      final vehicles = data
+          .map((e) => Vehicle.fromJson(e as Map<String, dynamic>))
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _vehicle = Vehicle.resolveSelection(vehicles, _vehicle);
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_vehicle == null) {
+      return const HomeScreen();
+    }
+    return AdvisorOverviewScreen(
+      vehicleId: _vehicle!.id,
+      initialTabIndex: widget.tabIndex,
     );
   }
 }

@@ -25,8 +25,20 @@ import '../../core/fuel_types.dart';
 import '../../core/geoloc.dart';
 import '../../core/models.dart';
 import 'servo_spy_list_model.dart';
+import 'servo_spy_station_history_screen.dart';
 
 enum _ServoSpyView { map, list }
+
+
+///
+/// Empty key -> empty string. Non-empty key -> `?key=<key>` (CARTO's
+/// required parameter name for raster basemaps; `api_key` is the old name
+/// and is silently ignored, leaving the "API key required" watermark).
+@visibleForTesting
+String cartoKeyParam(String key) => key.isEmpty ? '' : '?key=$key';
+
+const String _kCartoApiKey = String.fromEnvironment('CARTO_API_KEY');
+final String _kCartoKeyParam = cartoKeyParam(_kCartoApiKey);
 
 class ServoSpyScreen extends StatefulWidget {
   const ServoSpyScreen({super.key});
@@ -163,21 +175,14 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
   List<_MapStation> _stations = const [];
   List<String> _fuelTypes = List<String>.from(defaultFuelTypes);
   String? _selectedFuelType;
-  String? _vehicleId;
+  String? _vehicleId;  // AUT-2053: for $/km + avg fill cost projection
   double _maxDistanceKm = 25;
   final MapController _mapController = MapController();
   LatLng? _mapCenter;
-  bool _drifted = false;
 
   void _onMapEvent(MapEvent event) {
     if (event is MapEventMoveEnd) {
-      final c = event.camera.center;
-      _mapCenter = c;
-      if (_userLoc != null) {
-        final d = _userLoc!.latitude - c.latitude;
-        final e = _userLoc!.longitude - c.longitude;
-        _drifted = d * d + e * e > 0.0001;
-      }
+      _mapCenter = event.camera.center;
       if (mounted) setState(() {});
     }
   }
@@ -185,7 +190,6 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
   void _recenter() {
     if (_userLoc == null) return;
     _mapController.move(_userLoc!, _mapController.camera.zoom);
-    _drifted = false;
   }
 
   @override
@@ -404,7 +408,7 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
         if (_locationDenied)
           Container(
             width: double.infinity,
-            color: Colors.amber.withValues(alpha: 0.15),
+            color: Colors.amber.withOpacity(0.15),
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: const Text(
               'Location off — showing stations in the selected region. '
@@ -493,7 +497,7 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
                       margin: const EdgeInsets.all(24),
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: scheme.surface.withValues(alpha: 0.95),
+                        color: scheme.surface.withOpacity(0.95),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Column(
@@ -557,7 +561,7 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
                 right: 0,
                 bottom: 0,
                 child: Container(
-                  color: scheme.scrim.withValues(alpha: 0.6),
+                  color: scheme.scrim.withOpacity(0.6),
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                   child: const Text(
                     '© OpenStreetMap contributors © CARTO',
@@ -565,7 +569,7 @@ class _ServoSpyMapState extends State<_ServoSpyMap> {
                   ),
                 ),
               ),
-              if (_drifted && _userLoc != null)
+              if (_userLoc != null)
                 Positioned(
                   right: 16,
                   bottom: 28,
@@ -696,6 +700,21 @@ class _StationSheet extends StatelessWidget {
     }
   }
 
+  Future<void> _openHistory(BuildContext context) async {
+    final stationId = station.id;
+    if (stationId == null || stationId.isEmpty) return;
+    final stationName = station.name ?? 'Station';
+    Navigator.of(context, rootNavigator: true).pop();
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        builder: (_) => ServoSpyStationHistoryScreen(
+          stationId: stationId,
+          stationName: stationName,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -767,7 +786,7 @@ class _ServoSpyListState extends State<_ServoSpyList> {
   List<ServoStationRow> _stations = const [];
   List<String> _fuelTypes = List<String>.from(defaultFuelTypes);
   String? _selectedFuelType;
-  String? _vehicleId;
+  String? _vehicleId;  // AUT-2053
   double _maxDistanceKm = 25;
   ServoSortMetric _sortMetric = ServoSortMetric.price;
   late final ApiClient _api;

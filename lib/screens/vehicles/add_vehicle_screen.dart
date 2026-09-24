@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/auth_state.dart';
 import '../../core/fuel_types.dart';
+import '../../widgets/responsive.dart';
 
 class AddVehicleScreen extends StatefulWidget {
   const AddVehicleScreen({super.key});
@@ -32,6 +33,7 @@ class _AddVehicleScreenState extends State<AddVehicleScreen> {
   bool _lookingUp = false;
   String? _lookupInfo;
   String? _fuelType;
+  String _powertrain = 'ICE';
   List<String> _fuelTypes = defaultFuelTypes;
   int? _maxVehicles;
   int? _vehicleCount;
@@ -155,6 +157,7 @@ class _AddVehicleScreenState extends State<AddVehicleScreen> {
         'is_primary': _isPrimary,
         'club_reg': _clubReg,
         'fuel_type': _fuelType,
+        'powertrain': _powertrain,
       });
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -173,12 +176,15 @@ class _AddVehicleScreenState extends State<AddVehicleScreen> {
       appBar: AppBar(title: const Text('Add vehicle')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (_maxVehicles != null)
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_maxVehicles != null)
                 Card(
                   color: _atLimit
                       ? Theme.of(context).colorScheme.errorContainer
@@ -351,6 +357,18 @@ class _AddVehicleScreenState extends State<AddVehicleScreen> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
+                value: _powertrain,
+                decoration: const InputDecoration(labelText: 'Powertrain'),
+                items: const [
+                  DropdownMenuItem(value: 'ICE', child: Text('ICE (Petrol/Diesel)')),
+                  DropdownMenuItem(value: 'HEV', child: Text('HEV (Hybrid)')),
+                  DropdownMenuItem(value: 'PHEV', child: Text('PHEV (Plug-in Hybrid)')),
+                  DropdownMenuItem(value: 'EV', child: Text('EV (Electric)')),
+                ],
+                onChanged: (v) => setState(() => _powertrain = v ?? 'ICE'),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
                 value: _fuelType != null && _fuelTypes.contains(_fuelType) ? _fuelType : null,
                 decoration: const InputDecoration(
                   labelText: 'Fuel type',
@@ -387,6 +405,8 @@ class _AddVehicleScreenState extends State<AddVehicleScreen> {
           ),
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 }
