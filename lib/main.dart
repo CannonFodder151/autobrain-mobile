@@ -14,6 +14,9 @@ void main() async {
   AutoBrainApp.initialFragment = Uri.base.fragment;
   await AppConfig.load();
   await ConnectivityService.instance.init();
+  // Boot-time reachability probe — failures do not throw. The debug banner
+  // in app.dart surfaces the probe result (ok/fail/not run).
+  await AppConfig.validate();
   // Drop expired SQLite cache rows before the first screen reads them.
   // Best-effort; never blocks boot on failure.
   OfflineCache.instance.clearExpired().catchError((_) {});
