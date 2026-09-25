@@ -8,8 +8,6 @@ name: Mobile Release (.aab)
 # See docs/mobile-release.md (autobrain monorepo). Never runs on push.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       version:
