@@ -11,8 +11,6 @@ name: Mobile Release (.ipa)
 # [self-hosted, macOS, vm-macos] for cost control.
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -273,12 +271,12 @@ jobs:
             echo "APP_STORE_CONNECT_API_ISSUER_ID=$issuer_id" >> "$GITHUB_ENV"
           fi
           echo "Uploading $ipa (${{ inputs.lane }} lane) to App Store Connect"
-          xcrun altool --upload-app -t ios -f "$ipa" -u "$(jq -r '.username' "$auth_key" 2>/dev/null || echo '')" -p "$APPLE_STORE_API_KEY" --output-format xml 2>&1 | tee "$RUNNER_TEMP/altool-output.xml"
-          altool_exit=$?
+          xcrun altool --upload-app -t ios -f "$ipa" --apiKey "$key_id" --apiIssuer "$issuer_id" --apiPrivateKey "$auth_key" --output-format xml 2>&1 | tee "$RUNNER_TEMP/altool-output.xml"
+          altool_exit=${PIPESTATUS[0]}
           if [[ $altool_exit -ne 0 ]]; then
-            echo "::warning::altool upload failed (exit $altool_exit). Checking notarytool as fallback."
+            echo "::error::altool upload failed (exit $altool_exit)"
+            exit 1
           fi
-          xcrun notarytool submit "$ipa" --key "$HOME/.app-store-connect/AuthKey_${key_id}.p8" --key-id "$key_id" --issuer "$issuer_id" --wait 2>&1
 
       - name: Conditionally publish GitHub Release (release lane only)
         if: ${{ inputs.lane == 'release' }}
