@@ -7,17 +7,19 @@
 enum ServoSortMetric { price, distance }
 
 class ServoStationRow {
+  final String? id;
   final String name;
   final String? brand;
   final String? logoUrl;
   final double? distanceKm;
   final double? priceCents;
   final String? fuelType;
-  final double? costPerKm;
-  final double? avgFillCost;
+  final double? costPerKm;  // AUT-2053: $/km projection
+  final double? avgFillCost;  // AUT-2053: avg fill cost projection
   final List<ServoFuelPrice> prices;
 
   const ServoStationRow({
+    this.id,
     required this.name,
     this.brand,
     this.logoUrl,
@@ -46,7 +48,14 @@ class ServoStationRow {
 class ServoFuelPrice {
   final String fuelType;
   final double? priceCents;
-  const ServoFuelPrice({required this.fuelType, this.priceCents});
+  final double? costPerKm;  // AUT-2053: $/km at this station price
+  final double? avgFillCost;  // AUT-2053: avg fill cost at this station price
+  const ServoFuelPrice({
+    required this.fuelType,
+    this.priceCents,
+    this.costPerKm,
+    this.avgFillCost,
+  });
 }
 
 /// Sorts [rows] in place by [metric], ascending, and returns it.
@@ -73,12 +82,15 @@ List<ServoStationRow> sortStationRows(
 /// The list view (AUT-1821) used to always take `prices[0]`, which could be a
 /// different fuel than the one the user selected (AUT-2070). Centralising the
 /// rule here keeps the parser deterministic and unit-testable.
-///
-/// Also surfaces the per-vehicle `cost_per_km` ($/km) and `avg_fill_cost` ($)
-/// annotations the backend attaches when the request carries a `vehicle_id`
-/// (AUT-2201/AUT-2202). Null when vehicle_id omitted or no fuel logs.
-({double? priceCents, String? fuelType, double? costPerKm, double? avgFillCost})
-    pickPriceForFuel(List<dynamic> prices, String? fuelType) {
+({
+  double? priceCents,
+  String? fuelType,
+  double? costPerKm,
+  double? avgFillCost,
+}) pickPriceForFuel(
+  List<dynamic> prices,
+  String? fuelType,
+) {
   if (prices.isEmpty) {
     return (priceCents: null, fuelType: null, costPerKm: null, avgFillCost: null);
   }
@@ -127,6 +139,7 @@ ServoStationRow stationRowFromApi(
   final prices = (m['prices'] as List?) ?? const [];
   final picked = pickPriceForFuel(prices, selectedFuelType);
   return ServoStationRow(
+    id: m['id'] as String?,
     name: m['name'] as String? ?? 'Unknown',
     brand: m['brand'] as String?,
     logoUrl: m['logo'] as String?,
