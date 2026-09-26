@@ -177,7 +177,6 @@ jobs:
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws
             --dart-define=MOBILE_STORE_BUILD=true
-            --export-method="$EXPORT_METHOD"
             --build-number="$(grep -E '^version: ' pubspec.yaml | head -1 | awk -F'[+]' '{print $2}')"
           )
           if [[ -n "$SPECIFIER" ]]; then
