@@ -36,7 +36,12 @@ jobs:
     runs-on: macos-latest
     env:
       IOS_BUNDLE_ID: com.autobrainservice.autobrain
-      EXPORT_METHOD: ${{ inputs.lane == 'beta' && 'development' || 'app-store' }}
+      # Both lanes use app-store: the team only holds an iPhone Distribution cert
+      # (no Development cert in the portal), and TestFlight submission is done
+      # with the app-store export method. 'development' would fail the compile
+      # step with "No development certificates available to code sign app for
+      # device deployment" — verified on run 36280199047.
+      EXPORT_METHOD: app-store
     steps:
       - uses: actions/checkout@v4
         with:
