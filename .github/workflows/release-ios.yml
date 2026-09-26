@@ -37,6 +37,7 @@ jobs:
     env:
       IOS_BUNDLE_ID: com.autobrainservice.autobrain
       EXPORT_METHOD: ${{ inputs.lane == 'beta' && 'development' || 'app-store' }}
+      LANE: ${{ inputs.lane }}
     steps:
       - uses: actions/checkout@v4
         with:
