@@ -11,41 +11,45 @@ jobs:
   setup:
     runs-on: [self-hosted, macOS, X64]
     steps:
-      - name: Install Homebrew (if missing)
+      - name: Check sudo availability
+        run: |
+          set -euo pipefail
+          echo "User: $(whoami)"
+          echo "Groups: $(groups)"
+          sudo -n true 2>&1 && echo "sudo NOPASSWD: YES" || echo "sudo NOPASSWD: NO (will need password)"
+          # Check if nathan is admin
+          dseditgroup -o checkmember -m nathan admin 2>&1 || echo "Not in admin group"
+
+      - name: Install Homebrew to user directory (if missing)
         run: |
           set -euo pipefail
           if command -v brew >/dev/null 2>&1; then
             echo "Homebrew already installed"
             brew --version
           else
-            echo "Installing Homebrew..."
+            echo "Installing Homebrew to ~/.brew..."
+            export HOMEBREW_PREFIX="$HOME/.brew"
+            export HOMEBREW_REPOSITORY="$HOME/.brew/Homebrew"
+            export HOMEBREW_CACHE="$HOME/Library/Caches/Homebrew"
             /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            echo "Homebrew installed"
+            echo "Homebrew installed to $HOMEBREW_PREFIX"
           fi
           # Ensure brew is on PATH for this session and future shells
-          if ! grep -q 'brew' ~/.zshrc 2>/dev/null; then
-            echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.zshrc
-            echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc
-          fi
-          if ! grep -q 'brew' ~/.bash_profile 2>/dev/null; then
-            echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.bash_profile
-            echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.bash_profile
-          fi
+          BREW_BIN="$HOME/.brew/bin"
+          echo "export PATH=\"$BREW_BIN:\$PATH\"" >> ~/.zshrc
+          echo "export PATH=\"$BREW_BIN:\$PATH\"" >> ~/.bash_profile
+          export PATH="$BREW_BIN:$PATH"
 
       - name: Install modern Ruby via Homebrew
         run: |
           set -euo pipefail
-          export PATH="/usr/local/bin:$PATH"
-          if command -v brew >/dev/null 2>&1; then
-            export PATH="$(brew --prefix)/bin:$PATH"
-          fi
+          export PATH="$HOME/.brew/bin:$PATH"
           brew update
           brew install ruby
           echo "=== Ruby versions ==="
           which ruby
           ruby --version
           # Persist Homebrew Ruby on PATH
-          BREW_PREFIX="$(brew --prefix)"
           for rc in "$HOME/.zshrc" "$HOME/.bash_profile"; do
             touch "$rc"
             grep -q "brew --prefix ruby" "$rc" || echo "export PATH=\"$(brew --prefix ruby)/bin:\$PATH\"" >> "$rc"
@@ -72,7 +76,7 @@ jobs:
           echo "Downloading Apple WWDR intermediate cert..."
           curl -fsSL -o /tmp/WWDRIntermediateCert.cer \
             "https://developer.apple.com/certification/Apple_WWDR_Intermediate_Cert.cer"
-          echo "Importing WWDR cert into System keychain..."
+          echo "Importing WWDR cert into System keychain (requires sudo)..."
           sudo security import /tmp/WWDRIntermediateCert.cer \
             -k /System/Library/Keychains/SystemRootCertificates.keychain \
             -A
