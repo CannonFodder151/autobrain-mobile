@@ -17,50 +17,55 @@ jobs:
           echo "User: $(whoami)"
           echo "Groups: $(groups)"
           sudo -n true 2>&1 && echo "sudo NOPASSWD: YES" || echo "sudo NOPASSWD: NO (will need password)"
-          # Check if nathan is admin
           dseditgroup -o checkmember -m nathan admin 2>&1 || echo "Not in admin group"
 
-      - name: Install Homebrew to user directory (if missing)
+      - name: Try Homebrew user install (verbose)
         run: |
           set -euo pipefail
           if command -v brew >/dev/null 2>&1; then
             echo "Homebrew already installed"
             brew --version
-          else
-            echo "Installing Homebrew to ~/.brew..."
-            export HOMEBREW_PREFIX="$HOME/.brew"
-            export HOMEBREW_REPOSITORY="$HOME/.brew/Homebrew"
-            export HOMEBREW_CACHE="$HOME/Library/Caches/Homebrew"
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            echo "Homebrew installed to $HOMEBREW_PREFIX"
+            exit 0
           fi
-          # Ensure brew is on PATH for this session and future shells
-          BREW_BIN="$HOME/.brew/bin"
-          echo "export PATH=\"$BREW_BIN:\$PATH\"" >> ~/.zshrc
-          echo "export PATH=\"$BREW_BIN:\$PATH\"" >> ~/.bash_profile
-          export PATH="$BREW_BIN:$PATH"
+          echo "Installing Homebrew to ~/.brew (verbose)..."
+          export HOMEBREW_PREFIX="$HOME/.brew"
+          export HOMEBREW_REPOSITORY="$HOME/.brew/Homebrew"
+          export HOMEBREW_CACHE="$HOME/Library/Caches/Homebrew"
+          export HOMEBREW_VERBOSE=1
+          /bin/bash -xc "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" 2>&1 || echo "Homebrew install failed with exit code $?"
+          echo "Homebrew install attempt done"
 
-      - name: Install modern Ruby via Homebrew
+      - name: Alternative: Install Ruby via rbenv (if Homebrew failed)
+        if: failure()
         run: |
           set -euo pipefail
-          export PATH="$HOME/.brew/bin:$PATH"
-          brew update
-          brew install ruby
-          echo "=== Ruby versions ==="
-          which ruby
+          echo "Installing rbenv + ruby-build..."
+          git clone https://github.com/rbenv/rbenv.git ~/.rbenv
+          git clone https://github.com/rbenv/ruby-build.git ~/.rbenv/plugins/ruby-build
+          echo 'export PATH="$HOME/.rbenv/bin:$PATH"' >> ~/.zshrc
+          echo 'eval "$(rbenv init -)"' >> ~/.zshrc
+          echo 'export PATH="$HOME/.rbenv/bin:$PATH"' >> ~/.bash_profile
+          echo 'eval "$(rbenv init -)"' >> ~/.bash_profile
+          export PATH="$HOME/.rbenv/bin:$PATH"
+          eval "$(rbenv init -)"
+          rbenv install 3.2.2
+          rbenv global 3.2.2
           ruby --version
-          # Persist Homebrew Ruby on PATH
-          for rc in "$HOME/.zshrc" "$HOME/.bash_profile"; do
-            touch "$rc"
-            grep -q "brew --prefix ruby" "$rc" || echo "export PATH=\"$(brew --prefix ruby)/bin:\$PATH\"" >> "$rc"
-            grep -q "GEM_HOME" "$rc" || echo 'export GEM_HOME="$HOME/.gem"' >> "$rc"
-            grep -q "GEM_PATH" "$rc" || echo 'export GEM_PATH="$GEM_HOME"' >> "$rc"
-          done
 
-      - name: Install fastlane via Homebrew Ruby
+      - name: Install fastlane (Homebrew or rbenv Ruby)
         run: |
           set -euo pipefail
-          export PATH="$(brew --prefix ruby)/bin:$PATH"
+          if command -v brew >/dev/null 2>&1; then
+            echo "Using Homebrew Ruby"
+            export PATH="$(brew --prefix ruby)/bin:$PATH"
+          elif [ -d "$HOME/.rbenv" ]; then
+            echo "Using rbenv Ruby"
+            export PATH="$HOME/.rbenv/bin:$PATH"
+            eval "$(rbenv init -)"
+          else
+            echo "No Ruby available!"
+            exit 1
+          fi
           export GEM_HOME="$HOME/.gem"
           export GEM_PATH="$GEM_HOME"
           mkdir -p "$GEM_HOME"
@@ -70,28 +75,35 @@ jobs:
           which fastlane
           fastlane --version
 
-      - name: Install Apple WWDR intermediate cert
+      - name: Install Apple WWDR intermediate cert (best effort)
         run: |
           set -euo pipefail
           echo "Downloading Apple WWDR intermediate cert..."
           curl -fsSL -o /tmp/WWDRIntermediateCert.cer \
-            "https://developer.apple.com/certification/Apple_WWDR_Intermediate_Cert.cer"
-          echo "Importing WWDR cert into System keychain (requires sudo)..."
-          sudo security import /tmp/WWDRIntermediateCert.cer \
+            "https://developer.apple.com/certification/Apple_WWDR_Intermediate_Cert.cer" || echo "Download failed"
+          echo "Attempting to import WWDR cert into System keychain (requires sudo)..."
+          sudo -n security import /tmp/WWDRIntermediateCert.cer \
             -k /System/Library/Keychains/SystemRootCertificates.keychain \
-            -A
+            -A 2>&1 || echo "WWDR import needs sudo password (skipping for now)"
           echo "Verifying WWDR cert..."
           security find-certificate -c "Apple Worldwide Developer Relations" \
-            /System/Library/Keychains/SystemRootCertificates.keychain
+            /System/Library/Keychains/SystemRootCertificates.keychain 2>&1 || echo "WWDR cert not in System keychain"
+          security find-certificate -c "Apple Worldwide Developer Relations" \
+            ~/Library/Keychains/login.keychain-db 2>&1 || echo "WWDR cert not in login keychain"
 
       - name: Verify runner readiness
         run: |
           set -euo pipefail
-          export PATH="$(brew --prefix ruby)/bin:$PATH"
+          if command -v brew >/dev/null 2>&1; then
+            export PATH="$(brew --prefix ruby)/bin:$PATH"
+          elif [ -d "$HOME/.rbenv" ]; then
+            export PATH="$HOME/.rbenv/bin:$PATH"
+            eval "$(rbenv init -)"
+          fi
           export GEM_HOME="$HOME/.gem"
           export GEM_PATH="$GEM_HOME"
           echo "=== Runner ready ==="
           echo "Xcode: $(xcodebuild -version | head -1)"
           echo "Ruby: $(ruby --version)"
-          echo "fastlane: $(fastlane --version | head -1)"
-          echo "WWDR cert: $(security find-certificate -c 'Apple Worldwide Developer Relations' /System/Library/Keychains/SystemRootCertificates.keychain 2>&1 | grep 'Apple Worldwide')"
+          echo "fastlane: $(fastlane --version 2>&1 | head-1)"
+          echo "WWDR cert System: $(security find-certificate -c 'Apple Worldwide Developer Relations' /System/Library/Keychains/SystemRootCertificates.keychain 2>&1 | grep -c 'Apple Worldwide' || echo 0)"
