@@ -4,8 +4,6 @@ name: Setup macOS Runner (one-time)
 # Required before release-ios.yml can run on the self-hosted runner (AUT-4379).
 on:
   workflow_dispatch:
-  push:
-    branches: [feat/AUT-4378-fastlane]
 permissions:
   contents: read
 
