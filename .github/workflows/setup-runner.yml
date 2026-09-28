@@ -1,0 +1,93 @@
+name: Setup macOS Runner (one-time)
+# One-time setup for the self-hosted macOS runner (Nathans-iMac-Pro).
+# Installs Homebrew + modern Ruby + fastlane + WWDR intermediate cert.
+# Required before release-ios.yml can run on the self-hosted runner (AUT-4379).
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: [self-hosted, macOS, X64]
+    steps:
+      - name: Install Homebrew (if missing)
+        run: |
+          set -euo pipefail
+          if command -v brew >/dev/null 2>&1; then
+            echo "Homebrew already installed"
+            brew --version
+          else
+            echo "Installing Homebrew..."
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            echo "Homebrew installed"
+          fi
+          # Ensure brew is on PATH for this session and future shells
+          if ! grep -q 'brew' ~/.zshrc 2>/dev/null; then
+            echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.zshrc
+            echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.zshrc
+          fi
+          if ! grep -q 'brew' ~/.bash_profile 2>/dev/null; then
+            echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.bash_profile
+            echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.bash_profile
+          fi
+
+      - name: Install modern Ruby via Homebrew
+        run: |
+          set -euo pipefail
+          export PATH="/usr/local/bin:$PATH"
+          if command -v brew >/dev/null 2>&1; then
+            export PATH="$(brew --prefix)/bin:$PATH"
+          fi
+          brew update
+          brew install ruby
+          echo "=== Ruby versions ==="
+          which ruby
+          ruby --version
+          # Persist Homebrew Ruby on PATH
+          BREW_PREFIX="$(brew --prefix)"
+          for rc in "$HOME/.zshrc" "$HOME/.bash_profile"; do
+            touch "$rc"
+            grep -q "brew --prefix ruby" "$rc" || echo "export PATH=\"$(brew --prefix ruby)/bin:\$PATH\"" >> "$rc"
+            grep -q "GEM_HOME" "$rc" || echo 'export GEM_HOME="$HOME/.gem"' >> "$rc"
+            grep -q "GEM_PATH" "$rc" || echo 'export GEM_PATH="$GEM_HOME"' >> "$rc"
+          done
+
+      - name: Install fastlane via Homebrew Ruby
+        run: |
+          set -euo pipefail
+          export PATH="$(brew --prefix ruby)/bin:$PATH"
+          export GEM_HOME="$HOME/.gem"
+          export GEM_PATH="$GEM_HOME"
+          mkdir -p "$GEM_HOME"
+          ruby --version
+          gem install fastlane --no-document
+          echo "=== fastlane ==="
+          which fastlane
+          fastlane --version
+
+      - name: Install Apple WWDR intermediate cert
+        run: |
+          set -euo pipefail
+          echo "Downloading Apple WWDR intermediate cert..."
+          curl -fsSL -o /tmp/WWDRIntermediateCert.cer \
+            "https://developer.apple.com/certification/Apple_WWDR_Intermediate_Cert.cer"
+          echo "Importing WWDR cert into System keychain..."
+          sudo security import /tmp/WWDRIntermediateCert.cer \
+            -k /System/Library/Keychains/SystemRootCertificates.keychain \
+            -A
+          echo "Verifying WWDR cert..."
+          security find-certificate -c "Apple Worldwide Developer Relations" \
+            /System/Library/Keychains/SystemRootCertificates.keychain
+
+      - name: Verify runner readiness
+        run: |
+          set -euo pipefail
+          export PATH="$(brew --prefix ruby)/bin:$PATH"
+          export GEM_HOME="$HOME/.gem"
+          export GEM_PATH="$GEM_HOME"
+          echo "=== Runner ready ==="
+          echo "Xcode: $(xcodebuild -version | head -1)"
+          echo "Ruby: $(ruby --version)"
+          echo "fastlane: $(fastlane --version | head -1)"
+          echo "WWDR cert: $(security find-certificate -c 'Apple Worldwide Developer Relations' /System/Library/Keychains/SystemRootCertificates.keychain 2>&1 | grep 'Apple Worldwide')"
