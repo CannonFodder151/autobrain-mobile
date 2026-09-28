@@ -1,0 +1,74 @@
+name: Diagnose macOS Runner
+on:
+  workflow_dispatch:
+jobs:
+  diagnose:
+    runs-on: [self-hosted, macOS, X64]
+    steps:
+      - name: Check runner
+        run: |
+          echo "Runner: $(hostname)"
+          echo "User: $(whoami)"
+          echo "Home: $HOME"
+          uname -a
+      
+      - name: Check Xcode
+        run: |
+          echo "=== Xcode ==="
+          xcodebuild -version
+          echo "=== SDKs ==="
+          xcodebuild -showsdks 2>&1 || echo "xcodebuild -showsdks failed"
+      
+      - name: Check Ruby and headers
+        run: |
+          echo "=== Ruby ==="
+          ruby --version
+          echo "=== Gem ==="
+          gem --version
+          echo "=== Ruby include path ==="
+          ruby -e "puts RbConfig::CONFIG['rubyhdrdir']"
+          ruby -e "puts RbConfig::CONFIG['archdir']"
+          echo "=== Check ruby/config.h ==="
+          RUBY_HDR=$(ruby -e "puts RbConfig::CONFIG['rubyhdrdir']")
+          ls -la "$RUBY_HDR/ruby/config.h" 2>&1 || echo "NOT FOUND"
+          # Also check SDK path
+          SDK_PATH="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+          ls -la "$SDK_PATH/usr/include/ruby-2.6.0/ruby/config.h" 2>&1 || echo "SDK config.h NOT FOUND"
+      
+      - name: Check Homebrew
+        run: |
+          echo "=== Homebrew ==="
+          which brew || echo "Homebrew not installed"
+          brew --version 2>&1 || echo "brew command failed"
+          if command -v brew >/dev/null; then
+            brew list ruby 2>&1 || echo "ruby not installed via brew"
+          fi
+      
+      - name: Check WWDR cert
+        run: |
+          echo "=== WWDR Intermediate Cert ==="
+          security find-certificate -c "Apple Worldwide Developer Relations" /System/Library/Keychains/SystemRootCertificates.keychain 2>&1 || echo "Not in SystemRootCertificates"
+          security find-certificate -c "Apple Worldwide Developer Relations" ~/Library/Keychains/login.keychain-db 2>&1 || echo "Not in login keychain"
+      
+      - name: Test fastlane install with modern Ruby
+        run: |
+          echo "=== Testing fastlane install ==="
+          if command -v brew >/dev/null; then
+            echo "Homebrew available, trying brew install ruby"
+            brew install ruby 2>&1 | tail -20
+            echo "export PATH=\"$(brew --prefix ruby)/bin:\$PATH\"" >> ~/.zshrc
+            echo "export PATH=\"$(brew --prefix ruby)/bin:\$PATH\"" >> ~/.bash_profile
+            export PATH="$(brew --prefix ruby)/bin:$PATH"
+            ruby --version
+            gem install fastlane --no-document 2>&1 | tail -10
+            fastlane --version 2>&1 || echo "fastlane install failed"
+          else
+            echo "No Homebrew, trying to install via xcode-select"
+            sudo xcode-select --install 2>&1 || echo "xcode-select install triggered or already installed"
+            # Wait a bit
+            sleep 5
+            # Check again
+            ruby -e "puts RbConfig::CONFIG['rubyhdrdir']"
+            ls -la "$(ruby -e "puts RbConfig::CONFIG['rubyhdrdir']")/ruby/config.h" 2>&1
+            gem install fastlane --no-document --install-dir "$HOME/.gem" 2>&1 | tail -10
+          fi
