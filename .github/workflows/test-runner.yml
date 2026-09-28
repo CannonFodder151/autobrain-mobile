@@ -4,15 +4,19 @@ on:
 jobs:
   test:
     runs-on: [self-hosted, macOS, X64]
+    env:
+      GEM_HOME: ${{ runner.temp }}/gem
+      PATH: ${{ runner.temp }}/gem/bin:${{ env.PATH }}
     steps:
       - name: Check runner
         run: echo "Runner is alive"; uname -a
       - name: Check Xcode
         run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      - name: Install fastlane via gem
+      - name: Install fastlane via gem (user install)
         run: |
           set -euo pipefail
+          mkdir -p "$GEM_HOME/bin"
           echo "Ruby: $(ruby --version)"
           echo "Gem: $(gem --version)"
-          gem install fastlane --no-document
+          gem install fastlane --no-document --install-dir "$GEM_HOME"
           fastlane --version
