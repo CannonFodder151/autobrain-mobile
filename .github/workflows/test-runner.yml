@@ -4,19 +4,24 @@ on:
 jobs:
   test:
     runs-on: [self-hosted, macOS, X64]
-    env:
-      GEM_HOME: ${{ runner.temp }}/gem
-      PATH: ${{ runner.temp }}/gem/bin:${{ env.PATH }}
     steps:
       - name: Check runner
         run: echo "Runner is alive"; uname -a
       - name: Check Xcode
         run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      - name: Install fastlane via gem (user install)
+      - name: Install fastlane via gem (user GEM_HOME)
+        # System Ruby (/Library/Ruby/Gems) is SIP-locked on the iMac, so install
+        # into ~/.gem and persist that bin dir on the runner's shell PATH.
         run: |
           set -euo pipefail
-          mkdir -p "$GEM_HOME/bin"
+          GEM_DIR="$HOME/.gem"
+          mkdir -p "$GEM_DIR/bin"
           echo "Ruby: $(ruby --version)"
           echo "Gem: $(gem --version)"
-          gem install fastlane --no-document --install-dir "$GEM_HOME"
-          fastlane --version
+          gem install fastlane --no-document --install-dir "$GEM_DIR"
+          "$GEM_DIR/bin/fastlane" --version
+          for rc in "$HOME/.zshrc" "$HOME/.bash_profile"; do
+            touch "$rc"
+            grep -q 'HOME/.gem/bin' "$rc" || echo 'export PATH="$HOME/.gem/bin:$PATH"' >> "$rc"
+          done
+          echo "fastlane installed at $GEM_DIR/bin/fastlane (persisted on runner PATH)"
