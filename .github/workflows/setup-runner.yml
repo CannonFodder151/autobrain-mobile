@@ -1,6 +1,6 @@
 name: Setup macOS Runner (one-time)
 # One-time setup for the self-hosted macOS runner (Nathans-iMac-Pro).
-# Installs Homebrew + modern Ruby + fastlane + WWDR intermediate cert.
+# Installs Ruby via rbenv + fastlane + WWDR intermediate cert.
 # Required before release-ios.yml can run on the self-hosted runner (AUT-4379).
 on:
   workflow_dispatch:
@@ -11,35 +11,18 @@ jobs:
   setup:
     runs-on: [self-hosted, macOS, X64]
     steps:
-      - name: Check sudo availability
+      - name: Check environment
         run: |
           set -euo pipefail
           echo "User: $(whoami)"
           echo "Groups: $(groups)"
-          sudo -n true 2>&1 && echo "sudo NOPASSWD: YES" || echo "sudo NOPASSWD: NO (will need password)"
-          dseditgroup -o checkmember -m nathan admin 2>&1 || echo "Not in admin group"
+          echo "Xcode: $(xcodebuild -version | head -1)"
+          echo "clang: $(clang --version | head -1)"
+          echo "make: $(make --version | head -1)"
 
-      - name: Try Homebrew user install (verbose)
+      - name: Install rbenv + ruby-build
         run: |
           set -euo pipefail
-          if command -v brew >/dev/null 2>&1; then
-            echo "Homebrew already installed"
-            brew --version
-            exit 0
-          fi
-          echo "Installing Homebrew to ~/.brew (verbose)..."
-          export HOMEBREW_PREFIX="$HOME/.brew"
-          export HOMEBREW_REPOSITORY="$HOME/.brew/Homebrew"
-          export HOMEBREW_CACHE="$HOME/Library/Caches/Homebrew"
-          export HOMEBREW_VERBOSE=1
-          /bin/bash -xc "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" 2>&1 || echo "Homebrew install failed with exit code $?"
-          echo "Homebrew install attempt done"
-
-      - name: "Alternative: Install Ruby via rbenv (if Homebrew failed)"
-        if: failure()
-        run: |
-          set -euo pipefail
-          echo "Installing rbenv + ruby-build..."
           git clone https://github.com/rbenv/rbenv.git ~/.rbenv
           git clone https://github.com/rbenv/ruby-build.git ~/.rbenv/plugins/ruby-build
           echo 'export PATH="$HOME/.rbenv/bin:$PATH"' >> ~/.zshrc
@@ -48,24 +31,23 @@ jobs:
           echo 'eval "$(rbenv init -)"' >> ~/.bash_profile
           export PATH="$HOME/.rbenv/bin:$PATH"
           eval "$(rbenv init -)"
+          rbenv --version
+
+      - name: Install Ruby 3.2.2 via rbenv
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.rbenv/bin:$PATH"
+          eval "$(rbenv init -)"
+          echo "Installing Ruby 3.2.2 (this may take a few minutes)..."
           rbenv install 3.2.2
           rbenv global 3.2.2
           ruby --version
 
-      - name: "Install fastlane (Homebrew or rbenv Ruby)"
+      - name: Install fastlane via rbenv Ruby
         run: |
           set -euo pipefail
-          if command -v brew >/dev/null 2>&1; then
-            echo "Using Homebrew Ruby"
-            export PATH="$(brew --prefix ruby)/bin:$PATH"
-          elif [ -d "$HOME/.rbenv" ]; then
-            echo "Using rbenv Ruby"
-            export PATH="$HOME/.rbenv/bin:$PATH"
-            eval "$(rbenv init -)"
-          else
-            echo "No Ruby available!"
-            exit 1
-          fi
+          export PATH="$HOME/.rbenv/bin:$PATH"
+          eval "$(rbenv init -)"
           export GEM_HOME="$HOME/.gem"
           export GEM_PATH="$GEM_HOME"
           mkdir -p "$GEM_HOME"
@@ -75,7 +57,7 @@ jobs:
           which fastlane
           fastlane --version
 
-      - name: "Install Apple WWDR intermediate cert (best effort)"
+      - name: Install Apple WWDR intermediate cert (best effort)
         run: |
           set -euo pipefail
           echo "Downloading Apple WWDR intermediate cert..."
@@ -94,16 +76,12 @@ jobs:
       - name: Verify runner readiness
         run: |
           set -euo pipefail
-          if command -v brew >/dev/null 2>&1; then
-            export PATH="$(brew --prefix ruby)/bin:$PATH"
-          elif [ -d "$HOME/.rbenv" ]; then
-            export PATH="$HOME/.rbenv/bin:$PATH"
-            eval "$(rbenv init -)"
-          fi
+          export PATH="$HOME/.rbenv/bin:$PATH"
+          eval "$(rbenv init -)"
           export GEM_HOME="$HOME/.gem"
           export GEM_PATH="$GEM_HOME"
           echo "=== Runner ready ==="
           echo "Xcode: $(xcodebuild -version | head -1)"
           echo "Ruby: $(ruby --version)"
-          echo "fastlane: $(fastlane --version 2>&1 | head-1)"
+          echo "fastlane: $(fastlane --version 2>&1 | head -1)"
           echo "WWDR cert System: $(security find-certificate -c 'Apple Worldwide Developer Relations' /System/Library/Keychains/SystemRootCertificates.keychain 2>&1 | grep -c 'Apple Worldwide' || echo 0)"
