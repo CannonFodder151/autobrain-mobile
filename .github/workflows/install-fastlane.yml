@@ -1,0 +1,23 @@
+name: Install fastlane on macOS runner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install-fastlane:
+    runs-on: [self-hosted, macOS, X64]
+    steps:
+      - name: Install fastlane via gem
+        run: |
+          set -euo pipefail
+          echo "Ruby: $(ruby --version)"
+          echo "Gem: $(gem --version)"
+          gem install fastlane --no-document
+          fastlane --version
+      - name: Verify fastlane install
+        run: |
+          which fastlane
+          fastlane --version
