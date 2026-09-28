@@ -14,5 +14,6 @@ jobs:
           set -euo pipefail
           echo "Ruby: $(ruby --version)"
           echo "Gem: $(gem --version)"
-          gem install fastlane --no-document
+          gem install --user-install fastlane --no-document
+          export PATH="$PATH:$(gem env user_gemhome)/bin"
           fastlane --version
