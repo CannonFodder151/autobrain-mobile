@@ -35,7 +35,7 @@ jobs:
           /bin/bash -xc "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" 2>&1 || echo "Homebrew install failed with exit code $?"
           echo "Homebrew install attempt done"
 
-      - name: Alternative: Install Ruby via rbenv (if Homebrew failed)
+      - name: "Alternative: Install Ruby via rbenv (if Homebrew failed)"
         if: failure()
         run: |
           set -euo pipefail
@@ -52,7 +52,7 @@ jobs:
           rbenv global 3.2.2
           ruby --version
 
-      - name: Install fastlane (Homebrew or rbenv Ruby)
+      - name: "Install fastlane (Homebrew or rbenv Ruby)"
         run: |
           set -euo pipefail
           if command -v brew >/dev/null 2>&1; then
@@ -75,7 +75,7 @@ jobs:
           which fastlane
           fastlane --version
 
-      - name: Install Apple WWDR intermediate cert (best effort)
+      - name: "Install Apple WWDR intermediate cert (best effort)"
         run: |
           set -euo pipefail
           echo "Downloading Apple WWDR intermediate cert..."
