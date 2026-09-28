@@ -1,8 +1,6 @@
 name: Diagnose macOS Runner
 on:
   workflow_dispatch:
-  push:
-    branches: [feat/AUT-4378-fastlane]
 jobs:
   diagnose:
     runs-on: [self-hosted, macOS, X64]
