@@ -177,7 +177,7 @@ jobs:
           PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.IOS_PROVISIONING_PROFILE_SPECIFIER }}
         run: |
           set -euo pipefail
-          flutter build ios --release \
+          flutter build ios --release --no-codesign \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
             --dart-define=MOBILE_STORE_BUILD=true \
