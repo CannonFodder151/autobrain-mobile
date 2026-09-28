@@ -1,0 +1,42 @@
+name: Diagnose iOS signing chain on macOS runner
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, macOS, X64]
+    steps:
+      - name: Report toolchain
+        run: |
+          set -uo pipefail
+          echo "runner: $(hostname)  user: $(whoami)  home: $HOME"
+          echo "xcode-select: $(xcode-select -p 2>&1)"
+          xcodebuild -version 2>&1 || true
+          xcodebuild -showsdks 2>&1 | head -20 || true
+          echo "ruby: $(ruby --version 2>&1)"
+
+      - name: Report Apple intermediate (WWDR) certificates in system keychain
+        # The self-hosted iMac is a plain macOS install, not an Xcode-provisioned
+        # CI image. If the Apple WWDR / Apple Root intermediates are missing,
+        # `security find-identity -v -p codesigning` shows the imported
+        # distribution identity as "(CSSMERR_TP_NOT_TRUSTED)" and the archive step
+        # fails with "code object is not signed at all" / chain validation errors.
+        run: |
+          set -uo pipefail
+          echo "=== security find-certificate -a -c 'Apple' (system keychain) ==="
+          security find-certificate -a -c "Apple" /Library/Keychains/System.keychain 2>/dev/null \
+            | grep -E 'alis|labl' | sort -u || echo "NONE FOUND"
+          echo "=== identities (codesigning) ==="
+          security find-identity -v -p codesigning 2>&1 || true
+
+      - name: Report writable gem paths
+        run: |
+          set -uo pipefail
+          echo "GEM_HOME=${GEM_HOME:-<unset>}"
+          gem env home 2>&1
+          [[ -w "$(gem env home)" ]] && echo "gem home WRITABLE" || echo "gem home NOT writable"
+          echo "user-install dir: $(gem env user_gemhome 2>&1)"

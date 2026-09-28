@@ -6,9 +6,10 @@ name: Mobile Release (.ipa)
 # IOS_PROVISIONING_PROFILE_BASE64, IOS_TEAM_ID, IOS_EXPORT_METHOD.
 # .ipa is uploaded to TestFlight (beta lane) or App Store Connect (release lane).
 #
-# CI path: GitHub-hosted macos-latest (self-hosted macOS VM blocked on AUT-2725).
-# Once AUT-2725 provisions 10.0.3.40, change `runs-on: macos-latest` to
-# [self-hosted, macOS, vm-macos] for cost control.
+# CI path: self-hosted macOS runner (Nathans-iMac-Pro, labels: self-hosted, macOS, X64).
+# Requires Apple WWDR intermediate certs in system keychain; see "Install WWDR
+# intermediate certificates" step. Validates code-signing identity chain before
+# archive.
 
 on:
   push:
@@ -33,7 +34,7 @@ permissions:
 
 jobs:
   ios-release:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, X64]
     env:
       IOS_BUNDLE_ID: com.autobrainservice.autobrain
       # Both lanes use app-store: the team only holds an iPhone Distribution cert
@@ -113,6 +114,26 @@ jobs:
             echo "post_discord=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Install WWDR intermediate certificates (Apple root chain)
+        # Self-hosted macOS lacks the Apple WWDR / Apple Root intermediates that
+        # GitHub-hosted macos-latest pre-installs. Without them, the imported
+        # iPhone Distribution cert shows "(CSSMERR_TP_NOT_TRUSTED)" and archive
+        # fails with "code object is not signed at all". Download from Apple and
+        # import to System keychain (requires sudo, no password on runner).
+        run: |
+          set -euo pipefail
+          WWDR_URL="https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer"
+          ROOT_URL="https://www.apple.com/certificateauthority/AppleRootCA-G3.cer"
+          TMP="/tmp/apple-certs"
+          mkdir -p "$TMP"
+          # WWDR G3 (current for iOS Distribution certs)
+          curl -fsSL "$WWDR_URL" -o "$TMP/WWDRG3.cer"
+          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$TMP/WWDRG3.cer" || echo "WWDRG3 add skipped (already present?)"
+          # Apple Root CA G3 (anchor)
+          curl -fsSL "$ROOT_URL" -o "$TMP/RootG3.cer"
+          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$TMP/RootG3.cer" || echo "RootG3 add skipped (already present?)"
+          echo "Apple intermediate/root certs processed"
+
       - name: Install Apple distribution certificate
         env:
           CERT_P12_B64: ${{ secrets.IOS_CERT_P12_BASE64 }}
@@ -131,6 +152,24 @@ jobs:
           security default-keychain -s "$KEYCHAIN_PATH"
           echo "Certificate installed in keychain $KEYCHAIN_PATH"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Validate code-signing identity chain
+        # Fail fast if the imported identity is not trusted (CSSMERR_TP_NOT_TRUSTED).
+        # security find-identity outputs "(CSSMERR_TP_NOT_TRUSTED)" for broken chains.
+        run: |
+          set -euo pipefail
+          IDENTITIES=$(security find-identity -v -p codesigning "build.keychain")
+          echo "$IDENTITIES"
+          if echo "$IDENTITIES" | grep -q "CSSMERR_TP_NOT_TRUSTED"; then
+            echo "::error::Code-signing identity not trusted (missing Apple WWDR/Root intermediates)"
+            exit 1
+          fi
+          VALID_COUNT=$(echo "$IDENTITIES" | grep -c '"iPhone Distribution' || echo 0)
+          if [[ "$VALID_COUNT" -eq 0 ]]; then
+            echo "::error::No valid iPhone Distribution identity found in build.keychain"
+            exit 1
+          fi
+          echo "Valid iPhone Distribution identity present (chain OK)"
 
       - name: Install provisioning profile
         env:
@@ -215,7 +254,7 @@ jobs:
           semver="$(echo '${{ inputs.version }}' | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
           awk -v s="## [$semver]" 'index($0,s){f=1;next} f && /^## /{exit} f' CHANGELOG.md > "$RUNNER_TEMP/release-body.md"
           [[ -s "$RUNNER_TEMP/release-body.md" ]] || { echo "::error::CHANGELOG.md has no section for [$semver]"; exit 1; }
-          { echo "# ${{ inputs.version }}"; echo; cat "$RUNNER_TEMP/release-body.md"; } > "$RUNNER_TEMP/release-body-full.md"
+          { echo "# ${{ inputs.version }}"; echo; cat "$RUN_TEMP/release-body.md"; } > "$RUNNER_TEMP/release-body-full.md"
           echo "body_file=$RUNNER_TEMP/release-body-full.md" >> "$GITHUB_OUTPUT"
 
       - name: Upload to App Store Connect (TestFlight or App Store)

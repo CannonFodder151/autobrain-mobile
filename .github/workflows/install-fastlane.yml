@@ -10,14 +10,18 @@ jobs:
   install-fastlane:
     runs-on: [self-hosted, macOS, X64]
     steps:
-      - name: Install fastlane via gem
+      - name: Install fastlane via gem (user-install)
         run: |
           set -euo pipefail
           echo "Ruby: $(ruby --version)"
           echo "Gem: $(gem --version)"
-          gem install fastlane --no-document
+          export GEM_HOME="$HOME/.gem"
+          export PATH="$GEM_HOME/bin:$PATH"
+          gem install fastlane --no-document --user-install
           fastlane --version
       - name: Verify fastlane install
         run: |
+          export GEM_HOME="$HOME/.gem"
+          export PATH="$GEM_HOME/bin:$PATH"
           which fastlane
           fastlane --version
