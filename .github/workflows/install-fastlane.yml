@@ -2,6 +2,10 @@ name: Install fastlane on macOS runner
 
 on:
   workflow_dispatch:
+  # push trigger so the branch's changes run (workflow_dispatch only works on main)
+  push:
+    branches:
+      - fix/AUT-4379-ios-signing-cert
 
 permissions:
   contents: read
