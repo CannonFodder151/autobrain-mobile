@@ -9,3 +9,10 @@ jobs:
         run: echo "Runner is alive"; uname -a
       - name: Check Xcode
         run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
+      - name: Install fastlane via gem
+        run: |
+          set -euo pipefail
+          echo "Ruby: $(ruby --version)"
+          echo "Gem: $(gem --version)"
+          gem install fastlane --no-document
+          fastlane --version
