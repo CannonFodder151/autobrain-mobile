@@ -2,6 +2,11 @@ name: Diagnose iOS signing chain on macOS runner
 
 on:
   workflow_dispatch:
+  # workflow_dispatch only resolves for files on the default branch, so the
+  # pull_request trigger is what actually proves the runner state from a branch.
+  pull_request:
+    paths:
+      - '.github/workflows/diagnose-ios-signing.yml'
 
 permissions:
   contents: read
