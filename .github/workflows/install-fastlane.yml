@@ -1,5 +1,8 @@
 name: Install fastlane on macOS runner
 
+# Installs fastlane into a runner-scoped GEM_HOME (system Ruby is SIP-locked).
+# Required for iOS build automation (AUT-4378).
+
 on:
   workflow_dispatch:
 
@@ -9,13 +12,16 @@ permissions:
 jobs:
   install-fastlane:
     runs-on: [self-hosted, macOS, X64]
+    env:
+      GEM_HOME: ${{ runner.temp }}/gem
+      PATH: ${{ runner.temp }}/gem/bin:${{ env.PATH }}
     steps:
       - name: Install fastlane via gem
         run: |
           set -euo pipefail
           echo "Ruby: $(ruby --version)"
           echo "Gem: $(gem --version)"
-          gem install fastlane --no-document
+          gem install fastlane --no-document --install-dir "$GEM_HOME"
           fastlane --version
       - name: Verify fastlane install
         run: |
