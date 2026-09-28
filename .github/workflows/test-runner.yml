@@ -9,11 +9,8 @@ jobs:
         run: echo "Runner is alive"; uname -a
       - name: Check Xcode
         run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      - name: Install fastlane via gem
+      - name: Install fastlane via Homebrew
         run: |
           set -euo pipefail
-          echo "Ruby: $(ruby --version)"
-          echo "Gem: $(gem --version)"
-          gem install --user-install fastlane --no-document
-          export PATH="$PATH:$(gem env user_gemhome)/bin"
+          brew install fastlane
           fastlane --version
