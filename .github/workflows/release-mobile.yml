@@ -204,6 +204,7 @@ jobs:
 
       - name: Build release appbundle
         run: |
+          set -euo pipefail
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
@@ -257,6 +258,7 @@ jobs:
       - name: Build release APK (same signingConfig, for apksigner scheme check)
         if: steps.apk-decision.outputs.build_apk == 'true'
         run: |
+          set -euo pipefail
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
