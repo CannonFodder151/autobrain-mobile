@@ -255,6 +255,8 @@ jobs:
         env:
           CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
+          set -euo pipefail
+          [ -n "${CARTO_API_KEY:-}" ] || { echo "::error::CARTO_API_KEY is empty; refusing to build a key-less (watermapped) release artifact"; exit 1; }
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
@@ -311,6 +313,8 @@ jobs:
         env:
           CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
+          set -euo pipefail
+          [ -n "${CARTO_API_KEY:-}" ] || { echo "::error::CARTO_API_KEY is empty; refusing to build a key-less (watermapped) release artifact"; exit 1; }
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
