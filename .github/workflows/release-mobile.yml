@@ -6,6 +6,22 @@ name: Mobile Release (.aab)
 # (alpha, which has testers) automatically (scripts/play-upload-closed-testing.sh)
 # — see docs/mobile-release.md.
 # See docs/mobile-release.md (autobrain monorepo). Never runs on push.
+#
+# RUNNER TRUST MODEL (AUT-4722) — this is the only workflow that loads
+# UPLOAD_KEYSTORE_BASE64 / KEY_ALIAS / KEY_PASSWORD / KEY_STORE_PASSWORD /
+# GOOGLE_PLAY_SERVICE_ACCOUNT_JSON, and it has `contents: write`.
+# It therefore MUST be the only workflow permitted to run on
+# gh-runner-autobrain-mobile. The runner is non-ephemeral, so any job that
+# executed PR-authored code on it could plant an artifact that this job then
+# executes. Rules enforced by scripts/check-workflow-runner-isolation.sh (run in
+# analyze.yml, fails the build):
+#   * no pull_request / pull_request_target trigger may target a self-hosted
+#     runner — PR triggers execute the workflow file from the PR head;
+#   * analyze.yml runs on ubuntu-latest, not here.
+# Open follow-up: move this job to a dedicated signing runner (label
+# `release-signing`, single-use/ephemeral VM). Until that runner exists this
+# job stays on [self-hosted, linux, x64] because a label with no registered
+# runner would queue releases forever.
 
 on:
   push:

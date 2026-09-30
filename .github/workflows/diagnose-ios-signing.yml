@@ -1,12 +1,13 @@
 name: Diagnose iOS signing chain on macOS runner
 
+# workflow_dispatch only, no pull_request (AUT-4722): with a pull_request
+# trigger GitHub executes the workflow file *from the PR head*, so a
+# contributor could land arbitrary shell on the persistent macOS runner. To
+# inspect state on a non-default branch, dispatch with that ref
+# (Actions tab -> Run workflow -> "Use workflow from" -> branch); the workflow
+# file still comes from the default branch, which is the point.
 on:
   workflow_dispatch:
-  # workflow_dispatch only resolves for files on the default branch, so the
-  # pull_request trigger is what actually proves the runner state from a branch.
-  pull_request:
-    paths:
-      - '.github/workflows/diagnose-ios-signing.yml'
 
 permissions:
   contents: read

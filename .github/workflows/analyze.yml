@@ -11,10 +11,14 @@ on:
   push:
     branches: [main]
 
-# Self-hosted runner (gh-runner-autobrain-mobile): cancel stale runs on
-# the same branch instead of queueing behind each other. Prevents the Analyze
-# + Mobile Release serialization backlog seen in AUT-858 while only one runner
-# exists. Safe: jobs are idempotent re-checks of the same head.
+# Cancel stale runs on the same branch instead of queueing behind each other.
+# Safe: jobs are idempotent re-checks of the same head.
+# ponytail: this job checks out PR-authored code and runs `flutter pub get`,
+# which executes pubspec hooks/build scripts. It MUST stay on an ephemeral
+# GitHub-hosted runner: release-mobile.yml loads UPLOAD_KEYSTORE_BASE64 +
+# GOOGLE_PLAY_SERVICE_ACCOUNT_JSON on the non-ephemeral
+# gh-runner-autobrain-mobile box, so any PR code run there can plant a
+# persistent artifact that the next `push: main` release picks up (AUT-4722).
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,9 +28,12 @@ permissions:
 
 jobs:
   analyze-pr:
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: "Guard: no PR-triggered workflow on a self-hosted runner"
+        run: bash scripts/check-workflow-runner-isolation.sh
 
       - uses: subosito/flutter-action@v2
         with:
