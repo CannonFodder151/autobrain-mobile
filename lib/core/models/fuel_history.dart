@@ -1,5 +1,11 @@
 part of models;
 
+/// Backend `fuel_prices.price` is CENTS per litre (FuelPriceOut).
+double priceCentsToDollars(double cents) => cents / 100;
+
+/// Chart axis/tooltip label for a value already in dollars per litre.
+String formatChartPrice(double dollars) => '\$${dollars.toStringAsFixed(2)}';
+
 class FuelHistoryPoint {
   final String fuelType;
   final double price;

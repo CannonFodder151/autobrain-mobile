@@ -1020,7 +1020,9 @@ class _ChartBody extends StatelessWidget {
     final tsSpan = maxTs.difference(minTs).inSeconds == 0
         ? 1.0
         : maxTs.difference(minTs).inSeconds.toDouble();
-    final prices = allPoints.map((p) => p.price).toList();
+    // Backend price is cents per litre; plot dollars so the axis, dots and
+    // tooltip match the price list in the same sheet.
+    final prices = allPoints.map((p) => priceCentsToDollars(p.price)).toList();
     final pMin = prices.reduce((a, b) => a < b ? a : b);
     final pMax = prices.reduce((a, b) => a > b ? a : b);
     final pad = (pMax - pMin).abs() < 0.01 ? 0.02 : (pMax - pMin) * 0.1;
@@ -1063,7 +1065,7 @@ class _ChartBody extends StatelessWidget {
                     getTitlesWidget: (v, _) => Padding(
                       padding: const EdgeInsets.only(right: 4),
                       child: Text(
-                        '\$${v.toStringAsFixed(2)}',
+                        formatChartPrice(v),
                         style: TextStyle(
                           fontSize: 10,
                           color: scheme.onSurfaceVariant,
@@ -1090,6 +1092,18 @@ class _ChartBody extends StatelessWidget {
                   ),
                 ),
               ),
+              lineTouchData: LineTouchData(
+                touchTooltipData: LineTouchTooltipData(
+                  getTooltipColor: (_) => scheme.inverseSurface,
+                  getTooltipItems: (spots) => spots
+                      .map((s) => LineTooltipItem(
+                            '${types[s.barIndex]}\n${formatChartPrice(s.y)}',
+                            TextStyle(
+                                color: scheme.onInverseSurface, fontSize: 11),
+                          ))
+                      .toList(),
+                ),
+              ),
               lineBarsData: [
                 for (var i = 0; i < types.length; i++)
                   LineChartBarData(
@@ -1097,7 +1111,7 @@ class _ChartBody extends StatelessWidget {
                       for (final p in groups[types[i]]!)
                         FlSpot(
                           p.effectiveAt.difference(minTs).inSeconds.toDouble(),
-                          p.price,
+                          priceCentsToDollars(p.price),
                         ),
                     ],
                     isCurved: true,
