@@ -17,11 +17,17 @@ name: Mobile Release (.aab)
 # analyze.yml, fails the build):
 #   * no pull_request / pull_request_target trigger may target a self-hosted
 #     runner — PR triggers execute the workflow file from the PR head;
-#   * analyze.yml runs on ubuntu-latest, not here.
-# Open follow-up: move this job to a dedicated signing runner (label
-# `release-signing`, single-use/ephemeral VM). Until that runner exists this
-# job stays on [self-hosted, linux, x64] because a label with no registered
-# runner would queue releases forever.
+#   * analyze.yml runs on ubuntu-latest, not here;
+#   * the `release-signing` label is claimed by this workflow alone. Adding it
+#     to another workflow widens the trust boundary to whatever else that
+#     workflow runs, so the guard fails on a second claimant.
+#
+# The `release-signing` label is a dedicated-runner claim: it is registered on
+# gh-runner-autobrain-mobile only (see the repo's runner list), and moving this
+# job to a different box is a label registration, not a code change — the
+# workflow already targets it. Do not drop the label: `[self-hosted, linux,
+# x64]` alone matches any future self-hosted Linux runner, which would silently
+# re-share the signing secrets with whatever that runner is used for.
 
 on:
   push:
@@ -44,7 +50,7 @@ permissions:
 jobs:
   release:
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, linux, x64]
+    runs-on: [self-hosted, linux, x64, release-signing]
     steps:
       - uses: actions/checkout@v4
         with:
