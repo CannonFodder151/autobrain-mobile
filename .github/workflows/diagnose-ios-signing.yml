@@ -1,11 +1,15 @@
 name: Diagnose iOS signing chain on macOS runner
 
 # workflow_dispatch only, no pull_request (AUT-4722): with a pull_request
-# trigger GitHub executes the workflow file *from the PR head*, so a
-# contributor could land arbitrary shell on the persistent macOS runner. To
-# inspect state on a non-default branch, dispatch with that ref
-# (Actions tab -> Run workflow -> "Use workflow from" -> branch); the workflow
-# file still comes from the default branch, which is the point.
+# trigger GitHub executes the workflow file *from the PR head*, so any
+# contributor could land arbitrary shell on the persistent macOS runner.
+#
+# workflow_dispatch is the right trigger here because it requires write access
+# to dispatch and to pick the ref (Actions tab -> Run workflow -> "Use workflow
+# from"). Note that the ref selector loads the workflow file *from that ref*,
+# so it is the write-permission gate, not branch selection, that keeps this
+# off contributor-controlled code. Read-only introspection stays available via
+# dispatch; do not re-add a pull_request trigger to get it back.
 on:
   workflow_dispatch:
 

@@ -24,13 +24,15 @@ for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
   name="$(basename "$wf")"
   # `on:` block parsed crudely: untrusted if pull_request appears before the
   # first top-level non-trigger key (permissions/jobs/concurrency/env).
+  # `/^on:/` rather than `/^on:[[:space:]]*$/` so the inline list form
+  # (`on: [pull_request, push]`) is caught too.
   on_block="$(awk '
-    /^on:[[:space:]]*$/ {in_on=1; next}
+    /^on:/ {in_on=1; print; next}
     in_on && /^[a-zA-Z_]+:/ {in_on=0}
     in_on {print}
   ' "$wf")"
 
-  if grep -qE '^[[:space:]]*pull_request(_target)?:' <<<"$on_block"; then
+  if grep -qwE 'pull_request(_target)?' <<<"$on_block"; then
     if grep -qE 'runs-on:.*self-hosted' "$wf"; then
       echo "::error::$name runs on a self-hosted runner with a pull_request trigger" >&2
       failures=$((failures + 1))
