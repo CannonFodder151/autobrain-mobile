@@ -46,21 +46,26 @@ final String _kCartoKeyParam = cartoKeyParam(_kCartoApiKey);
 /// keyed by station id. Survives navigations within the same screen lifecycle
 /// (list tap -> map tap, back-and-forth) so a re-open is instant. Expires
 /// after 5 min so a stale day-old chart can't outlive its freshness window.
+/// Expired entries are dropped on access, so the map stays bounded by the
+/// number of distinct stations viewed in the last [Duration.minutes 5].
 class _StationHistoryCache {
   static const Duration _ttl = Duration(minutes: 5);
   final Map<String, _Cached> _byStation = {};
 
-  FuelStationHistory? get(String stationId, {bool allowStale = true}) {
-    final c = _byStation[stationId];
-    if (c == null) return null;
-    if (!allowStale && DateTime.now().difference(c.fetchedAt) > _ttl) {
-      return null;
-    }
-    return c.data;
+  FuelStationHistory? get(String stationId) {
+    _prune();
+    return _byStation[stationId]?.data;
   }
 
   void put(String stationId, FuelStationHistory data) {
+    _prune();
     _byStation[stationId] = _Cached(data, DateTime.now());
+  }
+
+  void _prune() {
+    if (_byStation.isEmpty) return;
+    final now = DateTime.now();
+    _byStation.removeWhere((_, c) => now.difference(c.fetchedAt) > _ttl);
   }
 
   static final _StationHistoryCache instance = _StationHistoryCache._();
