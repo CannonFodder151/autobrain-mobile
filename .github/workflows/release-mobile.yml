@@ -202,11 +202,29 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
+      - name: Verify CARTO_API_KEY secret is present (AUT-4691)
+        # servo_spy_screen.dart reads CARTO_API_KEY via String.fromEnvironment.
+        # Without this define it silently falls back to the key-less
+        # basemaps.cartocdn.com endpoint, which serves the CARTO watermark
+        # tile. Fail the release loudly instead of shipping a watermarked map.
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CARTO_API_KEY:-}" ]; then
+            echo "::error::CARTO_API_KEY secret is unset or empty — release would ship a key-less (watermarked) CARTO basemap. Add the repo secret CARTO_API_KEY and re-run. (AUT-4691)"
+            exit 1
+          fi
+          echo "CARTO_API_KEY present (${#CARTO_API_KEY} chars, value not echoed)"
+
       - name: Build release appbundle
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
+            --dart-define=CARTO_API_KEY="$CARTO_API_KEY" \
             --dart-define=MOBILE_STORE_BUILD=true
 
       - name: Decide whether to build the APK (2-day throttle + meaningful change gate)
@@ -256,10 +274,13 @@ jobs:
 
       - name: Build release APK (same signingConfig, for apksigner scheme check)
         if: steps.apk-decision.outputs.build_apk == 'true'
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
+            --dart-define=CARTO_API_KEY="$CARTO_API_KEY" \
             --dart-define=MOBILE_STORE_BUILD=true
 
       - name: Skip APK build — throttled (AUT-2619)
