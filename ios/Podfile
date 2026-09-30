@@ -1,4 +1,9 @@
-# AUT-2983: platform locked to iOS 15.0
+# AUT-2983: platform locked to iOS 15.0 (deployment target is patched to 15.0
+# in .github/workflows and again in ios/fastlane/Fastfile lane :ci).
+# AUT-4290: this file was previously truncated to the `platform` line only,
+# which made `pod install` fail with "The Podfile does not contain any
+# dependencies" because no pod target or plugin was declared. Flutter does NOT
+# regenerate an existing Podfile, so the full template must live here.
 platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
@@ -39,5 +44,8 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+    end
   end
 end
