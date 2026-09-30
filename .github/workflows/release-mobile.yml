@@ -202,12 +202,29 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
+      # AUT-4691: the mobile repo is built with Flutter directly (not via
+      # docker/frontend/Dockerfile), so the CARTO key must be injected here or
+      # the released Servo Spy map renders the key-less watermarked basemap.
+      # Fail loudly on an unset secret instead of shipping that build.
+      - name: Assert CARTO_API_KEY secret is set
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+        run: |
+          if [ -z "$CARTO_API_KEY" ]; then
+            echo "::error::CARTO_API_KEY secret is unset — refusing to build a store artifact with the key-less CARTO basemap (AUT-4691)"
+            exit 1
+          fi
+          echo "CARTO_API_KEY present (len=${#CARTO_API_KEY})"
+
       - name: Build release appbundle
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
-            --dart-define=MOBILE_STORE_BUILD=true
+            --dart-define=MOBILE_STORE_BUILD=true \
+            --dart-define=CARTO_API_KEY="${CARTO_API_KEY}"
 
       - name: Decide whether to build the APK (2-day throttle + meaningful change gate)
         id: apk-decision
@@ -256,11 +273,14 @@ jobs:
 
       - name: Build release APK (same signingConfig, for apksigner scheme check)
         if: steps.apk-decision.outputs.build_apk == 'true'
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
-            --dart-define=MOBILE_STORE_BUILD=true
+            --dart-define=MOBILE_STORE_BUILD=true \
+            --dart-define=CARTO_API_KEY="${CARTO_API_KEY}"
 
       - name: Skip APK build — throttled (AUT-2619)
         if: steps.apk-decision.outputs.build_apk == 'false'
