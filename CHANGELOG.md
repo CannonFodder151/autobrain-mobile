@@ -11,6 +11,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed (AUT-4736)
+- fix(mobile,servo-spy): CARTO basemap `urlTemplate` now interpolates `${_kCartoKeyParam}` in both the dark and light branches. The key param was declared but never referenced, so release builds that inject `CARTO_API_KEY` via `--dart-define` still rendered the "API key required" watermark, and `flutter analyze` only flagged it as `unused_element`.
+- test(mobile,servo-spy): restore `test/servo_spy_carto_key_test.dart` from the monorepo, plus a group asserting both URL branches actually use the key param.
+
 ## [0.3.275] - 2026-09-21
 
 ### Added (AUT-3661)
