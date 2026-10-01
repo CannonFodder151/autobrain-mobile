@@ -5,12 +5,14 @@ jobs:
   test:
     runs-on: [self-hosted, macOS, X64]
     steps:
-      - name: Check runner
-        run: echo "Runner is alive"; uname -a
-      - name: Check Xcode
-        run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      - name: Install fastlane via Homebrew
+      - name: Probe
         run: |
-          set -euo pipefail
-          brew install fastlane
-          fastlane --version
+          set -uo pipefail
+          echo "user=$(whoami) groups=$(id -Gn) home=$HOME"
+          echo "PATH=$PATH"
+          sudo -n true 2>&1 && echo "SUDO_NOPASSWD=yes" || echo "SUDO_NOPASSWD=no"
+          ls -ld /usr/local 2>&1
+          test -w /usr/local && echo "USRLOCAL_WRITABLE=yes" || echo "USRLOCAL_WRITABLE=no"
+          echo "--- arch ---"; arch; uname -m
+          echo "--- net ---"; curl -sSI -m 15 https://github.com/ruby/ruby-builder/releases/latest | head -3
+          echo "--- disk ---"; df -h "$HOME" | tail -1
