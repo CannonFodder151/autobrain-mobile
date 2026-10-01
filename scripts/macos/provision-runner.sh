@@ -58,19 +58,23 @@ warn() { echo "::warning::$*" >&2; }
 die()  { echo "::error::$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- fastlane gate
+# `fastlane --version` prints two lines ("fastlane installation at path: ..."
+# then "fastlane version X.Y.Z"), so `head -1` compared the path banner and
+# failed the gate on a correct install (run 36943068255). Match the version line.
 installed_fastlane() {
-  [ -x "$GEM_HOME_DIR/bin/fastlane" ] \
-    && "$GEM_HOME_DIR/bin/fastlane" --version 2>/dev/null | head -1
+  [ -x "$GEM_HOME_DIR/bin/fastlane" ] || return 0
+  "$GEM_HOME_DIR/bin/fastlane" --version 2>/dev/null \
+    | sed -n 's/^fastlane version //p' | head -1
 }
 # Only an exact-version match short-circuits: a drift-tolerant gate would leave
 # an unpinned fastlane in place forever.
 if have="$(installed_fastlane)"; then
-  if [ "$have" = "fastlane $FASTLANE_VERSION" ]; then
-    say "fastlane already installed: $have"
+  if [ "$have" = "$FASTLANE_VERSION" ]; then
+    say "fastlane already installed: fastlane $have"
     say "toolchain env: $ENV_FILE"
     exit 0
   fi
-  say "fastlane $have != pinned $FASTLANE_VERSION; reinstalling"
+  say "fastlane '${have:-<none>}' != pinned $FASTLANE_VERSION; reinstalling"
 fi
 
 # ----------------------------------------------------------------- 1. rbenv
@@ -183,7 +187,7 @@ say "installing fastlane $FASTLANE_VERSION into $GEM_HOME_DIR"
   --no-document --conservative \
   || die "gem install fastlane $FASTLANE_VERSION failed"
 [ -x "$GEM_HOME_DIR/bin/fastlane" ] || die "fastlane not at $GEM_HOME_DIR/bin/fastlane"
-[ "$(installed_fastlane)" = "fastlane $FASTLANE_VERSION" ] \
+[ "$(installed_fastlane)" = "$FASTLANE_VERSION" ] \
   || die "fastlane version mismatch: want $FASTLANE_VERSION, got '$(installed_fastlane)'"
 
 # ------------------------------------------------------------- 3. env file

@@ -85,6 +85,26 @@ for f in "$DIR/provision-runner.sh" "$ROOT/.github/workflows/install-fastlane.ym
   fi
 done
 
+# AUT-4857: the version gate is the one thing here that runs real fastlane output,
+# and `fastlane --version` prints TWO lines — a path banner, then the version.
+# `head -1` compared the banner, so a correct 2.240.1 install failed the gate
+# (run 36943068255). Extract the function and run it against a stub that
+# reproduces both lines, so the parsing is proven rather than grepped.
+gate_fn="$(awk '/^installed_fastlane\(\)/{f=1} f{print} f&&/^}$/{exit}' "$DIR/provision-runner.sh")"
+[ -n "$gate_fn" ] || fail "could not extract installed_fastlane()"
+if [ -n "$gate_fn" ]; then
+  mkdir -p "$tmp/gem/bin"
+  cat > "$tmp/gem/bin/fastlane" <<'EOF'
+#!/usr/bin/env bash
+echo "fastlane installation at path: $0"
+echo "fastlane version 2.240.1"
+EOF
+  chmod +x "$tmp/gem/bin/fastlane"
+  got="$(GEM_HOME_DIR="$tmp/gem" bash -c "$gate_fn; installed_fastlane")"
+  [ "$got" = "2.240.1" ] && ok "version gate reads the version line, not the path banner" \
+    || fail "version gate returned '$got', want 2.240.1"
+fi
+
 # The env file is written by an inline block, so run that block for real with a
 # fake prefix and assert every path landed expanded. A `\`-escaped own-variable
 # writes the literal `$GEM_HOME_DIR` and the consuming step dies with
