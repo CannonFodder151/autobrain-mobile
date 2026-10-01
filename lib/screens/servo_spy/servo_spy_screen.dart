@@ -783,7 +783,12 @@ class _StationSheetState extends State<_StationSheet> {
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
-        _historyError = 'History unavailable (${e.statusCode}).';
+        // AUT-4800: never surface a raw status code to the user. A 404 here
+        // means the station id is unknown to the backend, which is a
+        // "no data" condition, not a failure.
+        _historyError = e.statusCode == 404
+            ? 'No history available for this station.'
+            : 'History unavailable.';
         _historyLoading = false;
       });
     } catch (_) {
