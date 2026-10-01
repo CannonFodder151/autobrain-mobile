@@ -98,7 +98,7 @@ jobs:
         # fixed sdkmanager; this step closes the apkanalyzer + apksigner halves.
         run: |
           set -euo pipefail
-          sdk="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
           shopt -s nullglob
           if [[ -n "$sdk" && -d "$sdk/cmdline-tools" ]]; then
             for bin_dir in "$sdk"/cmdline-tools/*/bin; do
@@ -126,6 +126,10 @@ jobs:
           #   platform-37.0_r02.zip      -> platforms/android-37.0
           #   build-tools_r37_linux.zip  -> build-tools/37.0.0 (+ latest symlink)
           #   platform-tools_r37.0.1-linux.zip -> platform-tools/
+          # Ensure ANDROID_SDK_ROOT is set and persists to later steps; each step
+          # runs in a fresh shell, so export alone is not enough (AUT-2064).
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
           extract() { python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$1" "$2"; }
           if [ ! -d "$ANDROID_SDK_ROOT/platforms/android-37.0" ]; then
             curl -fsSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.0_r02.zip
@@ -311,7 +315,7 @@ jobs:
           set -euo pipefail
           apk=build/app/outputs/flutter-apk/app-release.apk
           [[ -f "$apk" ]] || { echo "::error::$apk not found"; exit 1; }
-          apksigner="$(ls "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/*/apksigner | tail -1)"
+          apksigner="$(ls "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"/build-tools/*/apksigner | tail -1)"
           echo "== $apksigner verify --verbose --print-certs $apk =="
           out="$("$apksigner" verify --verbose --print-certs "$apk")"
           echo "$out"
