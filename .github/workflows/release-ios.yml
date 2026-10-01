@@ -117,17 +117,19 @@ jobs:
           [[ "$n" -eq 3 ]] || { echo "::error::expected 3 DEVELOPMENT_TEAM insertions (Debug/Release/Profile), got $n"; exit 1; }
           # AUT-4355: the generated project hard-codes
           # "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer", the legacy
-          # development identity name. Under CODE_SIGN_STYLE = Automatic that pins a
-          # *development* signing identity, and this team holds no Development cert
-          # in the portal (distribution only), so the archive dies with
-          # "No development certificates available to code sign app for device
-          # deployment" — the same failure the EXPORT_METHOD comment above
-          # documents. "Apple Distribution" is the Xcode 14+ name for the
-          # distribution identity this team actually holds.
-          sed -i '' 's/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "iPhone Developer";/"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";/g' "$PROJ"
-          m="$(grep -c '"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "Apple Distribution";' "$PROJ")"
-          [[ "$m" -ge 1 ]] || { echo "::error::CODE_SIGN_IDENTITY sed matched nothing in $PROJ"; exit 1; }
-          echo "Pinned Apple Distribution signing identity in $PROJ ($m configurations)"
+          # development identity name, while CODE_SIGN_STYLE = Automatic. Renaming
+          # it to "Apple Distribution" does NOT fix that -- archive then fails with
+          # "Runner is automatically signed for development, but a conflicting code
+          # signing identity Apple Distribution has been manually specified"
+          # (run 36912730915). Under automatic signing Xcode resolves the identity
+          # itself, so the pin has to go rather than be rewritten. This team holds
+          # distribution certs only, which is what -allowProvisioningUpdates plus the
+          # App Store Connect key then pick for the Release configuration.
+          before="$(grep -c 'CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]' "$PROJ" || true)"
+          sed -i '' '/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = /d' "$PROJ"
+          after="$(grep -c 'CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]' "$PROJ" || true)"
+          [[ "$after" -eq 0 ]] || { echo "::error::$after CODE_SIGN_IDENTITY pins survived the delete in $PROJ"; exit 1; }
+          echo "Removed $before CODE_SIGN_IDENTITY pin(s) from $PROJ; automatic signing now resolves the identity"
           grep -c "IPHONEOS_DEPLOYMENT_TARGET = 15.0" "$PROJ" | awk '{print "Locked iOS 15.0 deployment target in $PROJ ("$1" occurrences)"}'
 
       - name: Verify requested version matches pubspec
