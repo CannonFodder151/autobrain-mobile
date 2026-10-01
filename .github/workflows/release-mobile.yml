@@ -230,13 +230,7 @@ jobs:
       - name: Require CARTO_API_KEY (fail fast before build)
         env:
           CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
-        run: |
-          set -euo pipefail
-          if [ -z "$CARTO_API_KEY" ]; then
-            echo "::error::CARTO_API_KEY secret is unset or empty. Refusing to build a release that would ship the watermapped CARTO basemap in Servo Spy." >&2
-            exit 1
-          fi
-          echo "CARTO_API_KEY present (${#CARTO_API_KEY} chars)"
+        run: bash scripts/check-carto-key.sh --require-key-only
 
       - name: Build release appbundle
         env:

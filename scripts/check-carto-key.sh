@@ -17,6 +17,11 @@
 #
 # Usage:
 #   CARTO_API_KEY=cb1_... bash scripts/check-carto-key.sh <artifact> [more...]
+#   CARTO_API_KEY=cb1_... bash scripts/check-carto-key.sh --require-key-only
+#
+# --require-key-only runs check 1 and nothing else, so a release workflow can
+# fail fast before a multi-minute build without duplicating the empty-key check
+# here (AUT-4867). Same message, same exit code, one source of truth.
 #
 # A release artifact is a zip container; the AOT snapshot is:
 #   Android .aab / .apk -> lib/<abi>/libapp.so
@@ -27,14 +32,25 @@
 # unzip/zip, so it runs identically in CI and in a bare local checkout.
 set -euo pipefail
 
+require_key() {
+  if [[ -z "$key" ]]; then
+    echo "::error::CARTO_API_KEY is empty. The GitHub Actions secret CARTO_API_KEY is unset or expired; refusing to release a key-less CARTO basemap (watermapped Servo Spy map)." >&2
+    return 1
+  fi
+}
+
 key="${CARTO_API_KEY:-}"
-if [[ -z "$key" ]]; then
-  echo "::error::CARTO_API_KEY is empty. The GitHub Actions secret CARTO_API_KEY is unset or expired; refusing to release a key-less CARTO basemap (watermapped Servo Spy map)." >&2
-  exit 1
+
+if [[ "${1:-}" == "--require-key-only" ]]; then
+  require_key || exit 1
+  echo "CARTO_API_KEY present (${#key} chars)"
+  exit 0
 fi
 
+require_key || exit 1
+
 if [[ $# -eq 0 ]]; then
-  echo "usage: CARTO_API_KEY=... bash $0 <artifact> [artifact...]" >&2
+  echo "usage: CARTO_API_KEY=... bash $0 [--require-key-only] <artifact> [artifact...]" >&2
   exit 2
 fi
 
