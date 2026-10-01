@@ -73,17 +73,28 @@ jobs:
         # on every pub get). Must run BEFORE the deployment-target patch below.
         run: flutter pub get
 
-      - name: Pin minimum iOS version to 15.0 in generated Xcode project
+      - name: Pin iOS 15.0 deployment target and DEVELOPMENT_TEAM in generated Xcode project
         # Flutter generates a fresh ios/Runner.xcodeproj with
         # IPHONEOS_DEPLOYMENT_TARGET=13.0. The only way to lock it is a
         # post-pub sed patch. IOS_DEPLOYMENT_TARGET=15.0 matches the issue
         # decision: iOS 15+ min, TARGETED_DEVICE_FAMILY=1,2 (iPhone+iPad=universal).
+        #
+        # DEVELOPMENT_TEAM is pinned for the same reason: the template ships
+        # DEVELOPMENT_TEAM = "" and `flutter build ios --no-codesign` still
+        # refuses a device build with "Building a deployable iOS app requires a
+        # selected Development Team with a Provisioning Profile" — run
+        # 36811107350. The xcodebuild archive step below needs it too.
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
         run: |
           set -euo pipefail
           PROJ="ios/Runner.xcodeproj/project.pbxproj"
           [[ -f "$PROJ" ]] || { echo "::error::$PROJ not found after flutter pub get"; exit 1; }
+          [[ -n "${TEAM_ID:-}" ]] || { echo "::error::secrets.IOS_TEAM_ID is empty; cannot set DEVELOPMENT_TEAM"; exit 1; }
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' "$PROJ"
           sed -i '' 's/TARGETED_DEVICE_FAMILY = "1";/TARGETED_DEVICE_FAMILY = "1,2";/g' "$PROJ"
+          sed -i '' "s/DEVELOPMENT_TEAM = \"\";/DEVELOPMENT_TEAM = ${TEAM_ID};/g" "$PROJ"
+          grep -c "DEVELOPMENT_TEAM = ${TEAM_ID};" "$PROJ" | awk '{print "Pinned DEVELOPMENT_TEAM in $PROJ ("$1" configurations)"}'
           grep -c "IPHONEOS_DEPLOYMENT_TARGET = 15.0" "$PROJ" | awk '{print "Locked iOS 15.0 deployment target in $PROJ ("$1" occurrences)"}'
 
       - name: Verify requested version matches pubspec
@@ -92,7 +103,7 @@ jobs:
           version="$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}')"
           tag="v${version}"
           if [[ "$tag" != "${{ env.RELEASE_VERSION }}" ]]; then
-            echo "::error::pubspec.yaml version is ${tag} but requested ${{ env.RELEASE_VERSION }}. Run bump-version.sh --mobile in the autobrain monorepo first."
+            echo "::error::pubspec.yaml version is ${tag} but requested ${{ inputs.version }}. Run bump-version.sh --mobile in the autobrain monorepo first."
             exit 1
           fi
           echo "Building release ${tag} for iOS (lane: ${{ env.LANE }})"
@@ -133,15 +144,25 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Install provisioning profile
+        # AUT-4356: secrets.IOS_PROVISIONING_PROFILE_BASE64 resolved to the empty
+        # string on run 36811107350. `echo "" | base64 --decode` writes a 0-byte
+        # .mobileprovision, `security cms -D` then fails, the `|| echo` swallows it,
+        # and the run continues until it dies later with an opaque xcodebuild
+        # archive error. Fail here instead, naming the secret.
         env:
           PROVISIONING_PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
+          if [[ -z "${PROVISIONING_PROFILE_B64:-}" ]]; then
+            echo "::error::secrets.IOS_PROVISIONING_PROFILE_BASE64 is empty. Export the distribution profile and base64 it into the repo secret."
+            exit 1
+          fi
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
           echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$PROFILE_DIR/autobrain_distribution.mobileprovision"
-          echo "Provisioning profile installed:"
-          security cms -D -i "$PROFILE_DIR/autobrain_distribution.mobileprovision" 2>/dev/null | plutil -convert json - -o - 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print('  Name:', d.get('Name','?')); print('  Team:', d.get('TeamIdentifier',['?'])[0]); print('  AppID:', d.get('AppIDName','?'))" || echo "Profile installed (could not decode)"
+          security cms -D -i "$PROFILE_DIR/autobrain_distribution.mobileprovision" \
+            | plutil -convert json - -o - \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print('Provisioning profile installed:'); print('  Name:', d.get('Name','?')); print('  Team:', d.get('TeamIdentifier',['?'])[0]); print('  AppID:', d.get('AppIDName','?')); print('  Expires:', d.get('ExpirationDate','?'))"
 
       - name: Create ExportOptions.plist (lane-aware)
         # beta lane -> development (TestFlight), release lane -> app-store.
