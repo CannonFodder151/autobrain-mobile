@@ -43,6 +43,14 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
-/ios/Flutter/
+# AUT-4356: do not blanket-ignore ios/Flutter/ — Runner.xcodeproj references
+# Flutter/Debug.xcconfig, Flutter/Release.xcconfig and Flutter/AppFrameworkInfo.plist
+# as base configs/resources, so excluding the whole dir left the CI checkout
+# without them ("Unable to open base configuration reference file
+# .../ios/Flutter/Release.xcconfig"). Generated files are ignored by ios/.gitignore.
+!/ios/Flutter/
+!/ios/Flutter/Debug.xcconfig
+!/ios/Flutter/Release.xcconfig
+!/ios/Flutter/AppFrameworkInfo.plist
 /ios/Runner/GeneratedPluginRegistrant.h
 /ios/Runner/GeneratedPluginRegistrant.m
