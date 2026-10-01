@@ -9,9 +9,14 @@
 #   rule 3  secret-reading workflow that auto-fires             -> fail
 #            (push / schedule / workflow_run / workflow_call)
 #   rule 4  self-hosted runner with any non-dispatch trigger    -> fail
+#   rule 5  diagnostic step with `set -uo pipefail` and no
+#           `continue-on-error: true`                           -> fail
 #   ok      secret-reading workflow, workflow_dispatch only     -> pass
 #   ok      `${{ secrets.X }}` mentioned in a comment only      -> pass
 #   ok      scheduled workflow that reads no secrets, no runner -> pass
+#   ok      `set -euo pipefail` step (errexit stays ON)         -> pass
+#   ok      `set -uo pipefail` + `continue-on-error: true`      -> pass
+#   ok      `set -uo pipefail` mentioned only in a comment      -> pass
 #
 # Run: bash scripts/check-workflow-runner-isolation.test.sh
 # Requires: bash.
@@ -220,6 +225,78 @@ jobs:
     steps:
       - run: bash scripts/macos/provision-runner.sh" \
 "$SIGNING_ONLY"
+
+# Rule 5 (AUT-4864). The AUT-4864 shape is a step that writes `set -uo pipefail`
+# — dropping the `-e` it never actually had, because the Actions default shell
+# is `bash -e {0}`. Without `continue-on-error: true` the step still gates the
+# job on its exit code and aborts on the first probe of an absent path.
+check fail "diagnostic step disables errexit, no continue-on-error" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Probe host
+        run: |
+          set -uo pipefail
+          ls -1 ~/Library/LaunchAgents/ 2>&1 | head -20"
+
+check pass "diagnostic step disables errexit but sets continue-on-error" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Probe host
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          ls -1 ~/Library/LaunchAgents/ 2>&1 | head -20"
+
+check pass "set -euo pipefail keeps errexit on" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Build
+        run: |
+          set -euo pipefail
+          flutter build apk"
+
+check pass "set -uo pipefail mentioned only in a comment" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Build
+        # historical note: this used to say set -uo pipefail here
+        run: |
+          set -euo pipefail
+          flutter build apk"
+
+check fail "set +e also needs continue-on-error" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Probe host
+        run: |
+          set +e
+          whoami"
+
+# A diagnostic step next to a step that legitimately depends on errexit must
+# not drag the real step into the rule — the check is scoped per step.
+check fail "diagnostic step unguarded beside a strict build step" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Probe host
+        run: |
+          set -uo pipefail
+          xcodebuild -version
+      - name: Build
+        run: |
+          set -euo pipefail
+          flutter build apk"
 
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]
