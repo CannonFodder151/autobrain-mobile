@@ -9,49 +9,27 @@ jobs:
         run: echo "Runner is alive"; uname -a
       - name: Check Xcode
         run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      # AUT-4840: the runner is x86_64, so Homebrew (if present) lives under
-      # /usr/local, not the Apple-silicon /opt/homebrew prefix. Actions steps
-      # run `bash -e {0}` — non-login, non-interactive — so /etc/paths.d and
-      # shell rc files are never sourced and brew is not on PATH even when it
-      # is installed. Probe the known prefixes explicitly instead of assuming
-      # one, and report which prefix was used.
-      - name: Resolve Homebrew prefix
-        id: brew
-        run: |
-          set -uo pipefail
-          if command -v brew >/dev/null 2>&1; then
-            echo "found=already-on-PATH" >> "$GITHUB_OUTPUT"
-            echo "BREW_BIN=$(command -v brew)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          for prefix in /usr/local /opt/homebrew; do
-            if [[ -x "$prefix/bin/brew" ]]; then
-              echo "found=$prefix" >> "$GITHUB_OUTPUT"
-              echo "BREW_BIN=$prefix/bin/brew" >> "$GITHUB_OUTPUT"
-              echo "$prefix/bin" >> "$GITHUB_PATH"
-              echo "Resolved Homebrew at $prefix/bin/brew (was not on PATH)"
-              exit 0
-            fi
-          done
-          echo "found=none" >> "$GITHUB_OUTPUT"
-          echo "::warning title=No Homebrew::Neither /usr/local/bin/brew nor /opt/homebrew/bin/brew exists on this runner; falling back to a user-install gem."
-
-      # AUT-4840: Homebrew is not installed on Nathans-iMac-Pro, so `brew
-      # install fastlane` can only ever exit 127 (run 36814006469). Install
-      # fastlane from RubyGems against the system Ruby instead — the same
-      # approach install-fastlane.yml already proves works on this runner.
-      # The step still fails hard if fastlane is missing afterwards: the point
-      # of the workflow is to prove fastlane installs, so no `|| true` here.
+      # AUT-4840: this runner (Nathans-iMac-Pro, x86_64) has no Homebrew, so
+      # `brew install fastlane` only ever exits 127 (run 36814006469). Homebrew
+      # cannot be installed from Actions — it needs an interactive/sudo shell on
+      # the box, and there is no SSH path to the iMac from the dev box — so
+      # provisioning Ruby is the only route Actions can drive.
+      #
+      # The system Ruby 2.6 that ships inside MacOSX13.1.sdk is not a fallback:
+      # its headers are incomplete (no ruby/config.h), so every gem with a C
+      # extension fails to build — verified on run 36820215347, where the gem
+      # fallback died in cgi-0.5.2/ext/cgi/escape. ruby/setup-ruby downloads a
+      # prebuilt ruby-build toolchain into the runner tool cache: no sudo, no
+      # Homebrew, complete headers.
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      # No `|| true`: the point of this workflow is to prove the runner can
+      # install fastlane, so a failed install must keep failing the job.
       - name: Install fastlane
         run: |
           set -euo pipefail
-          if [[ "${{ steps.brew.outputs.found }}" == "none" ]]; then
-            gem install --user-install fastlane --no-document
-            echo "$(ruby -e 'print Gem.user_dir')/bin" >> "$GITHUB_PATH"
-            export PATH="$(ruby -e 'print Gem.user_dir')/bin:$PATH"
-          else
-            export PATH="${{ steps.brew.outputs.BREW_BIN }}:$PATH"
-            brew install fastlane
-          fi
+          ruby --version
+          gem install fastlane --no-document
           command -v fastlane
           fastlane --version
