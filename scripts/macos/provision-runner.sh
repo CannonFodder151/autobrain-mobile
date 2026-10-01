@@ -10,53 +10,89 @@
 #   failed 5/5 times for that reason.
 #
 # Why not Homebrew
-#   Homebrew's installer needs `sudo` to create /usr/local. Probed on this host:
-#   `sudo -n true` fails (the runner user has no NOPASSWD sudo), /usr/local is
-#   root:wheel, and the Actions PATH does not even contain /usr/local/bin. So
-#   Homebrew cannot be provisioned unattended; see the NOPASSWD note at the end
-#   of this script for the one command Nathan has to run once.
+#   Homebrew's installer needs root to create /usr/local, and this script has no
+#   root path at all (AUT-4882): piping an unpinned network response into a root
+#   shell from a moving ref is root on the signing host if upstream is ever
+#   compromised. /usr/local/bin is prepended to PATH instead when brew already
+#   exists; installing brew is a deliberate one-off by a human, not something a
+#   workflow does on a runner.
 #
 # What it does instead — no sudo, no system paths, no root
 #   1. builds a self-contained Ruby 3.x under $HOME/.rbenv via ruby-build
 #      (ruby-build compiles its own OpenSSL/libyaml when the system copies are
 #      too old, so `gem install` can still reach rubygems.org over HTTPS)
-#   2. installs fastlane into a private GEM_HOME ($HOME/.gem)
+#   2. installs a pinned fastlane into a private GEM_HOME ($HOME/.gem)
 #   3. writes $HOME/.autobrain-toolchain.env, which every workflow sources via
 #      scripts/macos/toolchain-env.sh (Actions steps never read ~/.zshrc)
-#   4. best-effort Homebrew install when privileged access is available
 #
 # Idempotent: re-running is cheap and safe. Exits 0 once `fastlane --version`
 # works, so it is safe to call from a provisioning workflow and from a
 # re-provisioning step after a runner reimage.
 #
+# Trust model (AUT-4882): every downloaded artefact is pinned to an immutable
+# ref or checksum before it runs. rbenv/ruby-build are pinned to commit SHAs,
+# the libyaml tarball to a SHA-256, and fastlane to an exact version. Nothing
+# here resolves a moving branch or a `HEAD` URL.
+#   Residual: pinning removes upstream *drift* risk, not upstream *compromise*
+#   risk. The real reduction is not rebuilding a 20-minute source toolchain on
+#   the signing host on every reimage — bake a runner image with the toolchain
+#   instead.
+#
 # Env knobs:
 #   AUTOBRAIN_RUBY_VERSION   Ruby to build (default 3.3.6)
-#   SUDO_PASSWORD            if set, Homebrew is installed to /usr/local as well
+#   AUTOBRAIN_FASTLANE_VERSION  fastlane to install (default 2.225.1)
 set -euo pipefail
 
 RUBY_VERSION="${AUTOBRAIN_RUBY_VERSION:-3.3.6}"
+FASTLANE_VERSION="${AUTOBRAIN_FASTLANE_VERSION:-2.240.1}"
 RBENV_DIR="$HOME/.rbenv"
 GEM_HOME_DIR="$HOME/.gem"
 ENV_FILE="$HOME/.autobrain-toolchain.env"
 RBENV_REPO="https://github.com/rbenv/rbenv.git"
+RBENV_SHA="07e9b1e297a5977298c6aadc9971ae0e9eb7f0dc"
 RUBY_BUILD_REPO="https://github.com/rbenv/ruby-build.git"
+RUBY_BUILD_SHA="db86e6ddd6d3b1d8715d005b65fab0c3f2804fdd"
 
 say()  { echo "==> $*"; }
 warn() { echo "::warning::$*" >&2; }
 die()  { echo "::error::$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- fastlane gate
-if [ -x "$GEM_HOME_DIR/bin/fastlane" ] && "$GEM_HOME_DIR/bin/fastlane" --version >/dev/null 2>&1; then
-  say "fastlane already installed: $("$GEM_HOME_DIR/bin/fastlane" --version | head -1)"
-  say "toolchain env: $ENV_FILE"
-  exit 0
+installed_fastlane() {
+  [ -x "$GEM_HOME_DIR/bin/fastlane" ] \
+    && "$GEM_HOME_DIR/bin/fastlane" --version 2>/dev/null | head -1
+}
+# Only an exact-version match short-circuits: a drift-tolerant gate would leave
+# an unpinned fastlane in place forever.
+if have="$(installed_fastlane)"; then
+  if [ "$have" = "fastlane $FASTLANE_VERSION" ]; then
+    say "fastlane already installed: $have"
+    say "toolchain env: $ENV_FILE"
+    exit 0
+  fi
+  say "fastlane $have != pinned $FASTLANE_VERSION; reinstalling"
 fi
 
 # ----------------------------------------------------------------- 1. rbenv
+# `--depth 1` + `checkout <sha>` pins to an immutable commit: a compromised
+# default branch cannot change what this script builds. ruby-build compiles a
+# Ruby and its own OpenSSL from source and the result is `source`d by every
+# later job through $HOME/.rbenv, so drift here is a persistent foothold
+# (AUT-4882 F3).
+clone_pinned() {
+  local repo="$1" sha="$2" dir="$3"
+  rm -rf "$dir"
+  git clone --depth 1 "$repo" "$dir"
+  git -C "$dir" fetch --depth 1 origin "$sha"
+  git -C "$dir" checkout --detach "$sha"
+  git -C "$dir" rev-parse HEAD | grep -qx "$sha" \
+    || die "$repo is not at pinned $sha"
+}
+
 if [ ! -x "$RBENV_DIR/bin/rbenv" ]; then
-  say "installing rbenv -> $RBENV_DIR"
-  git clone --depth 1 "$RBENV_REPO" "$RBENV_DIR"
-  git clone --depth 1 "$RUBY_BUILD_REPO" "$RBENV_DIR/plugins/ruby-build"
+  say "installing rbenv $RBENV_SHA -> $RBENV_DIR"
+  clone_pinned "$RBENV_REPO" "$RBENV_SHA" "$RBENV_DIR"
+  clone_pinned "$RUBY_BUILD_REPO" "$RUBY_BUILD_SHA" "$RBENV_DIR/plugins/ruby-build"
 else
   say "rbenv present"
 fi
@@ -130,10 +166,15 @@ say "ruby headers OK: $HDRDIR/ruby/ruby.h, $ARCHHDRDIR/ruby/config.h"
 export GEM_HOME="$GEM_HOME_DIR"
 export GEM_PATH="$GEM_HOME_DIR"
 mkdir -p "$GEM_HOME_DIR"
-say "installing fastlane into $GEM_HOME_DIR"
-"$RUBY_BIN/gem" install fastlane --no-document --conservative \
-  || die "gem install fastlane failed"
+say "installing fastlane $FASTLANE_VERSION into $GEM_HOME_DIR"
+# Exact version, no floating constraint: an unpinned `gem install fastlane` is
+# arbitrary code from rubygems.org compiled on the signing host (AUT-4882 F3).
+"$RUBY_BIN/gem" install fastlane --version "$FASTLANE_VERSION" \
+  --no-document --conservative \
+  || die "gem install fastlane $FASTLANE_VERSION failed"
 [ -x "$GEM_HOME_DIR/bin/fastlane" ] || die "fastlane not at $GEM_HOME_DIR/bin/fastlane"
+[ "$(installed_fastlane)" = "fastlane $FASTLANE_VERSION" ] \
+  || die "fastlane version mismatch: want $FASTLANE_VERSION, got '$(installed_fastlane)'"
 
 # ------------------------------------------------------------- 3. env file
 BREW_BIN=""
@@ -143,6 +184,9 @@ elif [ -x /opt/homebrew/bin/brew ]; then
   BREW_BIN="/opt/homebrew/bin"
 fi
 
+tmp="$(mktemp "$HOME/.autobrain-toolchain.env.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+
 {
   echo "# generated by scripts/macos/provision-runner.sh — do not edit by hand"
   [ -n "$BREW_BIN" ] && echo "export PATH=\"$BREW_BIN:\$PATH\""
@@ -150,22 +194,26 @@ fi
   echo "export PATH=\"$RUBY_BIN:$GEM_HOME_DIR/bin:\$PATH\""
   echo "export GEM_HOME=\"$GEM_HOME_DIR\""
   echo "export GEM_PATH=\"$GEM_HOME_DIR\""
-} > "$ENV_FILE"
-say "wrote $ENV_FILE"
+} > "$tmp"
+# chmod not umask: mktemp already created it 0600 and this also fixes up a file
+# left over from an older run at 0644.
+chmod 600 "$tmp"
+# rename, never truncate-in-place: a concurrent step sourcing a half-written
+# file would load a partial PATH (AUT-4882 F8).
+mv -f "$tmp" "$ENV_FILE"
+say "wrote $ENV_FILE (mode $(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || echo 600))"
 
-# ------------------------------------------- 4. best-effort Homebrew (needs sudo)
+# ------------------------------------------------------- 4. Homebrew (optional)
+# Reported, never installed. There is no root path in this script on purpose
+# (AUT-4882 F2): Homebrew's installer was reached by piping an unpinned
+# `.../HEAD/install.sh` into a sudo'd root shell, which makes upstream
+# compromise root on the signing host. If brew is missing, rbenv Ruby still
+# provides fastlane; installing brew is a deliberate one-off by a human.
 if [ -n "$BREW_BIN" ]; then
   say "Homebrew present at $BREW_BIN/brew"
-elif [ -n "${SUDO_PASSWORD:-}" ]; then
-  say "installing Homebrew to /usr/local (SUDO_PASSWORD supplied)"
-  printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' /bin/bash -c \
-    'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' \
-    || warn "Homebrew install failed; rbenv Ruby still provides fastlane"
 else
-  warn "Homebrew skipped: no passwordless sudo on this host."
-  warn "Nathan, to satisfy the Homebrew acceptance criterion for AUT-4845 run once on the iMac:"
-  warn "  sudo sh -c 'printf \"nathan ALL=(ALL) NOPASSWD: ALL\n\" > /etc/sudoers.d/github-actions-runner && chmod 440 /etc/sudoers.d/github-actions-runner'"
-  warn "then re-run the 'Provision macOS runner toolchain' workflow."
+  warn "Homebrew absent; continuing on rbenv Ruby (fastlane still works)."
+  warn "To add brew, Nathan runs its installer once by hand — this script will not."
 fi
 
 # ----------------------------------------------------------------- 5. verify

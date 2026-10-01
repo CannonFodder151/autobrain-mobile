@@ -66,7 +66,7 @@ case "$out" in
   *) fail "env file block produced unexpected output: $out" ;;
 esac
 
-# The workflow must stay dispatch-only (runner isolation rule 3).
+# The workflow must stay dispatch-only (runner isolation rules 1/4).
 wf="$ROOT/.github/workflows/install-fastlane.yml"
 grep -qE '^on:' "$wf" && grep -q 'workflow_dispatch' "$wf" && ok "install-fastlane.yml is dispatch-only" \
   || fail "install-fastlane.yml must be workflow_dispatch only"
@@ -74,6 +74,45 @@ grep -vE '^[[:space:]]*#' "$wf" | grep -qE '\$\{\{[[:space:]]*secrets\.' \
   && fail "install-fastlane.yml reads secrets" || ok "install-fastlane.yml reads no secrets"
 grep -q 'scripts/macos/provision-runner.sh' "$wf" && ok "workflow calls the committed provisioning script" \
   || fail "workflow does not call scripts/macos/provision-runner.sh"
+grep -qE '^concurrency:' "$wf" && grep -q 'macos-provision' "$wf" \
+  && ok "install-fastlane.yml has a concurrency group" \
+  || fail "install-fastlane.yml has no concurrency group (concurrent runs interleave GEM_HOME)"
+
+# AUT-4882 F2: no root path at all. Piping a live network response into a sudo
+# root shell from a moving `HEAD` ref is root on the signing host.
+prov="$DIR/provision-runner.sh"
+if grep -vE '^[[:space:]]*#' "$prov" | grep -qE 'sudo|NOPASSWD|sudoers'; then
+  fail "provision-runner.sh still has a sudo/root path"
+else
+  ok "provision-runner.sh has no sudo/root path"
+fi
+if grep -qE 'curl[^|]*\|[[:space:]]*(sudo|bash|sh)' "$prov"; then
+  fail "provision-runner.sh pipes a network response into a shell"
+else
+  ok "provision-runner.sh pipes no network response into a shell"
+fi
+
+# AUT-4882 F3: rbenv, ruby-build and fastlane must all be pinned. A moving
+# default branch here is code exec that every later job sources through
+# $HOME/.rbenv.
+grep -qE 'RBENV_SHA="[0-9a-f]{40}"' "$prov" && grep -qE 'RUBY_BUILD_SHA="[0-9a-f]{40}"' "$prov" \
+  && ok "rbenv and ruby-build are pinned to commit SHAs" \
+  || fail "rbenv/ruby-build are not pinned to commit SHAs"
+grep -q 'checkout --detach' "$prov" && ok "clones check out the pinned SHA" \
+  || fail "clones do not check out a pinned SHA"
+grep -qE 'gem"? install fastlane --version' "$prov" && ok "fastlane install is version-pinned" \
+  || fail "fastlane install has no version constraint"
+grep -qE '^FASTLANE_VERSION="\$\{AUTOBRAIN_FASTLANE_VERSION:-[0-9]+\.[0-9]+\.[0-9]+\}"' "$prov" \
+  && ok "fastlane version is pinned in the script" || fail "no pinned fastlane version"
+
+# AUT-4882 F7/F8: the env file is executed by every later job on a persistent
+# runner. It must land 0600 and be renamed into place, not truncated in place.
+grep -q 'chmod 600' "$prov" && grep -qE 'mv -f "\$tmp" "\$ENV_FILE"' "$prov" \
+  && ok "env file is chmod 600 and renamed into place" \
+  || fail "env file is not written atomically at 0600"
+grep -qE '\[ ! -O "\$TOOLCHAIN_ENV_FILE" \]' "$DIR/toolchain-env.sh" \
+  && ok "toolchain-env.sh refuses a file it does not own" \
+  || fail "toolchain-env.sh does not verify env file ownership"
 
 bash "$ROOT/scripts/check-workflow-runner-isolation.sh" >/dev/null 2>&1 \
   && ok "runner isolation gate passes" || fail "runner isolation gate fails"

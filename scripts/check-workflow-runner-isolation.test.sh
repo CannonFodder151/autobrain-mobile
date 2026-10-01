@@ -6,9 +6,12 @@
 #
 #   rule 1  pull_request trigger on a self-hosted runner        -> fail
 #   rule 2  a second `release-signing` runs-on claimant         -> fail
-#   rule 3  secret-reading workflow with a push trigger         -> fail
+#   rule 3  secret-reading workflow that auto-fires             -> fail
+#            (push / schedule / workflow_run / workflow_call)
+#   rule 4  self-hosted runner with any non-dispatch trigger    -> fail
 #   ok      secret-reading workflow, workflow_dispatch only     -> pass
 #   ok      `${{ secrets.X }}` mentioned in a comment only      -> pass
+#   ok      scheduled workflow that reads no secrets, no runner -> pass
 #
 # Run: bash scripts/check-workflow-runner-isolation.test.sh
 # Requires: bash.
@@ -128,6 +131,95 @@ jobs:
     runs-on: [self-hosted, linux, x64, release-signing]
     steps:
       - run: echo hi"
+
+check fail "scheduled secret workflow" \
+"on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+$SIGNING_JOB
+    steps:
+      - env:
+          K: \${{ secrets.APPLE_STORE_API_KEY }}
+        run: echo \"\$K\""
+
+check fail "workflow_run secret workflow" \
+"on:
+  workflow_run:
+    workflows: [Build]
+    types: [completed]
+permissions:
+  contents: write
+$SIGNING_JOB
+    steps:
+      - env:
+          K: \${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+        run: echo \"\$K\""
+
+check fail "workflow_call secret workflow" \
+"on:
+  workflow_call:
+permissions:
+  contents: write
+$SIGNING_JOB
+    steps:
+      - env:
+          K: \${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+        run: echo \"\$K\""
+
+# rule 2 needs exactly one release-signing claimant in every fixture tree, so
+# each pass case carries a dispatch-only signing workflow alongside the case
+# under test.
+SIGNING_ONLY="on:
+  workflow_dispatch:
+permissions:
+  contents: write
+$SIGNING_JOB
+    steps:
+      - run: echo hi"
+
+check pass "scheduled workflow reading no secrets, no self-hosted runner" \
+"on:
+  schedule:
+    - cron: '0 3 * * *'
+permissions:
+  contents: read
+jobs:
+  r:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi" \
+"$SIGNING_ONLY"
+
+check fail "push-triggered self-hosted provisioning workflow" \
+"on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  provision:
+    runs-on: [self-hosted, macOS, X64]
+    steps:
+      - run: bash scripts/macos/provision-runner.sh"
+
+check pass "dispatch-only self-hosted provisioning workflow" \
+"on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: macos-provision
+  cancel-in-progress: false
+jobs:
+  provision:
+    runs-on: [self-hosted, macOS, X64]
+    steps:
+      - run: bash scripts/macos/provision-runner.sh" \
+"$SIGNING_ONLY"
 
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]

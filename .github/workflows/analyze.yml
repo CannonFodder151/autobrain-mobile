@@ -38,6 +38,12 @@ jobs:
       - name: "Guard self-check"
         run: bash scripts/check-workflow-runner-isolation.test.sh
 
+      # Without this the provisioning test is decorative: nothing stopped a
+      # later commit adding `push:` to install-fastlane.yml or a `secrets.`
+      # reference (AUT-4882 F4). Pure bash, asserts on file contents only.
+      - name: "Guard self-check: macOS runner provisioning"
+        run: bash scripts/macos/provision-runner.test.sh
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
