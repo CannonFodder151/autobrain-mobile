@@ -23,6 +23,17 @@
 # `workflow_dispatch` adds a deliberate human action. Pro allows dropping this
 # rule in favour of a real required-review branch rule.
 #
+# schedule / workflow_run / workflow_call count as auto-fire too (AUT-4882 F5).
+# A nightly cron that reads APPLE_STORE_API_KEY is unattended secret access,
+# which is the whole threat; `workflow_call` is a bypass because a
+# dispatch-only workflow invoked by another workflow runs on the caller's ref.
+#
+# Fourth rule (AUT-4882 F6): a self-hosted runner whose workflow mutates the
+# host may only be workflow_dispatch. This is the control dispatch-only
+# host-mutating workflows actually need — rule 1 only looked at
+# `pull_request`, so adding a `push:` trigger later would have passed the guard
+# and put main's code on the runner every commit.
+#
 # Run: bash scripts/check-workflow-runner-isolation.sh
 set -euo pipefail
 
@@ -58,12 +69,24 @@ for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
     signing_claimants+=("$name")
   fi
 
-  # Rule 3: secret-reading workflow must not auto-fire on push. Comment lines
-  # are stripped first so a `${{ secrets.X }}` mentioned in the header trust
-  # model note does not count as a read.
+  # Rule 3: secret-reading workflow must not auto-fire. Comment lines are
+  # stripped first so a `${{ secrets.X }}` mentioned in the header trust model
+  # note does not count as a read.
   if grep -vE '^[[:space:]]*#' "$wf" | grep -qE '\$\{\{[[:space:]]*secrets\.'; then
-    if grep -qwE 'push' <<<"$on_block"; then
-      echo "::error::$name reads secrets AND triggers on push; with no branch protection (Pro required, AUT-4766) any push to main runs it unreviewed. Use workflow_dispatch only." >&2
+    if grep -qwE 'push|schedule|workflow_run|workflow_call' <<<"$on_block"; then
+      echo "::error::$name reads secrets AND auto-fires (push|schedule|workflow_run|workflow_call); with no branch protection (Pro required, AUT-4766) that runs secret-reading code unreviewed or unattended. Use workflow_dispatch only." >&2
+      failures=$((failures + 1))
+    fi
+  fi
+
+  # Rule 4: a self-hosted runner that mutates its own host (runs a script from
+  # the repo, installs, or otherwise writes outside the job's checkout) may only
+  # be reached by workflow_dispatch. Rule 1 covered `pull_request` only, so a
+  # later `push:` trigger passed the guard while putting main's code on a
+  # persistent box every commit (AUT-4882 F6).
+  if grep -qE 'runs-on:.*self-hosted' "$wf"; then
+    if grep -qwE 'pull_request|pull_request_target|push|schedule|workflow_run|workflow_call|repository_dispatch' <<<"$on_block"; then
+      echo "::error::$name runs on a self-hosted runner and auto-fires; it installs/mutates the persistent runner host. Use workflow_dispatch only." >&2
       failures=$((failures + 1))
     fi
   fi
@@ -81,4 +104,4 @@ if [[ "$failures" -gt 0 ]]; then
   echo "AUT-4722/AUT-4766: $failures runner-isolation violation(s)." >&2
   exit 1
 fi
-echo "OK: no pull_request-triggered workflow runs on a self-hosted runner; release-signing claimed by ${signing_claimants[0]}; no secret-reading workflow triggers on push."
+echo "OK: no pull_request-triggered workflow runs on a self-hosted runner; self-hosted workflows are dispatch-only; release-signing claimed by ${signing_claimants[0]}; no secret-reading workflow auto-fires."

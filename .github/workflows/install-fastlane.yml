@@ -1,15 +1,27 @@
 name: Provision macOS runner toolchain (fastlane)
 
 # AUT-4845: provision Ruby + fastlane on the self-hosted macOS runner.
-# Dispatch-only: the runner is a persistent host and this script installs
-# software on it, so it must never fire from a push or a pull_request.
+# Dispatch-only, and that satisfies scripts/check-workflow-runner-isolation.sh
+# rule 1 (and now rule 4): the runner is a persistent host and this script
+# installs software on it, so it must never fire from a push, a pull_request or
+# a schedule. It reads no secrets, so rule 3 was never the applicable control.
 #
-# Dispatch-only also satisfies scripts/check-workflow-runner-isolation.sh rule 3.
+# The dispatch ref is still caller-chosen: anyone with write access can dispatch
+# from a branch whose provision-runner.sh does anything. That is not a new hole
+# on a Free-plan repo with no branch protection, but it is why rule 4 exists
+# rather than trusting the header comment (AUT-4882 F6).
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# Two dispatches writing the same $HOME/.rbenv and $HOME/.gem interleave.
+# Queue instead of cancelling: a cancelled run can leave a half-written
+# GEM_HOME behind (AUT-4882 F8).
+concurrency:
+  group: macos-provision
+  cancel-in-progress: false
 
 jobs:
   provision:
