@@ -11,6 +11,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed (AUT-4909)
+- fix(models): `lib/core/models.dart` was missing `part` directives for three model files that exist on disk and declare `part of models;` — `models/vass.dart`, `models/electricity.dart`, `models/shop_mechanic.dart`. Every VASS and electricity symbol therefore resolved to `undefined_identifier` at its call site, which is 146 of the 150 error-severity diagnostics that kept `analyze-pr` red on `main` and on every open PR. Introduced by the frontend-lineage sync in `b1023470`.
+- fix(models): `lib/core/models.dart` now imports `dart:convert`; `models/vass.dart` calls `jsonDecode` in two places and could not resolve it through the library scope.
+- fix(vass): `VassApi.getEngineers` cast `data['engineers'] as List` and left each element `dynamic`, so every field access on it was unchecked. Now `.cast<Map<String, dynamic>>()`.
+- fix(find-mechanic): the "Request service from <name>?" dialog title interpolated a non-const name inside a `const Text`, which cannot be const.
+- fix(config): `AppConfig.validate()`, `AppConfig.lastValidationOk` and `AppConfig.lastValidationError` were called from `main.dart`, `app.dart` and `MisconfiguredBackendScreen` but never existed, so the AUT-2272 boot reachability probe was dead code and the "Backend unreachable" recovery screen could never appear. Implemented as a 5s-capped `GET /health`: 5xx is unhealthy, 4xx still counts as reachable, and the probe no-ops until the server picker has set a base. Never throws.
+- fix(services): deleted `lib/shared/widgets/shared_widgets.dart`. It had zero importers and re-exported four `package:autobrain/core/...` targets that do not exist in this repo, producing 4 `uri_does_not_exist` errors. It is frontend-lineage copy; `scripts/sync-mobile.sh` uses additive-only `cp -a`, so the deletion survives future syncs.
+- test(config): `test/app_config_validate_test.dart` covers the probe against a live loopback `/health`, an unreachable port, the 5xx/4xx split and a malformed base URL.
+
 ### Security (AUT-4882)
 - ci(macos-runner): `scripts/macos/provision-runner.sh` loses its root path. It no longer pipes `raw.githubusercontent.com/Homebrew/install/HEAD/install.sh` into a `sudo` root shell from a moving `HEAD` ref (a compromised upstream was root on the signing host) and no longer suggests a `NOPASSWD` sudoers grant. Homebrew is reported, never installed.
 - ci(macos-runner): every downloaded artefact in `provision-runner.sh` is pinned — rbenv and ruby-build to full commit SHAs checked out with `--detach`, the libyaml tarball to its SHA-256 (already), and fastlane to an exact version (`AUTOBRAIN_FASTLANE_VERSION`, default 2.240.1) instead of an unconstrained `gem install`. The idempotence gate now only short-circuits on an exact version match.
