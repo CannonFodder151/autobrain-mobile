@@ -79,11 +79,19 @@ jobs:
         # post-pub sed patch. IOS_DEPLOYMENT_TARGET=15.0 matches the issue
         # decision: iOS 15+ min, TARGETED_DEVICE_FAMILY=1,2 (iPhone+iPad=universal).
         #
-        # DEVELOPMENT_TEAM is pinned for the same reason: the template ships
-        # DEVELOPMENT_TEAM = "" and `flutter build ios --no-codesign` still
-        # refuses a device build with "Building a deployable iOS app requires a
-        # selected Development Team with a Provisioning Profile" — run
-        # 36811107350. The xcodebuild archive step below needs it too.
+        # DEVELOPMENT_TEAM is inserted for the same reason: the tracked
+        # ios/Runner.xcodeproj declares no DEVELOPMENT_TEAM at all, and
+        # `flutter build ios --release --no-codesign` still refuses a device
+        # build with "Building a deployable iOS app requires a selected
+        # Development Team with a Provisioning Profile" — run 36811107350.
+        # The xcodebuild archive step below needs it too.
+        #
+        # Anchored on the Runner target's PRODUCT_BUNDLE_IDENTIFIER (Debug,
+        # Release, Profile) so RunnerTests is left alone. It is an *insert*,
+        # not a replace: there is no empty DEVELOPMENT_TEAM line to match
+        # (run 36814417622 proved a replace-sed matches 0 and trips pipefail).
+        # awk rather than sed because BSD sed cannot insert a newline from the
+        # replacement side.
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
         run: |
@@ -93,8 +101,19 @@ jobs:
           [[ -n "${TEAM_ID:-}" ]] || { echo "::error::secrets.IOS_TEAM_ID is empty; cannot set DEVELOPMENT_TEAM"; exit 1; }
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' "$PROJ"
           sed -i '' 's/TARGETED_DEVICE_FAMILY = "1";/TARGETED_DEVICE_FAMILY = "1,2";/g' "$PROJ"
-          sed -i '' "s/DEVELOPMENT_TEAM = \"\";/DEVELOPMENT_TEAM = ${TEAM_ID};/g" "$PROJ"
-          grep -c "DEVELOPMENT_TEAM = ${TEAM_ID};" "$PROJ" | awk '{print "Pinned DEVELOPMENT_TEAM in $PROJ ("$1" configurations)"}'
+          awk -v team="$TEAM_ID" '
+            /PRODUCT_BUNDLE_IDENTIFIER = com\.autobrainservice\.autobrain;$/ {
+              print
+              match($0, /^[\t ]*/)
+              print substr($0, 1, RLENGTH) "DEVELOPMENT_TEAM = " team ";"
+              next
+            }
+            { print }
+          ' "$PROJ" > "$PROJ.tmp"
+          mv "$PROJ.tmp" "$PROJ"
+          n="$(grep -c "DEVELOPMENT_TEAM = ${TEAM_ID};" "$PROJ")"
+          [[ "$n" -eq 3 ]] || { echo "::error::expected 3 DEVELOPMENT_TEAM insertions (Debug/Release/Profile), got $n"; exit 1; }
+          echo "Pinned DEVELOPMENT_TEAM in $PROJ ($n configurations)"
           grep -c "IPHONEOS_DEPLOYMENT_TARGET = 15.0" "$PROJ" | awk '{print "Locked iOS 15.0 deployment target in $PROJ ("$1" occurrences)"}'
 
       - name: Verify requested version matches pubspec
