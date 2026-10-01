@@ -33,6 +33,8 @@ jobs:
           # AUT-4857: fastlane --version succeeding does NOT prove psych works —
           # fastlane parses YAML lazily. Assert it, so a future libyaml/headers
           # regression fails here instead of inside a release build.
-          ruby -e 'require "psych"; YAML.safe_load("a: 1"); puts "psych: #{Psych::VERSION} ok"'
+          # `require "psych"` does not define the top-level YAML constant; `yaml`
+          # is the wrapper. Exercise both so this checks psych and its binding.
+          ruby -e 'require "psych"; Psych.safe_load("a: 1"); require "yaml"; YAML.safe_load("a: 1"); puts "psych: #{Psych::VERSION} ok"'
           command -v fastlane
           fastlane --version
