@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Runtime configuration.
@@ -24,6 +25,61 @@ class AppConfig {
 
   static String apiBase = _defaultApiBase;
   static String wsBase = _defaultWsBase;
+
+  /// Result of the last [validate] probe: null = never run / inconclusive,
+  /// true = backend answered, false = backend unreachable.
+  static bool? lastValidationOk;
+
+  /// Human-readable reason for the last failed [validate] probe.
+  static String? lastValidationError;
+
+  /// Hard ceiling on the boot probe. Boot must not stall on a dead host, so
+  /// the request is abandoned rather than awaited indefinitely.
+  static const Duration validateTimeout = Duration(seconds: 5);
+
+  /// Boot-time reachability probe (AUT-2272 M0).
+  ///
+  /// GETs the unauthenticated `/health` endpoint and records the outcome in
+  /// [lastValidationOk] / [lastValidationError]. Never throws — callers treat
+  /// a probe failure as diagnostic information, not a fatal error.
+  static Future<void> validate() async {
+    lastValidationError = null;
+    // The default base points at localhost until the picker runs, so probing
+    // it would report a false failure on a fresh install.
+    if (!serverConfigured) {
+      lastValidationOk = null;
+      return;
+    }
+    try {
+      final origin = apiBase.replaceFirst(RegExp(r'/api/v1/?$'), '');
+      final res = await http
+          .get(
+            Uri.parse('$origin/health'),
+            headers: const {'Accept': 'application/json'},
+          )
+          .timeout(validateTimeout);
+      // Any HTTP answer means the host is up and reachable. A 401/404 from a
+      // misconfigured path is a routing problem, not an unreachable backend.
+      lastValidationOk = true;
+      if (res.statusCode >= 500) {
+        lastValidationOk = false;
+        lastValidationError = 'backend returned HTTP ${res.statusCode}';
+      }
+    } catch (e) {
+      lastValidationOk = false;
+      lastValidationError = _describeProbeError(e);
+    }
+  }
+
+  static String _describeProbeError(Object e) {
+    final s = e.toString();
+    if (s.contains('TimeoutException')) return 'timeout after ${validateTimeout.inSeconds}s';
+    if (s.contains('SocketException') || s.contains('Connection refused')) {
+      return 'connection refused';
+    }
+    if (s.contains('Failed host lookup')) return 'DNS lookup failed';
+    return s.length > 200 ? '${s.substring(0, 200)}…' : s;
+  }
 
   /// Whether running natively on Android/iOS (as opposed to web/desktop).
   static bool get isMobile =>
