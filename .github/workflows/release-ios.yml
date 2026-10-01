@@ -3,7 +3,10 @@ name: Mobile Release (.ipa)
 # iOS release pipeline: build + code-sign + published GitHub Release + Discord notes.
 # Manual workflow_dispatch only — never runs on push. Pairs with release-mobile.yml.
 # Apple code signing uses secrets: IOS_CERT_P12_BASE64, IOS_CERT_PASSWORD,
-# IOS_PROVISIONING_PROFILE_BASE64, IOS_TEAM_ID, IOS_EXPORT_METHOD.
+# IOS_TEAM_ID, APPLE_STORE_API_KEY. The App Store Connect API key drives
+# `xcodebuild -allowProvisioningUpdates`, which registers and creates the
+# distribution profile — IOS_PROVISIONING_PROFILE_BASE64 is optional and, when
+# absent, the archive step provisions from the portal instead (AUT-4355).
 # .ipa is uploaded to TestFlight (beta lane) or App Store Connect (release lane).
 #
 # CI path: GitHub-hosted macos-latest (self-hosted macOS VM blocked on AUT-2725).
@@ -113,7 +116,19 @@ jobs:
           mv "$PROJ.tmp" "$PROJ"
           n="$(grep -c "DEVELOPMENT_TEAM = ${TEAM_ID};" "$PROJ")"
           [[ "$n" -eq 3 ]] || { echo "::error::expected 3 DEVELOPMENT_TEAM insertions (Debug/Release/Profile), got $n"; exit 1; }
-          echo "Pinned DEVELOPMENT_TEAM in $PROJ ($n configurations)"
+          # AUT-4355: the generated project hard-codes
+          # "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer", the legacy
+          # development identity name. Under CODE_SIGN_STYLE = Automatic that pins a
+          # *development* signing identity, and this team holds no Development cert
+          # in the portal (distribution only), so the archive dies with
+          # "No development certificates available to code sign app for device
+          # deployment" — the same failure the EXPORT_METHOD comment above
+          # documents. "Apple Distribution" is the Xcode 14+ name for the
+          # distribution identity this team actually holds.
+          sed -i '' 's/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "iPhone Developer";/"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Distribution";/g' "$PROJ"
+          m="$(grep -c '"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = "Apple Distribution";' "$PROJ")"
+          [[ "$m" -ge 1 ]] || { echo "::error::CODE_SIGN_IDENTITY sed matched nothing in $PROJ"; exit 1; }
+          echo "Pinned Apple Distribution signing identity in $PROJ ($m configurations)"
           grep -c "IPHONEOS_DEPLOYMENT_TARGET = 15.0" "$PROJ" | awk '{print "Locked iOS 15.0 deployment target in $PROJ ("$1" occurrences)"}'
 
       - name: Verify requested version matches pubspec
@@ -163,25 +178,61 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Install provisioning profile
-        # AUT-4356: secrets.IOS_PROVISIONING_PROFILE_BASE64 resolved to the empty
-        # string on run 36811107350. `echo "" | base64 --decode` writes a 0-byte
-        # .mobileprovision, `security cms -D` then fails, the `|| echo` swallows it,
-        # and the run continues until it dies later with an opaque xcodebuild
-        # archive error. Fail here instead, naming the secret.
+        # AUT-4355: secrets.IOS_PROVISIONING_PROFILE_BASE64 is empty (verified on
+        # run 36814828691). An empty profile secret is no longer fatal — the
+        # archive step below now passes the App Store Connect API key to
+        # `xcodebuild -allowProvisioningUpdates`, which registers/creates the
+        # distribution profile itself. A stale base64 profile would override that
+        # anyway, so only install one when it is actually present.
         env:
           PROVISIONING_PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
           if [[ -z "${PROVISIONING_PROFILE_B64:-}" ]]; then
-            echo "::error::secrets.IOS_PROVISIONING_PROFILE_BASE64 is empty. Export the distribution profile and base64 it into the repo secret."
-            exit 1
+            echo "::warning::secrets.IOS_PROVISIONING_PROFILE_BASE64 is empty; relying on xcodebuild -allowProvisioningUpdates to create the distribution profile."
+            exit 0
           fi
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
           echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$PROFILE_DIR/autobrain_distribution.mobileprovision"
+          # Fail closed if a profile IS supplied but is undecodable — that is a
+          # real signing fault, unlike an absent profile.
           security cms -D -i "$PROFILE_DIR/autobrain_distribution.mobileprovision" \
             | plutil -convert json - -o - \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print('Provisioning profile installed:'); print('  Name:', d.get('Name','?')); print('  Team:', d.get('TeamIdentifier',['?'])[0]); print('  AppID:', d.get('AppIDName','?')); print('  Expires:', d.get('ExpirationDate','?'))"
+
+      - name: Materialize App Store Connect API key
+        # AUT-4355: this key is what lets `xcodebuild -allowProvisioningUpdates`
+        # fetch or create the App Store profile, replacing the empty
+        # IOS_PROVISIONING_PROFILE_BASE64 secret. Handles both shapes the secret
+        # has been stored in: a JSON envelope (key_id / issuer_id / private_key)
+        # and a bare .p8 PEM, which needs the companion KEY_ID / ISSUER_ID secrets.
+        id: asc-key
+        env:
+          APPLE_STORE_API_KEY: ${{ secrets.APPLE_STORE_API_KEY }}
+          APPLE_STORE_KEY_ID: ${{ secrets.APPLE_STORE_KEY_ID }}
+          APPLE_STORE_ISSUER_ID: ${{ secrets.APPLE_STORE_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "${APPLE_STORE_API_KEY:-}" ]] || { echo "::error::secrets.APPLE_STORE_API_KEY is empty"; exit 1; }
+          mkdir -p "$HOME/.app-store-connect"
+          if jq -e . >/dev/null 2>&1 <<<"$APPLE_STORE_API_KEY"; then
+            key_id="$(jq -r '.key_id' <<<"$APPLE_STORE_API_KEY")"
+            issuer_id="$(jq -r '.issuer_id' <<<"$APPLE_STORE_API_KEY")"
+            jq -r '.private_key' <<<"$APPLE_STORE_API_KEY" > "$HOME/.app-store-connect/AuthKey_${key_id}.p8"
+          else
+            key_id="$APPLE_STORE_KEY_ID"
+            issuer_id="$APPLE_STORE_ISSUER_ID"
+            [[ -n "$key_id" && -n "$issuer_id" ]] || { echo "::error::APPLE_STORE_API_KEY is a bare .p8; set APPLE_STORE_KEY_ID and APPLE_STORE_ISSUER_ID too"; exit 1; }
+            printf '%s\n' "$APPLE_STORE_API_KEY" > "$HOME/.app-store-connect/AuthKey_${key_id}.p8"
+          fi
+          grep -q 'BEGIN PRIVATE KEY' "$HOME/.app-store-connect/AuthKey_${key_id}.p8" \
+            || { echo "::error::AuthKey_${key_id}.p8 is not a PEM private key"; exit 1; }
+          echo "APPLE_STORE_CONNECT_API_KEY_ID=$key_id" >> "$GITHUB_ENV"
+          echo "APPLE_STORE_CONNECT_API_ISSUER_ID=$issuer_id" >> "$GITHUB_ENV"
+          echo "APPLE_STORE_AUTH_KEY_PATH=$HOME/.app-store-connect/AuthKey_${key_id}.p8" >> "$GITHUB_ENV"
+          chmod 600 "$HOME/.app-store-connect/AuthKey_${key_id}.p8"
+          echo "App Store Connect API key ready (key id ${key_id:0:4}…, issuer ${issuer_id:0:4}…)"
 
       - name: Create ExportOptions.plist (lane-aware)
         # beta lane -> development (TestFlight), release lane -> app-store.
@@ -224,8 +275,20 @@ jobs:
             --build-number="$(grep -E '^version: ' pubspec.yaml | head -1 | awk -F'[+]' '{print $2}')"
 
       - name: Archive + export .ipa (Xcode, universal device+sim build)
+        # AUT-4355: the App Store Connect key arguments are what make
+        # -allowProvisioningUpdates able to create/refresh the distribution
+        # profile. Without them xcodebuild has no way to authenticate to the
+        # portal and the archive fails with "No profiles for
+        # 'com.autobrainservice.autobrain' were found".
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          KEY_ID: ${{ env.APPLE_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ env.APPLE_STORE_CONNECT_API_ISSUER_ID }}
+          AUTH_KEY_PATH: ${{ env.APPLE_STORE_AUTH_KEY_PATH }}
         run: |
           set -euo pipefail
+          [[ -n "${KEY_ID:-}" && -n "${ISSUER_ID:-}" && -n "${AUTH_KEY_PATH:-}" ]] \
+            || { echo "::error::App Store Connect key was not materialized; the provisioning step above must run first"; exit 1; }
           BUILD_DIR="build/ios/ipa"
           mkdir -p "$BUILD_DIR"
           xcodebuild -workspace ios/Runner.xcworkspace \
@@ -233,13 +296,19 @@ jobs:
             -configuration Release \
             -archivePath "$BUILD_DIR/Runner.xcarchive" \
             -allowProvisioningUpdates \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
             archive
           xcodebuild -exportArchive \
             -archivePath "$BUILD_DIR/Runner.xcarchive" \
             -exportPath "$BUILD_DIR" \
             -exportOptionsPlist ios/ExportOptions.plist \
             -allowProvisioningUpdates \
-            -teamId "${{ secrets.IOS_TEAM_ID }}" \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            -teamId "$TEAM_ID" \
             -bundleId "${{ env.IOS_BUNDLE_ID }}"
 
       - name: Verify .ipa produced
@@ -260,29 +329,25 @@ jobs:
 
       - name: Upload to App Store Connect (TestFlight or App Store)
         id: appstore
+        # AUT-4355: reuse the key materialized earlier instead of re-deriving it
+        # from a second copy of the secret. The old inline parse wrote the raw
+        # secret to AuthKey.p8 as JSON-or-PEM and then jq'd it; with a bare .p8
+        # it silently produced empty key_id/issuer_id and altool was called with
+        # --apiKey "".
         env:
-          APPLE_STORE_API_KEY: ${{ secrets.APPLE_STORE_API_KEY }}
-          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          KEY_ID: ${{ env.APPLE_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ env.APPLE_STORE_CONNECT_API_ISSUER_ID }}
           IOS_BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
         run: |
           set -euo pipefail
           ipa="$(ls build/ios/ipa/*.ipa | head -1)"
-          auth_key="$HOME/.app-store-connect/AuthKey.p8"
-          mkdir -p "$HOME/.app-store-connect"
-          echo "$APPLE_STORE_API_KEY" > "$auth_key"
-          key_id="$(jq -r '.key_id' "$auth_key" 2>/dev/null || python3 -c "import json; d=json.load(open('$auth_key')); print(d.get('key_id',''))")"
-          issuer_id="$(jq -r '.issuer_id' "$auth_key" 2>/dev/null || python3 -c "import json; d=json.load(open('$auth_key')); print(d.get('issuer_id',''))")"
-          if jq -e '.private_key' "$auth_key" >/dev/null 2>&1; then
-            jq -r '.private_key' "$auth_key" > "$HOME/.app-store-connect/AuthKey_${key_id}.p8"
-            auth_key="$HOME/.app-store-connect/AuthKey_${key_id}.p8"
-            echo "APP_STORE_CONNECT_API_KEY_ID=$key_id" >> "$GITHUB_ENV"
-            echo "APP_STORE_CONNECT_API_ISSUER_ID=$issuer_id" >> "$GITHUB_ENV"
-          fi
+          [[ -n "${KEY_ID:-}" && -n "${ISSUER_ID:-}" ]] \
+            || { echo "::error::App Store Connect key id/issuer id missing; the materialize step above must run first"; exit 1; }
           echo "Uploading $ipa (${{ inputs.lane }} lane) to App Store Connect"
           # altool requires --apiKey/--apiIssuer for App Store Connect API key auth
           xcrun altool --upload-app \
             -t ios -f "$ipa" \
-            --apiKey "$key_id" --apiIssuer "$issuer_id" \
+            --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" \
             --output-format xml 2>&1 | tee "$RUNNER_TEMP/altool-output.xml" || true
           # Notarization not required for TestFlight/App Store distribution; skip
 
