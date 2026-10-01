@@ -9,8 +9,49 @@ jobs:
         run: echo "Runner is alive"; uname -a
       - name: Check Xcode
         run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      - name: Install fastlane via Homebrew
+      # AUT-4840: the runner is x86_64, so Homebrew (if present) lives under
+      # /usr/local, not the Apple-silicon /opt/homebrew prefix. Actions steps
+      # run `bash -e {0}` — non-login, non-interactive — so /etc/paths.d and
+      # shell rc files are never sourced and brew is not on PATH even when it
+      # is installed. Probe the known prefixes explicitly instead of assuming
+      # one, and report which prefix was used.
+      - name: Resolve Homebrew prefix
+        id: brew
+        run: |
+          set -uo pipefail
+          if command -v brew >/dev/null 2>&1; then
+            echo "found=already-on-PATH" >> "$GITHUB_OUTPUT"
+            echo "BREW_BIN=$(command -v brew)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          for prefix in /usr/local /opt/homebrew; do
+            if [[ -x "$prefix/bin/brew" ]]; then
+              echo "found=$prefix" >> "$GITHUB_OUTPUT"
+              echo "BREW_BIN=$prefix/bin/brew" >> "$GITHUB_OUTPUT"
+              echo "$prefix/bin" >> "$GITHUB_PATH"
+              echo "Resolved Homebrew at $prefix/bin/brew (was not on PATH)"
+              exit 0
+            fi
+          done
+          echo "found=none" >> "$GITHUB_OUTPUT"
+          echo "::warning title=No Homebrew::Neither /usr/local/bin/brew nor /opt/homebrew/bin/brew exists on this runner; falling back to a user-install gem."
+
+      # AUT-4840: Homebrew is not installed on Nathans-iMac-Pro, so `brew
+      # install fastlane` can only ever exit 127 (run 36814006469). Install
+      # fastlane from RubyGems against the system Ruby instead — the same
+      # approach install-fastlane.yml already proves works on this runner.
+      # The step still fails hard if fastlane is missing afterwards: the point
+      # of the workflow is to prove fastlane installs, so no `|| true` here.
+      - name: Install fastlane
         run: |
           set -euo pipefail
-          brew install fastlane
+          if [[ "${{ steps.brew.outputs.found }}" == "none" ]]; then
+            gem install --user-install fastlane --no-document
+            echo "$(ruby -e 'print Gem.user_dir')/bin" >> "$GITHUB_PATH"
+            export PATH="$(ruby -e 'print Gem.user_dir')/bin:$PATH"
+          else
+            export PATH="${{ steps.brew.outputs.BREW_BIN }}:$PATH"
+            brew install fastlane
+          fi
+          command -v fastlane
           fastlane --version
