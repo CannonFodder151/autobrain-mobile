@@ -101,7 +101,7 @@ for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
     # `set +e`.
     if grep -qE '(^|[[:space:]])set[[:space:]]+(\+e|(-|\+)[a-z]*)[[:space:]]*$|(^|[[:space:]])set[[:space:]]+-[a-z]*[uo][a-z]*[[:space:]]' <<<"$step_code" \
        && ! grep -qE '(^|[[:space:]])set[[:space:]]+-[a-z]*e[a-z]*[[:space:]]' <<<"$step_code"; then
-      if ! grep -qE '^[[:space:]]*continue-on-error:[[:space:]]*true' <<<"$step_body"; then
+      if ! grep -qE "^[[:space:]]*continue-on-error:[[:space:]]*(true|'true'|\"true\"|\\\$\{\{[^}]*\}\})[[:space:]]*$" <<<"$step_body"; then
         echo "::error::$name has a diagnostic step that disables errexit (set -uo pipefail / set +e) but no continue-on-error: true; the default 'bash -e {0}' shell re-adds -e, so the step aborts on the first non-zero probe instead of reporting it (AUT-4864)" >&2
         failures=$((failures + 1))
       fi
@@ -111,6 +111,10 @@ for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
     function emit() { if (buf != "") { printf "%s%c", buf, 0; buf = "" } }
     match($0, /^[ ]*-[ ]/) {
       indent = RSTART + RLENGTH - 2
+      # A dash line INDENTED DEEPER than the current step is body content
+      # (a list inside `run:`), not a new step. Splitting there truncated the
+      # step and dropped a trailing `continue-on-error` (AUT-4876 F1).
+      if (step_indent != "" && indent > step_indent) { buf = buf "\n" $0; next }
       emit()
       step_indent = indent
       buf = $0

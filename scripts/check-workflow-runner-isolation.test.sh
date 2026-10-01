@@ -300,3 +300,52 @@ $SIGNING_JOB
 
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]
+# AUT-4876 F1: a nested list inside `run:` used to split the step and drop the
+# trailing continue-on-error, flagging a correct workflow.
+check pass "continue-on-error survives a nested list in run:" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Probe host
+        run: |
+          set -uo pipefail
+          for p in - a - b; do
+            ls -1 \"\$p\"
+          done
+        continue-on-error: true"
+
+# AUT-4876 F2: quoted and expression-valued continue-on-error are the same intent.
+check pass "quoted continue-on-error: 'true' counts" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Probe host
+        run: |
+          set -uo pipefail
+          whoami
+        continue-on-error: 'true'"
+
+check pass "continue-on-error: \${{ ... }} counts" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Probe host
+        run: |
+          set -uo pipefail
+          whoami
+        continue-on-error: \${{ true }}"
+
+# Guard against over-widening: 'true-ish' is not a true value.
+check fail "continue-on-error: true-ish is not honoured" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Probe host
+        run: |
+          set -uo pipefail
+          whoami
+        continue-on-error: true-ish"

@@ -18,6 +18,10 @@ permissions:
 
 jobs:
   diagnose:
+    # Every step below reports host state and is deliberately non-fatal, so
+    # this job is `continue-on-error` throughout and cannot go red by design.
+    # A red X from this workflow means the runner could not start the job at
+    # all, not that a probe failed (AUT-4864, AUT-4876 J1).
     runs-on: [self-hosted, macOS, X64]
     steps:
       - name: Report toolchain
