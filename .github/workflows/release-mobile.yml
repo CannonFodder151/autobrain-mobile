@@ -83,21 +83,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # v3.2.2 still asks sdkmanager for the deprecated `tools` package,
-      # which Google no longer serves -> `Failed to find package 'tools'`,
-      # sdkmanager exits 1 and the whole Android release dies at this step.
-      # v4 filters that package out (its cmdline-tools replaces it).
-      # AUT-5457: pin to cmdline-tools 16.0 (build 12266719), the version
-      # gh-runner-autobrain-mobile ships in cmdline-tools/latest. setup-android
-      # compares its requested version against the preinstalled
-      # source.properties Pkg.Revision; a match reuses the installed tools
-      # and never downloads. Any other pin (the default 15859902 = 22.0)
-      # takes the download-and-unpack path, which requires `unzip` — not
-      # installed on this runner, so the step died at "Unable to locate
-      # executable file: unzip" on every dispatch.
-      - uses: android-actions/setup-android@v4
-        with:
-          cmdline-tools-version: 12266719
+      - uses: android-actions/setup-android@v3
 
       - name: Fix SDK execute bits (cold runner AUT-2176)
         # android-actions/setup-android installs cmdline-tools and build-tools with
@@ -236,31 +222,30 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
-      - name: Verify CARTO_API_KEY secret is present (AUT-4691)
-        # servo_spy_screen.dart reads CARTO_API_KEY via String.fromEnvironment.
-        # Without this define it silently falls back to the key-less
-        # basemaps.cartocdn.com endpoint, which serves the CARTO watermark
-        # tile. Fail the release loudly instead of shipping a watermarked map.
+      # AUT-4823: fail fast, before the multi-minute Gradle build, when the
+      # CARTO secret is unset/expired. An empty --dart-define still produces a
+      # *green* release that ships the watermapped Servo Spy basemap
+      # (AUT-4533, AUT-4649) — the only detection was a human QA curl weeks
+      # later.
+      - name: Require CARTO_API_KEY (fail fast before build)
         env:
-          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
         run: |
           set -euo pipefail
-          if [ -z "${CARTO_API_KEY:-}" ]; then
-            echo "::error::CARTO_API_KEY secret is unset or empty — release would ship a key-less (watermarked) CARTO basemap. Add the repo secret CARTO_API_KEY and re-run. (AUT-4691)"
+          if [ -z "$CARTO_API_KEY" ]; then
+            echo "::error::CARTO_API_KEY secret is unset or empty. Refusing to build a release that would ship the watermapped CARTO basemap in Servo Spy." >&2
             exit 1
           fi
-          echo "CARTO_API_KEY present (${#CARTO_API_KEY} chars, value not echoed)"
+          echo "CARTO_API_KEY present (${#CARTO_API_KEY} chars)"
 
       - name: Build release appbundle
         env:
-          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
         run: |
-          set -euo pipefail
-          [ -n "${CARTO_API_KEY:-}" ] || { echo "::error::CARTO_API_KEY is empty; refusing to build a key-less (watermapped) release artifact"; exit 1; }
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
-            --dart-define=CARTO_API_KEY="$CARTO_API_KEY" \
+            --dart-define=CARTO_API_KEY="${CARTO_API_KEY}" \
             --dart-define=MOBILE_STORE_BUILD=true
 
       - name: Decide whether to build the APK (2-day throttle + meaningful change gate)
@@ -310,21 +295,33 @@ jobs:
 
       - name: Build release APK (same signingConfig, for apksigner scheme check)
         if: steps.apk-decision.outputs.build_apk == 'true'
-        env:
-          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
-          set -euo pipefail
-          [ -n "${CARTO_API_KEY:-}" ] || { echo "::error::CARTO_API_KEY is empty; refusing to build a key-less (watermapped) release artifact"; exit 1; }
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
-            --dart-define=CARTO_API_KEY="$CARTO_API_KEY" \
+            --dart-define=CARTO_API_KEY="${CARTO_API_KEY}" \
             --dart-define=MOBILE_STORE_BUILD=true
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
 
       - name: Skip APK build — throttled (AUT-2619)
         if: steps.apk-decision.outputs.build_apk == 'false'
         run: |
           echo "::notice::APK build skipped: no meaningful lib/asset change since last APK build, or within 48h cooldown. .aab already produced for Play Console."
+
+      # AUT-4823: post-build assertion, mirroring the docker/frontend guard from
+      # PR #822 (AUT-4690). Catches the case the pre-flight check cannot: the
+      # secret was set but the --dart-define never reached the AOT snapshot.
+      - name: Assert CARTO_API_KEY is in the compiled AOT snapshot — always runs
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
+        run: |
+          set -euo pipefail
+          artifacts=(build/app/outputs/bundle/release/app-release.aab)
+          if [ "${{ steps.apk-decision.outputs.build_apk }}" = "true" ]; then
+            artifacts+=(build/app/outputs/flutter-apk/app-release.apk)
+          fi
+          bash scripts/check-carto-key.sh "${artifacts[@]}"
 
       - name: Verify .aab signing (v1/JAR) — always runs
         run: |
@@ -344,40 +341,6 @@ jobs:
           [[ "$actual_sha1" == "$expected_sha1" ]] || { echo "::error::AAB signer SHA1 ${actual_sha1:-<none> } != expected $expected_sha1 (wrong upload keystore in CI secrets)"; exit 1; }
           echo "AAB signer SHA1 matches Play upload key: $actual_sha1"
 
-      # AUT-5556: a signed bundle proves nothing about the basemap key. The
-      # guard step above only proves the secret was non-empty — a
-      # --dart-define that never reached the Dart compile still yields a
-      # correctly-signed .aab that renders a watermarked CARTO tile. Grep the
-      # shipped payload for the key itself, mirroring the .ipa check from
-      # AUT-5084. Self-check: scripts/android-carto-key.test.sh.
-      - name: Verify CARTO_API_KEY is compiled into the .aab (AUT-5556)
-        env:
-          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
-        run: |
-          set -euo pipefail
-          aab=build/app/outputs/bundle/release/app-release.aab
-          [[ -f "$aab" ]] || { echo "::error::$aab not found"; exit 1; }
-          # An empty needle makes `grep -F -q -- ""` match every file, so the
-          # assertion below would pass vacuously with the secret unset.
-          [[ -n "${CARTO_API_KEY:-}" ]] \
-            || { echo "::error::CARTO_API_KEY is empty at verification time; the guard step must run first (AUT-5556)"; exit 1; }
-          # This runner has no `unzip` (see the SDK install step), so extract
-          # with Python's zipfile — the same idiom that step already uses.
-          payload="$RUNNER_TEMP/aab-payload"
-          rm -rf "$payload"
-          mkdir -p "$payload"
-          python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$aab" "$payload"
-          # The Dart AOT snapshot ships as base/lib/<abi>/libapp.so. -a so the
-          # ELF/AOT snapshot is scanned as text, -F so the key is a literal.
-          # Only presence is reported; the key is never logged.
-          grep -r -a -F -q -- "$CARTO_API_KEY" "$payload" \
-            || { echo "::error::CARTO_API_KEY is not in the .aab payload — the bundle compiled without the basemap key (AUT-5556): --dart-define=CARTO_API_KEY did not reach the Dart compile"; exit 1; }
-          # Same failure mode, other direction: the key is present but the
-          # endpoints are gone, which ships a working-key, broken app.
-          grep -r -a -F -q -- "hosted.autobrainservice.app" "$payload" \
-            || { echo "::error::API_BASE_URL/WS_BASE_URL host missing from the .aab payload — the build dropped the other dart defines (AUT-5556)"; exit 1; }
-          echo "Verified CARTO_API_KEY and the API/WS host are present in the .aab payload (value not logged)"
-
       - name: Verify APK signing (v2+v3 scheme check) — only when APK was built
         if: steps.apk-decision.outputs.build_apk == 'true'
         run: |
@@ -396,34 +359,6 @@ jobs:
           [[ "$actual_sha1_hex" == "$expected_sha1_hex" ]] || { echo "::error::APK signer SHA-1 ${actual_sha1_hex:-<none>} != expected $expected_sha1_hex (wrong upload keystore in CI secrets)"; exit 1; }
           echo "APK signer SHA-1 matches Play upload key: $actual_sha1_hex"
           echo "signing OK: AAB v1 valid; APK v2+v3 valid with upload certificate"
-
-      # AUT-5556: same assertion as the .aab step, for the APK build.
-      # The APK is throttled (AUT-2619) so it is only checked when it
-      # was actually built. Self-check: scripts/android-carto-key.test.sh.
-      - name: Verify CARTO_API_KEY is compiled into the .apk (AUT-5556)
-        if: steps.apk-decision.outputs.build_apk == 'true'
-        env:
-          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
-        run: |
-          set -euo pipefail
-          apk=build/app/outputs/flutter-apk/app-release.apk
-          [[ -f "$apk" ]] || { echo "::error::$apk not found"; exit 1; }
-          # An empty needle makes `grep -F -q -- ""` match every file, so
-          # the assertion below would pass vacuously with the secret unset.
-          [[ -n "${CARTO_API_KEY:-}" ]] \
-            || { echo "::error::CARTO_API_KEY is empty at verification time; the guard step must run first (AUT-5556)"; exit 1; }
-          # No `unzip` on this runner; Python's zipfile is the
-          # established extraction idiom here.
-          payload="$RUNNER_TEMP/apk-payload"
-          rm -rf "$payload"
-          mkdir -p "$payload"
-          python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$apk" "$payload"
-          # The Dart AOT snapshot ships as lib/<abi>/libapp.so. -a so
-          # the ELF/AOT snapshot is scanned as text, -F so the key is a
-          # literal. Only presence is reported; the key is never logged.
-          grep -r -a -F -q -- "$CARTO_API_KEY" "$payload" \
-            || { echo "::error::CARTO_API_KEY is not in the .apk payload — the APK compiled without the basemap key (AUT-5556): --dart-define=CARTO_API_KEY did not reach the Dart compile"; exit 1; }
-          echo "Verified CARTO_API_KEY is present in the .apk payload (value not logged)"
 
       - name: Extract changelog entry for this version (release body)
         id: changelog

@@ -19,6 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # AUT-4823: self-check for the release CARTO_API_KEY guard. Cheap (no
+      # Flutter, no network), and a silently broken guard is worse than none.
+      - name: "Guard: CARTO_API_KEY release guard self-check"
+        run: bash scripts/check-carto-key.test.sh
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -28,9 +33,9 @@ jobs:
         run: git config --global --add safe.directory '*'
 
       - name: Verify Flutter installation
-        run: |
-          flutter --version
-          flutter doctor -v
+      run: |
+        flutter --version
+        flutter doctor -v
 
       - name: Fetch dependencies
         run: flutter pub get

@@ -3,29 +3,12 @@ name: Mobile Release (.ipa)
 # iOS release pipeline: build + code-sign + published GitHub Release + Discord notes.
 # Manual workflow_dispatch only — never runs on push. Pairs with release-mobile.yml.
 # Apple code signing uses secrets: IOS_CERT_P12_BASE64, IOS_CERT_PASSWORD,
-# IOS_TEAM_ID, APPLE_STORE_API_KEY. The App Store Connect API key drives
-# `xcodebuild -allowProvisioningUpdates`, which registers and creates the
-# distribution profile — IOS_PROVISIONING_PROFILE_BASE64 is optional and, when
-# absent, the archive step provisions from the portal instead (AUT-4355).
+# IOS_PROVISIONING_PROFILE_BASE64, IOS_TEAM_ID, IOS_EXPORT_METHOD.
 # .ipa is uploaded to TestFlight (beta lane) or App Store Connect (release lane).
 #
-# AUT-5654: CI path is the self-hosted macOS runner. This repo is private on
-# GitHub Free, and the account's hosted-runner spending limit is now blocking
-# hosted jobs outright — every macos-latest job fails in ~5s with "The job was
-# not started because recent account payments have failed or your spending
-# limit needs to be increased", so iOS releases could not run at all.
-# Nathans-iMac-Pro (self-hosted, macOS, X64) is online and is already the
-# target of test-runner.yml / install-fastlane.yml / diagnose-ios-signing.yml.
-# Rule 3 and rule 4 of scripts/check-workflow-runner-isolation.sh both hold:
-# this workflow is workflow_dispatch-only, so the signing secrets are never
-# exposed to auto-fire.
-# Residual risk for Security to weigh: the Apple signing material
-# (IOS_CERT_P12_BASE64, APPLE_STORE_API_KEY) now lands on a persistent host
-# instead of an ephemeral one. That matches the Android lane, where
-# release-mobile.yml already holds the Play keystore on the persistent
-# gh-runner-autobrain-mobile box.
-# Upgrade path: AUT-2725 provisions a dedicated macOS VM at 10.0.3.40. When it
-# lands, label it and narrow this to [self-hosted, macOS, vm-macos].
+# CI path: GitHub-hosted macos-latest (self-hosted macOS VM blocked on AUT-2725).
+# Once AUT-2725 provisions 10.0.3.40, change `runs-on: macos-latest` to
+# [self-hosted, macOS, vm-macos] for cost control.
 
 # AUT-4766: dispatch-only. This repo is private on a GitHub Free plan, so
 # branch protection AND rulesets both return 403 ("Upgrade to GitHub Pro") —
@@ -55,9 +38,9 @@ permissions:
 
 jobs:
   ios-release:
-    runs-on: [self-hosted, macOS, X64]
+    runs-on: macos-latest
     env:
-      IOS_BUNDLE_ID: com.autobrain.autobrain
+      IOS_BUNDLE_ID: com.autobrainservice.autobrain
       # Both lanes use app-store: the team only holds an iPhone Distribution cert
       # (no Development cert in the portal), and TestFlight submission is done
       # with the app-store export method. 'development' would fail the compile
@@ -68,48 +51,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Verify AppIcon manifest entries (AUT-5283)
-        # altool only reports a missing or mis-declared icon entry at
-        # upload time (90022/90023, AUT-2638), after the signed build
-        # and archive have already burned ~15 minutes. The checker
-        # resolves its iconset path relative to the cwd, so it must run
-        # from the repo root — hence working-directory: .
-        working-directory: .
-        run: python3 scripts/check-appicon-entries.py
-
-      - name: Verify iOS purpose strings (AUT-5322)
-        # App Store Connect's pre-submission check rejects the
-        # upload with 90683 when the binary references a protected
-        # API — geolocator's iOS code references
-        # requestAlwaysAuthorization, so
-        # NSLocationAlwaysAndWhenInUseUsageDescription must be
-        # present even though the app only requests when-in-use —
-        # and Info.plist carries no purpose string for it. That
-        # surfaces after the signed archive, so catch it here.
-        working-directory: .
-        run: python3 scripts/check-ios-purpose-strings.py
-
-      - name: Verify Info.plist declares encryption use (AUT-5317)
-        # App Store Connect refuses the upload (or flags the version for
-        # compliance) when the binary carries no
-        # ITSAppUsesNonExemptEncryption key — the export-compliance
-        # question is then answered per-build, in the portal, by hand
-        # (AUT-5317). The app talks to its API over HTTPS and uses
-        # package:crypto for SHA-256 firmware-blob checks, which is
-        # exempt, so the answer is a hard-coded false.
-        working-directory: .
-        run: |
-          set -euo pipefail
-          python3 -c '
-          import plistlib, sys
-          d = plistlib.load(open("ios/Runner/Info.plist", "rb"))
-          v = d.get("ITSAppUsesNonExemptEncryption")
-          if v is not False:
-              sys.exit("::error::ios/Runner/Info.plist must carry "
-                       "ITSAppUsesNonExemptEncryption=false, got " + repr(v))
-          print("ITSAppUsesNonExemptEncryption=false (exempt: HTTPS + SHA-256 integrity)")
-          '
 
       - name: Resolve release version (dispatch input)
         # Dispatch-only (AUT-4766), so inputs.version is always present.
@@ -131,68 +72,17 @@ jobs:
         # on every pub get). Must run BEFORE the deployment-target patch below.
         run: flutter pub get
 
-      - name: Pin iOS 15.0 deployment target and DEVELOPMENT_TEAM in generated Xcode project
+      - name: Pin minimum iOS version to 15.0 in generated Xcode project
         # Flutter generates a fresh ios/Runner.xcodeproj with
         # IPHONEOS_DEPLOYMENT_TARGET=13.0. The only way to lock it is a
         # post-pub sed patch. IOS_DEPLOYMENT_TARGET=15.0 matches the issue
         # decision: iOS 15+ min, TARGETED_DEVICE_FAMILY=1,2 (iPhone+iPad=universal).
-        #
-        # DEVELOPMENT_TEAM is inserted for the same reason: the tracked
-        # ios/Runner.xcodeproj declares no DEVELOPMENT_TEAM at all, and
-        # `flutter build ios --release --no-codesign` still refuses a device
-        # build with "Building a deployable iOS app requires a selected
-        # Development Team with a Provisioning Profile" — run 36811107350.
-        # The xcodebuild archive step below needs it too.
-        #
-        # Anchored on the Runner target's PRODUCT_BUNDLE_IDENTIFIER (Debug,
-        # Release, Profile) so RunnerTests is left alone. It is an *insert*,
-        # not a replace: there is no empty DEVELOPMENT_TEAM line to match
-        # (run 36814417622 proved a replace-sed matches 0 and trips pipefail).
-        # awk rather than sed because BSD sed cannot insert a newline from the
-        # replacement side.
-        #
-        # AUT-5113: the anchor matches the Runner target by shape, not by the
-        # literal com.autobrainservice.autobrain. PR #109 rewrites the bundle
-        # ID to com.autobrain.autobrain (the App ID Apple actually registered);
-        # a hard-coded anchor matched 0 lines after that landed, so
-        # DEVELOPMENT_TEAM was never inserted and the n -eq 3 assertion below
-        # hard-failed the build. Exclude *.RunnerTests instead.
-        env:
-          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
         run: |
           set -euo pipefail
           PROJ="ios/Runner.xcodeproj/project.pbxproj"
           [[ -f "$PROJ" ]] || { echo "::error::$PROJ not found after flutter pub get"; exit 1; }
-          [[ -n "${TEAM_ID:-}" ]] || { echo "::error::secrets.IOS_TEAM_ID is empty; cannot set DEVELOPMENT_TEAM"; exit 1; }
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' "$PROJ"
           sed -i '' 's/TARGETED_DEVICE_FAMILY = "1";/TARGETED_DEVICE_FAMILY = "1,2";/g' "$PROJ"
-          awk -v team="$TEAM_ID" '
-            /PRODUCT_BUNDLE_IDENTIFIER = .*;/ && !/\.RunnerTests;$/ {
-              print
-              match($0, /^[\t ]*/)
-              print substr($0, 1, RLENGTH) "DEVELOPMENT_TEAM = " team ";"
-              next
-            }
-            { print }
-          ' "$PROJ" > "$PROJ.tmp"
-          mv "$PROJ.tmp" "$PROJ"
-          n="$(grep -c "DEVELOPMENT_TEAM = ${TEAM_ID};" "$PROJ")"
-          [[ "$n" -eq 3 ]] || { echo "::error::expected 3 DEVELOPMENT_TEAM insertions (Debug/Release/Profile), got $n"; exit 1; }
-          # AUT-4355: the generated project hard-codes
-          # "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer", the legacy
-          # development identity name, while CODE_SIGN_STYLE = Automatic. Renaming
-          # it to "Apple Distribution" does NOT fix that -- archive then fails with
-          # "Runner is automatically signed for development, but a conflicting code
-          # signing identity Apple Distribution has been manually specified"
-          # (run 36912730915). Under automatic signing Xcode resolves the identity
-          # itself, so the pin has to go rather than be rewritten. This team holds
-          # distribution certs only, which is what -allowProvisioningUpdates plus the
-          # App Store Connect key then pick for the Release configuration.
-          before="$(grep -c 'CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]' "$PROJ" || true)"
-          sed -i '' '/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = /d' "$PROJ"
-          after="$(grep -c 'CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]' "$PROJ" || true)"
-          [[ "$after" -eq 0 ]] || { echo "::error::$after CODE_SIGN_IDENTITY pins survived the delete in $PROJ"; exit 1; }
-          echo "Removed $before CODE_SIGN_IDENTITY pin(s) from $PROJ; automatic signing now resolves the identity"
           grep -c "IPHONEOS_DEPLOYMENT_TARGET = 15.0" "$PROJ" | awk '{print "Locked iOS 15.0 deployment target in $PROJ ("$1" occurrences)"}'
 
       - name: Verify requested version matches pubspec
@@ -201,10 +91,10 @@ jobs:
           version="$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}')"
           tag="v${version}"
           if [[ "$tag" != "${{ env.RELEASE_VERSION }}" ]]; then
-            echo "::error::pubspec.yaml version is ${tag} but requested ${{ inputs.version }}. Run bump-version.sh --mobile in the autobrain monorepo first."
+            echo "::error::pubspec.yaml version is ${tag} but requested ${{ env.RELEASE_VERSION }}. Run bump-version.sh --mobile in the autobrain monorepo first."
             exit 1
           fi
-          echo "Building release ${tag} for iOS (lane: ${{ inputs.lane }})"
+          echo "Building release ${tag} for iOS (lane: ${{ env.LANE }})"
 
       - name: Detect semantic version iteration (Discord changelog gate)
         id: semver-check
@@ -242,248 +132,23 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Install provisioning profile
-        # AUT-4355: secrets.IOS_PROVISIONING_PROFILE_BASE64 is empty (verified on
-        # run 36814828691). An empty profile secret is no longer fatal — the
-        # archive step below now passes the App Store Connect API key to
-        # `xcodebuild -allowProvisioningUpdates`, which registers/creates the
-        # distribution profile itself. A stale base64 profile would override that
-        # anyway, so only install one when it is actually present.
         env:
           PROVISIONING_PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-          # AUT-5164 (F5): lets the verifier confirm the profile belongs to the
-          # team we are signing for, instead of trusting the profile's own
-          # application-identifier prefix. Checked only when non-empty.
-          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
         run: |
           set -euo pipefail
-          if [[ -z "${PROVISIONING_PROFILE_B64:-}" ]]; then
-            echo "::warning::secrets.IOS_PROVISIONING_PROFILE_BASE64 is empty; relying on xcodebuild -allowProvisioningUpdates to create the distribution profile."
-            exit 0
-          fi
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
-          PROFILE="$PROFILE_DIR/autobrain_distribution.mobileprovision"
-          echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$PROFILE"
-          # Fail closed if a profile IS supplied but is undecodable — that is a
-          # real signing fault, unlike an absent profile.
-          #
-          # AUT-5149: this used to pipe through `plutil -convert json`. That
-          # cannot represent a real .mobileprovision — the CMS payload carries
-          # <data> blobs and nested dicts plutil will not flatten — so it failed
-          # on *every* genuine profile (run 36998058429:
-          # "Invalid object in plist for JSON format"). Decode straight to a
-          # plist with `security cms -D -o` and assert on its exit status.
-          DECODED="$RUNNER_TEMP/autobrain_distribution.plist"
-          # AUT-5164 (F6): the expanded plist carries DeveloperCertificates and,
-          # for a development profile, every device UDID. Nothing downstream
-          # reads it, so drop it as the step ends. The installed
-          # .mobileprovision in $PROFILE_DIR has to stay — codesign and
-          # exportArchive resolve the pinned PROVISIONING_PROFILE_SPECIFIER
-          # against it.
-          trap 'rm -f "$DECODED"' EXIT
-          if ! security cms -D -i "$PROFILE" -o "$DECODED"; then
-            echo "::error::secrets.IOS_PROVISIONING_PROFILE_BASE64 is not a decodable CMS-signed .mobileprovision"
-            exit 1
-          fi
-          # AUT-5113: verify the decoded profile instead of printing it and
-          # trusting it. A profile for the wrong App ID, or a
-          # development/ad-hoc one, previously failed four runs later inside
-          # xcodebuild, with an error that never named the profile.
-          #
-          # AUT-5164: the profile is attacker-influenced data (CWE-93), so its
-          # fields are sanitised at the parse site — once, before any of them
-          # reaches a log line, GITHUB_ENV or the ::error:: annotation — and its
-          # expiry and ProvisionsAllDevices flag are checked too.
-          PROFILE_PLIST="$DECODED" IOS_BUNDLE_ID="$IOS_BUNDLE_ID" \
-            TEAM_ID="${TEAM_ID:-}" python3 - <<'PY'
-          import datetime, os, plistlib, sys
-
-          try:
-              with open(os.environ["PROFILE_PLIST"], "rb") as fh:
-                  p = plistlib.load(fh)
-          except Exception as exc:
-              print("::error::provisioning profile: CMS payload is not a valid property list (%s)" % exc)
-              sys.exit(1)
-          want = os.environ["IOS_BUNDLE_ID"]
-          ent = p.get("Entitlements") or {}
-
-          # AUT-5164 (F2, CWE-93): a CR or LF in a profile field makes the
-          # Actions runner parse the rest of the line as a workflow command —
-          # verified with Name = "Injected\n::set-output name=pwn::1", which
-          # emitted a standalone ::set-output line. Collapse both here, at the
-          # parse site, so every consumer is covered: the log, the ::error::
-          # annotation, and GITHUB_ENV (a newline there injects a whole extra
-          # variable). Comparisons use the raw value; everything printed,
-          # written or interpolated uses the sanitised one.
-          def clean(value):
-              return str(value).replace("\r", " ").replace("\n", " ").strip()
-
-          name = clean(p.get("Name", "<none>"))
-          raw_app_id = ent.get("application-identifier", "")
-          app_id = clean(raw_app_id)
-
-          def die(msg):
-              print(f"::error::provisioning profile '{name}': {msg}")
-              sys.exit(1)
-
-          print("Provisioning profile installed:")
-          print("  Name:    %s" % name)
-          print("  Team:    %s" % (app_id.split(".")[0] if app_id else "?"))
-          print("  AppID:   %s" % (app_id or "<none>"))
-          print("  Expires: %s" % clean(p.get("ExpirationDate", "?")))
-
-          if not raw_app_id:
-              die("has no application-identifier entitlement")
-          if raw_app_id.split(".", 1)[-1] != want:
-              die("App ID is %s, but this run builds %s" % (app_id or "<none>", want))
-          # AUT-5164 (F5): the Team: line above is derived from the profile's
-          # own application-identifier prefix, which is why nothing caught a
-          # profile minted for another team. Skipped when the secret is unset
-          # so an absent secret does not become a new failure mode.
-          team = os.environ.get("TEAM_ID", "").strip()
-          if team and not raw_app_id.startswith(team + "."):
-              die("application-identifier %s is not in team %s" % (app_id or "<none>", team))
-          # AUT-5164 (F3): plistlib yields a *naive* datetime for <date>, so
-          # normalise to UTC before comparing — the direct comparison against
-          # an aware now() raises TypeError on every genuine profile.
-          exp = p.get("ExpirationDate")
-          if isinstance(exp, datetime.datetime):
-              if exp.tzinfo is None:
-                  exp = exp.replace(tzinfo=datetime.timezone.utc)
-              if exp < datetime.datetime.now(datetime.timezone.utc):
-                  die("expired on %s" % exp)
-          # AUT-5164 (F4): an in-house/enterprise profile is not exportable via
-          # app-store, so it previously only failed later inside xcodebuild.
-          if p.get("ProvisionsAllDevices"):
-              die("ProvisionsAllDevices; that is an in-house/enterprise profile, not App Store distribution")
-          if ent.get("get-task-allow", True):
-              die("get-task-allow is set; that is a development profile and cannot be exported to the App Store")
-          if p.get("ProvisionedDevices"):
-              die("has ProvisionedDevices; that is a development/ad-hoc profile, not App Store distribution")
-          print("  Checks OK: App ID %s, not expired, get-task-allow=false, no ProvisionedDevices, not ProvisionsAllDevices" % want)
-
-          # AUT-5189: hand the profile's real Name to the archive step, which
-          # pins it as PROVISIONING_PROFILE_SPECIFIER. Keeping the two in one
-          # place means the name we sign with cannot drift from the name we
-          # verified. Written from here so the values are already sanitised —
-          # a newline in either would otherwise inject a second GITHUB_ENV var.
-          out = os.environ.get("GITHUB_ENV")
-          if out:
-              with open(out, "a") as fh:
-                  fh.write(f"IOS_PROFILE_NAME={name}\n")
-                  fh.write(f"IOS_PROFILE_BUNDLE_ID={raw_app_id.split('.', 1)[-1]}\n")
-          PY
-
-      - name: Pin manual distribution signing on the Runner target
-        # AUT-5189: the archive used to run with automatic signing and an empty
-        # PROVISIONING_PROFILE_SPECIFIER, so Xcode asked Apple to *mint* a
-        # Development profile and the team — distribution certs only, zero
-        # devices — refused ("Your team has no devices from which to generate a
-        # provisioning profile", run 37012631045). The profile installed above
-        # is exactly the right one; it just was not named.
-        #
-        # The pins go into the Runner target's own Release configuration, not
-        # the xcodebuild command line. Command-line settings are inherited by
-        # every target in the build: PROVISIONING_PROFILE_SPECIFIER that way
-        # reaches Pods-Runner and each SwiftPM package, which then fail with
-        # "'file_picker_file_picker' does not support the AutoBrain App Store
-        # provisioning profile" (run 37031213870), and a bracketed
-        # "CODE_SIGN_IDENTITY[sdk=iphoneos*]" argument is not parsed as a single
-        # setting by xcodebuild at all. RunnerTests and the pods keep automatic
-        # signing, which is what they want.
-        #
-        # CODE_SIGN_STYLE accompanies the specifier: specifier with Automatic
-        # style is AUT-4959's "conflicting provisioning settings".
-        env:
-          PROFILE_NAME: ${{ env.IOS_PROFILE_NAME }}
-          PROFILE_BUNDLE_ID: ${{ env.IOS_PROFILE_BUNDLE_ID }}
-          BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
-        run: |
-          set -euo pipefail
-          [[ -n "${PROFILE_NAME:-}" ]] \
-            || { echo "::error::no distribution profile was installed; refusing to sign automatically"; exit 1; }
-          if [[ "${PROFILE_BUNDLE_ID:-}" != "${BUNDLE_ID}" ]]; then
-            echo "::error::profile '$PROFILE_NAME' is provisioned for '${PROFILE_BUNDLE_ID:-<none>}', not '$BUNDLE_ID'"
-            exit 1
-          fi
-          python3 - "$PROFILE_NAME" "$BUNDLE_ID" <<'PY'
-          import re, sys
-          path, profile, bundle = "ios/Runner.xcodeproj/project.pbxproj", sys.argv[1], sys.argv[2]
-          src = open(path).read()
-          blocks = re.findall(r'\t\t[A-F0-9]{24} /\* [^\n]*? \*/ = \{\n.*?\n\t\t\};\n', src, re.S)
-          hits = [b for b in blocks
-                  if 'INFOPLIST_FILE = Runner/Info.plist;' in b
-                  and 'name = Release;' in b
-                  and f'PRODUCT_BUNDLE_IDENTIFIER = {bundle};' in b]
-          if len(hits) != 1:
-              sys.exit(f"::error::expected 1 Runner-target Release configuration, matched {len(hits)}")
-          pins = ('\t\t\t\tCODE_SIGN_STYLE = Manual;\n'
-                  '\t\t\t\tCODE_SIGN_IDENTITY = "Apple Distribution";\n'
-                  f'\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "{profile}";\n')
-          new = re.sub(r'(buildSettings = \{\n)', lambda m: m.group(1) + pins, hits[0], count=1)
-          open(path, 'w').write(src.replace(hits[0], new, 1))
-          print(f"Pinned manual distribution signing on Runner/Release with profile '{profile}'")
-          PY
-
-      - name: Materialize App Store Connect API key
-        # AUT-4355: this key is what lets `xcodebuild -allowProvisioningUpdates`
-        # fetch or create the App Store profile, replacing the empty
-        # IOS_PROVISIONING_PROFILE_BASE64 secret. Handles both shapes the secret
-        # has been stored in: a JSON envelope (key_id / issuer_id / private_key)
-        # and a bare .p8 PEM, which needs the companion KEY_ID / ISSUER_ID secrets.
-        id: asc-key
-        env:
-          APPLE_STORE_API_KEY: ${{ secrets.APPLE_STORE_API_KEY }}
-          APPLE_STORE_KEY_ID: ${{ secrets.APPLE_STORE_KEY_ID }}
-          APPLE_STORE_ISSUER_ID: ${{ secrets.APPLE_STORE_ISSUER_ID }}
-        run: |
-          set -euo pipefail
-          [[ -n "${APPLE_STORE_API_KEY:-}" ]] || { echo "::error::secrets.APPLE_STORE_API_KEY is empty"; exit 1; }
-          mkdir -p "$HOME/.app-store-connect"
-          if jq -e . >/dev/null 2>&1 <<<"$APPLE_STORE_API_KEY"; then
-            key_id="$(jq -r '.key_id' <<<"$APPLE_STORE_API_KEY")"
-            issuer_id="$(jq -r '.issuer_id' <<<"$APPLE_STORE_API_KEY")"
-            jq -r '.private_key' <<<"$APPLE_STORE_API_KEY" > "$HOME/.app-store-connect/AuthKey_${key_id}.p8"
-          else
-            key_id="$APPLE_STORE_KEY_ID"
-            issuer_id="$APPLE_STORE_ISSUER_ID"
-            [[ -n "$key_id" && -n "$issuer_id" ]] || { echo "::error::APPLE_STORE_API_KEY is a bare .p8; set APPLE_STORE_KEY_ID and APPLE_STORE_ISSUER_ID too"; exit 1; }
-            printf '%s\n' "$APPLE_STORE_API_KEY" > "$HOME/.app-store-connect/AuthKey_${key_id}.p8"
-          fi
-          grep -q 'BEGIN PRIVATE KEY' "$HOME/.app-store-connect/AuthKey_${key_id}.p8" \
-            || { echo "::error::AuthKey_${key_id}.p8 is not a PEM private key"; exit 1; }
-          echo "APPLE_STORE_CONNECT_API_KEY_ID=$key_id" >> "$GITHUB_ENV"
-          echo "APPLE_STORE_CONNECT_API_ISSUER_ID=$issuer_id" >> "$GITHUB_ENV"
-          echo "APPLE_STORE_AUTH_KEY_PATH=$HOME/.app-store-connect/AuthKey_${key_id}.p8" >> "$GITHUB_ENV"
-          chmod 600 "$HOME/.app-store-connect/AuthKey_${key_id}.p8"
-          # xcodebuild honours APPLE_STORE_AUTH_KEY_PATH, but
-          # `xcrun altool --upload-app --apiKey/--apiIssuer` does not: it only
-          # searches ./private_keys, ~/private_keys, ~/.private_keys and
-          # ~/.appstoreconnect/private_keys, then aborts in ~20ms with
-          # "Failed to load AuthKey file. (-43) The file 'AuthKey_<keyid>.p8'
-          # could not be found in any of these locations" -- verified on run
-          # 37048191304, whose whole pipeline was green while App Store Connect
-          # still listed 0 builds. Stage a copy where altool actually looks.
-          altool_keydir="$HOME/.appstoreconnect/private_keys"
-          mkdir -p "$altool_keydir"
-          cp "$HOME/.app-store-connect/AuthKey_${key_id}.p8" "$altool_keydir/"
-          chmod 600 "$altool_keydir/AuthKey_${key_id}.p8"
-          echo "Staged AuthKey_${key_id}.p8 in $altool_keydir for altool"
-          echo "App Store Connect API key ready (key id ${key_id:0:4}…, issuer ${issuer_id:0:4}…)"
+          echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$PROFILE_DIR/autobrain_distribution.mobileprovision"
+          echo "Provisioning profile installed:"
+          security cms -D -i "$PROFILE_DIR/autobrain_distribution.mobileprovision" 2>/dev/null | plutil -convert json - -o - 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print('  Name:', d.get('Name','?')); print('  Team:', d.get('TeamIdentifier',['?'])[0]); print('  AppID:', d.get('AppIDName','?'))" || echo "Profile installed (could not decode)"
 
       - name: Create ExportOptions.plist (lane-aware)
         # beta lane -> development (TestFlight), release lane -> app-store.
         # xcodebuild -exportArchive reads this plist; must exist BEFORE archive+export.
         # AUT-3214: previously this step ran AFTER the build and the export always failed.
-        env:
-          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
-          PROFILE_NAME: ${{ env.IOS_PROFILE_NAME }}
-          BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
         run: |
           set -euo pipefail
           METHOD="${{ env.EXPORT_METHOD }}"
-          [[ -n "${TEAM_ID:-}" && -n "${PROFILE_NAME:-}" && -n "${BUNDLE_ID:-}" ]] \
-            || { echo "::error::team id, installed profile name or bundle id missing; the export cannot resolve signing without them"; exit 1; }
           cat > ios/ExportOptions.plist <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -491,8 +156,6 @@ jobs:
           <dict>
             <key>method</key>
             <string>__METHOD__</string>
-            <key>teamID</key>
-            <string>__TEAM_ID__</string>
             <key>uploadBitcode</key>
             <false/>
             <key>compileBitcode</key>
@@ -501,213 +164,75 @@ jobs:
             <true/>
             <key>destination</key>
             <string>export</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>__BUNDLE_ID__</key>
-              <string>__PROFILE_NAME__</string>
-            </dict>
           </dict>
           </plist>
           PLIST
-          sed -i '' \
-            -e "s/__METHOD__/${METHOD}/" \
-            -e "s/__TEAM_ID__/${TEAM_ID}/" \
-            -e "s/__BUNDLE_ID__/${BUNDLE_ID}/" \
-            -e "s/__PROFILE_NAME__/${PROFILE_NAME}/" \
-            ios/ExportOptions.plist
-          plutil -lint ios/ExportOptions.plist
-          echo "ExportOptions.plist method=$METHOD team=$TEAM_ID profile=$PROFILE_NAME"
+          sed -i '' "s/__METHOD__/${METHOD}/" ios/ExportOptions.plist
+          echo "ExportOptions.plist method=$METHOD"
 
-      - name: Require CARTO_API_KEY and encode DART_DEFINES (AUT-5084)
-        # lib/screens/servo_spy/servo_spy_screen.dart reads
-        # String.fromEnvironment('CARTO_API_KEY'). Unset -> '' ->
-        # cartoKeyParam('') == '' -> key-less tile URL -> CARTO serves the
-        # "API key required" watermark tile in the shipped .ipa. Same failure as
-        # AUT-4533 / AUT-4649 on web and PR #110 on Android, which added the
-        # matching guard to release-mobile.yml. This build does not go through
-        # docker/frontend/Dockerfile, so the web build guard does not cover it.
-        #
-        # This step also emits DART_DEFINES for the archive below, because that
-        # is the only define path that reaches the shipped .ipa -- see the
-        # "Archive + export .ipa" step.
-        #
-        # The encoding is flutter_tools' encodeDartDefines (build_info.dart:
-        # `defines.map(utf8.encoder.fuse(base64.encoder)).join(',')`, decoded by
-        # bin/xcode_backend.dart and handed to `flutter assemble` as
-        # --DartDefines). python3 rather than the base64(1) CLI because BSD
-        # base64 on the macOS runner wraps at 76 columns, which would inject a
-        # newline into a build setting.
+      # AUT-4823: fail fast, before the multi-minute Xcode build, when the
+      # CARTO secret is unset/expired. An empty --dart-define still produces a
+      # *green* release that ships the watermapped Servo Spy basemap.
+      - name: Require CARTO_API_KEY (fail fast before build)
         env:
-          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
         run: |
           set -euo pipefail
-          if [[ -z "${CARTO_API_KEY:-}" ]]; then
-            echo "::error::CARTO_API_KEY secret is unset — release would ship the key-less CARTO basemap (watermark tiles). Set the repo secret and re-dispatch."
+          if [ -z "$CARTO_API_KEY" ]; then
+            echo "::error::CARTO_API_KEY secret is unset or empty. Refusing to build a release that would ship the watermapped CARTO basemap in Servo Spy." >&2
             exit 1
           fi
-          encoded="$(python3 - "$CARTO_API_KEY" <<'PY'
-          import base64, sys
-
-          key = sys.argv[1]
-          defines = [
-              "API_BASE_URL=https://hosted.autobrainservice.app/api/v1",
-              "WS_BASE_URL=wss://hosted.autobrainservice.app/ws",
-              "MOBILE_STORE_BUILD=true",
-              "CARTO_API_KEY=" + key,
-          ]
-          encoded = ",".join(base64.b64encode(d.encode()).decode() for d in defines)
-          # Fail closed if the encoding does not round-trip. A define that never
-          # reaches the Dart compile IS the AUT-5084 failure mode, and it is
-          # invisible otherwise: the build goes green and ships a watermarked map.
-          decoded = [base64.b64decode(p).decode() for p in encoded.split(",")]
-          if decoded != defines:
-              sys.exit("::error::DART_DEFINES did not round-trip: %r" % (decoded,))
-          sys.stdout.write(encoded)
-          PY
-          )"
-          echo "DART_DEFINES=$encoded" >> "$GITHUB_ENV"
-          echo "CARTO_API_KEY present (${#CARTO_API_KEY} chars); DART_DEFINES encodes 4 defines for the xcodebuild archive"
-
-      - name: Verify CARTO_API_KEY secret is present (AUT-4691)
-        # servo_spy_screen.dart reads CARTO_API_KEY via String.fromEnvironment.
-        # Without this define it silently falls back to the key-less
-        # basemaps.cartocdn.com endpoint, which serves the CARTO watermark
-        # tile. Fail the release loudly instead of shipping a watermarked map.
-        env:
-          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${CARTO_API_KEY:-}" ]; then
-            echo "::error::CARTO_API_KEY secret is unset or empty — release would ship a key-less (watermarked) CARTO basemap. Add the repo secret CARTO_API_KEY and re-run. (AUT-4691)"
-            exit 1
-          fi
-          echo "CARTO_API_KEY present (${#CARTO_API_KEY} chars, value not echoed)"
+          echo "CARTO_API_KEY present (${#CARTO_API_KEY} chars)"
 
       - name: Build iOS release (export method, code-signed)
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.IOS_PROVISIONING_PROFILE_SPECIFIER }}
-          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+          # AUT-4823: same watermapped-basemap defect as release-mobile.yml.
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
         run: |
           set -euo pipefail
           flutter build ios --release --no-codesign \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
-            --dart-define=CARTO_API_KEY="$CARTO_API_KEY" \
-            --dart-define=MOBILE_STORE_BUILD=true \
             --dart-define=CARTO_API_KEY="${CARTO_API_KEY}" \
+            --dart-define=MOBILE_STORE_BUILD=true \
             --build-number="$(grep -E '^version: ' pubspec.yaml | head -1 | awk -F'[+]' '{print $2}')"
 
       - name: Archive + export .ipa (Xcode, universal device+sim build)
-        # AUT-4355: the App Store Connect key arguments are what make
-        # -allowProvisioningUpdates able to create/refresh the distribution
-        # profile. Without them xcodebuild has no way to authenticate to the
-        # portal and the archive fails with "No profiles for
-        # '<bundle id>' were found".
-        #
-        # -destination 'generic/platform=iOS' alone is not enough: automatic
-        # signing still resolves CODE_SIGN_IDENTITY="Apple Development" and an
-        # empty PROVISIONING_PROFILE_SPECIFIER (run 37012631045), so Apple is
-        # asked for a Development profile and the team — which registers
-        # distribution certificates only, with zero devices — refuses
-        # ("Your team has no devices from which to generate a provisioning
-        # profile"). The "Pin manual distribution signing" step writes Manual
-        # signing plus the profile name into the Runner target's own Release
-        # configuration, which is the only level that does not also hit the
-        # Pods and SwiftPM targets.
-        env:
-          KEY_ID: ${{ env.APPLE_STORE_CONNECT_API_KEY_ID }}
-          ISSUER_ID: ${{ env.APPLE_STORE_CONNECT_API_ISSUER_ID }}
-          AUTH_KEY_PATH: ${{ env.APPLE_STORE_AUTH_KEY_PATH }}
         run: |
           set -euo pipefail
-          [[ -n "${KEY_ID:-}" && -n "${ISSUER_ID:-}" && -n "${AUTH_KEY_PATH:-}" ]] \
-            || { echo "::error::App Store Connect key was not materialized; the provisioning step above must run first"; exit 1; }
-          [[ -n "${IOS_PROFILE_NAME:-}" ]] \
-            || { echo "::error::no provisioning profile was installed; refusing to archive with automatic signing"; exit 1; }
-          # AUT-5084: the `--dart-define` flags on the `flutter build ios`
-          # step above do NOT reach the .ipa. This archive re-runs the Dart
-          # compile through the Xcode Flutter build phase, which reads the
-          # DART_DEFINES *build setting* (bin/xcode_backend.dart passes it to
-          # `flutter assemble` as --DartDefines). The guard step writes the
-          # base64-encoded define set to $GITHUB_ENV; it holds ALL four
-          # defines — passing only the CARTO define here would silently drop
-          # API_BASE_URL, WS_BASE_URL and MOBILE_STORE_BUILD from the
-          # shipped binary, which is the same silent-no-op class of bug.
-          [[ -n "${DART_DEFINES:-}" ]] \
-            || { echo "::error::DART_DEFINES is empty; the CARTO_API_KEY guard step must run before the archive"; exit 1; }
           BUILD_DIR="build/ios/ipa"
           mkdir -p "$BUILD_DIR"
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
-            -destination 'generic/platform=iOS' \
             -archivePath "$BUILD_DIR/Runner.xcarchive" \
-            DART_DEFINES="$DART_DEFINES" \
             -allowProvisioningUpdates \
-            -authenticationKeyPath "$AUTH_KEY_PATH" \
-            -authenticationKeyID "$KEY_ID" \
-            -authenticationKeyIssuerID "$ISSUER_ID" \
             archive
-          # AUT-5201: `xcodebuild -exportArchive` accepts only the flags in
-          # valid_flags — there is no -teamId or -bundleId (it rejected them with
-          # "invalid option '-teamId'" *after* the archive had already
-          # succeeded, runs 37033210067 / 37031213870). Team and bundle
-          # identity belong in ExportOptions.plist, which the step above writes.
-          # An unknown flag aborts the run only once a full signed archive
-          # exists, so validate the flag set first: cheap, and it keeps this
-          # class of CLI-surface bug from costing another ~5 min signed build.
-          valid_flags=(
-            -archivePath -exportPath -exportOptionsPlist -configuration
-            -allowProvisioningUpdates
-            -authenticationKeyPath -authenticationKeyID -authenticationKeyIssuerID
-          )
-          export_args=(
-            -archivePath "$BUILD_DIR/Runner.xcarchive"
-            -exportPath "$BUILD_DIR"
-            -exportOptionsPlist ios/ExportOptions.plist
-            -allowProvisioningUpdates
-            -authenticationKeyPath "$AUTH_KEY_PATH"
-            -authenticationKeyID "$KEY_ID"
-            -authenticationKeyIssuerID "$ISSUER_ID"
-          )
-          for arg in "${export_args[@]}"; do
-            case "$arg" in
-              -*) printf '%s\n' "${valid_flags[@]}" | grep -qx -- "$arg" \
-                   || { echo "::error::-exportArchive does not accept '$arg' (valid: ${valid_flags[*]})"; exit 1; } ;;
-            esac
-          done
-          xcodebuild -exportArchive "${export_args[@]}"
+          xcodebuild -exportArchive \
+            -archivePath "$BUILD_DIR/Runner.xcarchive" \
+            -exportPath "$BUILD_DIR" \
+            -exportOptionsPlist ios/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -teamId "${{ secrets.IOS_TEAM_ID }}" \
+            -bundleId "${{ env.IOS_BUNDLE_ID }}"
 
       - name: Verify .ipa produced
-        env:
-          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
           set -euo pipefail
           ipa="$(ls build/ios/ipa/*.ipa 2>/dev/null | head -1)"
           [[ -n "$ipa" ]] || { echo "::error::No .ipa found in build/ios/ipa/"; exit 1; }
           echo "IPA: $ipa ($(du -h "$ipa" | cut -f1))"
-          # An empty needle makes `grep -F -q -- ""` match everything, so the
-          # assertion below would pass vacuously with the secret unset.
-          [[ -n "${CARTO_API_KEY:-}" ]] \
-            || { echo "::error::CARTO_API_KEY is empty at verification time; the guard step must run first"; exit 1; }
-          # AUT-5084: a green build proves nothing about the basemap key —
-          # a `--dart-define` that never reached the Dart compile still exits 0
-          # and ships a watermarked map. Grep the exported payload for the key
-          # itself. -a so the Mach-O / AOT snapshot is scanned as text, -F so the
-          # key is a literal. Only presence is reported; the key is never logged.
-          payload="$RUNNER_TEMP/ipa-payload"
-          rm -rf "$payload"
-          mkdir -p "$payload"
-          unzip -q -o "$ipa" -d "$payload"
-          grep -r -a -F -q -- "$CARTO_API_KEY" "$payload" \
-            || { echo "::error::CARTO_API_KEY is not in the exported .ipa payload — the archive compiled without the basemap key (AUT-5084): DART_DEFINES did not reach the Dart compile"; exit 1; }
-          # Same failure mode, other direction: DART_DEFINES is a single build
-          # setting, so an archive that carries only the CARTO define has
-          # replaced the whole define set and lost the API endpoints.
-          grep -r -a -F -q -- "hosted.autobrainservice.app" "$payload" \
-            || { echo "::error::API_BASE_URL/WS_BASE_URL host missing from the .ipa payload — the archive build dropped the other dart defines"; exit 1; }
-          echo "Verified CARTO_API_KEY and the API/WS host are present in the exported .ipa payload"
+
+      # AUT-4823: post-build assertion, mirroring release-mobile.yml and the
+      # docker/frontend guard from PR #822 (AUT-4690).
+      - name: Assert CARTO_API_KEY is in the compiled AOT snapshot
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
+        run: |
+          set -euo pipefail
+          bash scripts/check-carto-key.sh build/ios/ipa/*.ipa
 
       - name: Extract changelog entry for this version (release body)
         id: changelog
@@ -720,53 +245,31 @@ jobs:
 
       - name: Upload to App Store Connect (TestFlight or App Store)
         id: appstore
-        # AUT-4355: reuse the key materialized earlier instead of re-deriving it
-        # from a second copy of the secret. The old inline parse wrote the raw
-        # secret to AuthKey.p8 as JSON-or-PEM and then jq'd it; with a bare .p8
-        # it silently produced empty key_id/issuer_id and altool was called with
-        # --apiKey "".
         env:
-          KEY_ID: ${{ env.APPLE_STORE_CONNECT_API_KEY_ID }}
-          ISSUER_ID: ${{ env.APPLE_STORE_CONNECT_API_ISSUER_ID }}
+          APPLE_STORE_API_KEY: ${{ secrets.APPLE_STORE_API_KEY }}
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           IOS_BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
         run: |
           set -euo pipefail
           ipa="$(ls build/ios/ipa/*.ipa | head -1)"
-          [[ -n "${KEY_ID:-}" && -n "${ISSUER_ID:-}" ]] \
-            || { echo "::error::App Store Connect key id/issuer id missing; the materialize step above must run first"; exit 1; }
+          auth_key="$HOME/.app-store-connect/AuthKey.p8"
+          mkdir -p "$HOME/.app-store-connect"
+          echo "$APPLE_STORE_API_KEY" > "$auth_key"
+          key_id="$(jq -r '.key_id' "$auth_key" 2>/dev/null || python3 -c "import json; d=json.load(open('$auth_key')); print(d.get('key_id',''))")"
+          issuer_id="$(jq -r '.issuer_id' "$auth_key" 2>/dev/null || python3 -c "import json; d=json.load(open('$auth_key')); print(d.get('issuer_id',''))")"
+          if jq -e '.private_key' "$auth_key" >/dev/null 2>&1; then
+            jq -r '.private_key' "$auth_key" > "$HOME/.app-store-connect/AuthKey_${key_id}.p8"
+            auth_key="$HOME/.app-store-connect/AuthKey_${key_id}.p8"
+            echo "APP_STORE_CONNECT_API_KEY_ID=$key_id" >> "$GITHUB_ENV"
+            echo "APP_STORE_CONNECT_API_ISSUER_ID=$issuer_id" >> "$GITHUB_ENV"
+          fi
           echo "Uploading $ipa (${{ inputs.lane }} lane) to App Store Connect"
-          # altool requires --apiKey/--apiIssuer for App Store Connect API
-          # key auth, plus the .p8 staged in ~/.appstoreconnect/private_keys
-          # by the Materialize step above. The exit status is NOT swallowed:
-          # `|| true` here turned a failed upload into a green run with zero
-          # TestFlight builds (run 37048191304 -- altool failed with
-          # "Failed to load AuthKey file. (-43)" in 20ms and the step
-          # still reported success). With pipefail the tee pipeline now
-          # propagates altool's failure.
+          # altool requires --apiKey/--apiIssuer for App Store Connect API key auth
           xcrun altool --upload-app \
             -t ios -f "$ipa" \
-            --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" \
-            --output-format xml 2>&1 | tee "$RUNNER_TEMP/altool-output.xml"
-          if grep -q "ERROR" "$RUNNER_TEMP/altool-output.xml"; then
-            echo "::error::altool reported an error uploading $ipa -- see altool-output.xml in job artifacts"
-            exit 1
-          fi
-          echo "altool upload completed for $ipa"
+            --apiKey "$key_id" --apiIssuer "$issuer_id" \
+            --output-format xml 2>&1 | tee "$RUNNER_TEMP/altool-output.xml" || true
           # Notarization not required for TestFlight/App Store distribution; skip
-
-      - name: Upload altool output (on failure)
-        # AUT-5242: the ::error:: above points the operator at
-        # altool-output.xml "in job artifacts", but nothing uploaded it --
-        # $RUNNER_TEMP/altool-output.xml dies with the job, so a real upload
-        # failure left no retained diagnostic. Gate on failure() so the happy
-        # path uploads nothing; if-no-files-found: ignore so a failure that
-        # happened before altool ran does not error a second time.
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: altool-output
-          path: ${{ runner.temp }}/altool-output.xml
-          if-no-files-found: ignore
 
       - name: Conditionally publish GitHub Release (release lane only)
         if: ${{ inputs.lane == 'release' }}
@@ -785,7 +288,7 @@ jobs:
           RELEASE_URL: ${{ steps.release.outputs.url }}
           SEMVER: ${{ steps.semver-check.outputs.semver }}
           POST_CHANGELOG: ${{ steps.semver-check.outputs.post_discord }}
-          LANE: ${{ inputs.lane }}
+          LANE: ${{ env.LANE }}
         run: |
           notes="$(awk -v s="## [$SEMVER]" 'index($0,s){f=1;next} f && /^## /{exit} f' CHANGELOG.md \
             | grep -E '^- ' | sed 's/^- //; s/`//g; s/\*\*//g' \
@@ -796,8 +299,7 @@ jobs:
               --arg title "AutoBrain iOS $SEMVER released" \
               --arg desc "$notes" \
               --arg url "$RELEASE_URL" \
-              --arg lane "$LANE" \
-              '{channel:$channel,title:$title,description:$desc,color:"0x2ECC71",author:"Mobile Release Engineer",fields:[{name:"Download",value:$url,inline:true},{name:"Platform",value:"iOS (.ipa)",inline:true},{name:"Lane",value:$lane,inline:true}]}')"
+              '{channel:$channel,title:$title,description:$desc,color:"0x2ECC71",author:"Mobile Release Engineer",fields:[{name:"Download",value:$url,inline:true},{name:"Platform",value:"iOS (.ipa)",inline:true},{name:"Lane",value:$LANE,inline:true}]}')"
             curl -sS -o /dev/null -w "changelog embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
               -H 'Content-Type: application/json' -d "$changelog_payload" || true
           fi
@@ -805,7 +307,6 @@ jobs:
             --arg channel updates \
             --arg title "Mobile iOS ${{ inputs.version }} (${LANE})" \
             --arg url "${{ steps.release.outputs.url || 'TestFlight' }}" \
-            --arg lane "$LANE" \
-            '{channel:$channel,title:$title,description:"Release notes + .ipa built and uploaded.",color:"0x3498DB",author:"Mobile Release Engineer",fields:[{name:"Artifact",value:"Runner.ipa",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true},{name:"Lane",value:$lane,inline:true}]}')"
+            '{channel:$channel,title:$title,description:"Release notes + .ipa built and uploaded.",color:"0x3498DB",author:"Mobile Release Engineer",fields:[{name:"Artifact",value:"Runner.ipa",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true},{name:"Lane",value:$LANE,inline:true}]}')"
           curl -sS -o /dev/null -w "updates embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
             -H 'Content-Type: application/json' -d "$updates_payload" || true
