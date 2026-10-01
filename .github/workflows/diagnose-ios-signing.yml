@@ -18,9 +18,22 @@ permissions:
 
 jobs:
   diagnose:
+    # Every step below reports host state and is deliberately non-fatal, so
+    # this job is `continue-on-error` throughout and cannot go red by design.
+    # A red X from this workflow means the runner could not start the job at
+    # all, not that a probe failed (AUT-4864, AUT-4876 J1).
     runs-on: [self-hosted, macOS, X64]
     steps:
       - name: Report toolchain
+        # Non-fatal by design (AUT-4864): this step only reports host state.
+        # GitHub's default shell is `bash -e {0}`, so the `-e` dropped by
+        # `set -uo pipefail` is re-added by the runner and the step aborts on
+        # the first probe that returns non-zero, turning a diagnostic into a
+        # red X that hides the sections below it.
+        continue-on-error: true
+        # `shell: bash` alone would still be `bash -e {0}`; the explicit
+        # invocation is what actually honours the `set -uo pipefail` below.
+        shell: bash {0}
         run: |
           set -uo pipefail
           echo "runner: $(hostname)  user: $(whoami)  home: $HOME"
@@ -35,6 +48,11 @@ jobs:
         # `security find-identity -v -p codesigning` shows the imported
         # distribution identity as "(CSSMERR_TP_NOT_TRUSTED)" and the archive step
         # fails with "code object is not signed at all" / chain validation errors.
+        # Non-fatal by design (AUT-4864) — reports state, does not gate.
+        continue-on-error: true
+        # `shell: bash` alone would still be `bash -e {0}`; the explicit
+        # invocation is what actually honours the `set -uo pipefail` below.
+        shell: bash {0}
         run: |
           set -uo pipefail
           echo "=== security find-certificate -a -c 'Apple' (system keychain) ==="
@@ -44,6 +62,13 @@ jobs:
           security find-identity -v -p codesigning 2>&1 || true
 
       - name: Report writable gem paths
+        # Non-fatal by design (AUT-4864) — `gem env home` alone aborts the step
+        # under the default `bash -e {0}` shell when gem is unusable, hiding the
+        # writability verdict that is the entire point of this step.
+        continue-on-error: true
+        # `shell: bash` alone would still be `bash -e {0}`; the explicit
+        # invocation is what actually honours the `set -uo pipefail` below.
+        shell: bash {0}
         run: |
           set -uo pipefail
           echo "GEM_HOME=${GEM_HOME:-<unset>}"
