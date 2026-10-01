@@ -52,6 +52,20 @@ grep -q 'with-libyaml-dir=' "$DIR/provision-runner.sh" && ok "provision supplies
 grep -qE 'LIBYAML_SHA256=[0-9a-f]{64}' "$DIR/provision-runner.sh" && ok "libyaml tarball checksum is pinned" \
   || fail "libyaml tarball has no pinned sha256"
 
+# The env file is written by an inline block, so run that block for real with a
+# fake prefix and assert every path landed expanded. A `\`-escaped own-variable
+# writes the literal `$GEM_HOME_DIR` and the consuming step dies with
+# "GEM_HOME_DIR: unbound variable" under `set -u` (run 36840539520).
+gen="$(awk '/^\{$/{f=1;next} /^\} > /{f=0} f' "$DIR/provision-runner.sh")"
+out="$(bash -c "set -eu
+GEM_HOME_DIR=/fake/gem; RUBY_BIN=/fake/rbenv/bin; BREW_BIN=''
+$gen" 2>&1)"
+case "$out" in
+  *'$GEM_HOME_DIR'*|*'$RUBY_BIN'*) fail "env file block emits unexpanded variables: $out" ;;
+  *'PATH="/fake/rbenv/bin:/fake/gem/bin:$PATH"'*) ok "env file block expands paths and defers only \$PATH" ;;
+  *) fail "env file block produced unexpected output: $out" ;;
+esac
+
 # The workflow must stay dispatch-only (runner isolation rule 3).
 wf="$ROOT/.github/workflows/install-fastlane.yml"
 grep -qE '^on:' "$wf" && grep -q 'workflow_dispatch' "$wf" && ok "install-fastlane.yml is dispatch-only" \
