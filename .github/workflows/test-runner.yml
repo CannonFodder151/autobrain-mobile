@@ -6,7 +6,7 @@ name: Test iOS Runner
 # extensions will not compile (runs 36814006469, 36825183321,
 # install-fastlane.yml 36517932757). Report fastlane presence as a diagnostic
 # and let the job pass on runner health; actually provisioning fastlane is
-# tracked by AUT-4844.
+# tracked by AUT-4845.
 on:
   workflow_dispatch:
 
@@ -22,7 +22,7 @@ jobs:
       - name: Check Xcode
         run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
       - name: Report toolchain availability
-        # Non-fatal by design: this is a liveness probe. See AUT-4844.
+        # Non-fatal by design: this is a liveness probe. See AUT-4845.
         run: |
           set -uo pipefail
           echo "user: $(whoami)  home: $HOME"
