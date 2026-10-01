@@ -1,30 +1,46 @@
-name: Install fastlane on macOS runner
+name: Provision macOS runner toolchain (fastlane)
 
-# AUT-4290: the runner has no Homebrew (`brew: command not found`, run
-# 36517932757), so install via gem against the system Ruby that ships with
-# CommandLineTools, then persist the bin dir on PATH for later jobs.
+# AUT-4845: provision Ruby + fastlane on the self-hosted macOS runner.
+# Dispatch-only, and that satisfies scripts/check-workflow-runner-isolation.sh
+# rule 1 (and now rule 4): the runner is a persistent host and this script
+# installs software on it, so it must never fire from a push, a pull_request or
+# a schedule. It reads no secrets, so rule 3 was never the applicable control.
+#
+# The dispatch ref is still caller-chosen: anyone with write access can dispatch
+# from a branch whose provision-runner.sh does anything. That is not a new hole
+# on a Free-plan repo with no branch protection, but it is why rule 4 exists
+# rather than trusting the header comment (AUT-4882 F6).
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Two dispatches writing the same $HOME/.rbenv and $HOME/.gem interleave.
+# Queue instead of cancelling: a cancelled run can leave a half-written
+# GEM_HOME behind (AUT-4882 F8).
+concurrency:
+  group: macos-provision
+  cancel-in-progress: false
+
 jobs:
-  install-fastlane:
+  provision:
     runs-on: [self-hosted, macOS, X64]
+    timeout-minutes: 90
     steps:
-      - name: Install fastlane via gem (no Homebrew on this runner)
+      - uses: actions/checkout@v4
+
+      - name: Provision toolchain (rbenv Ruby + fastlane)
+        run: bash scripts/macos/provision-runner.sh
+
+      # Separate step on purpose: this is the acceptance check that fastlane
+      # resolves in a plain non-interactive Actions step, i.e. only from the
+      # committed env file and not from anything left over in the step above.
+      - name: Verify fastlane in a fresh non-interactive step
         run: |
           set -euo pipefail
-          gem install --user-install fastlane --no-document
-          GEM_BIN="$(ruby -e 'print Gem.user_dir')/bin"
-          echo "$GEM_BIN" >> "$GITHUB_PATH"
-          echo "GEM_BIN=$GEM_BIN" >> "$GITHUB_ENV"
-          export PATH="$GEM_BIN:$PATH"
-          fastlane --version
-      - name: Verify fastlane install
-        run: |
-          set -euo pipefail
-          export PATH="$(ruby -e 'print Gem.user_dir')/bin:$PATH"
-          which fastlane
+          # shellcheck disable=SC1091
+          . scripts/macos/toolchain-env.sh
+          echo "ruby: $(ruby --version)"
+          command -v fastlane
           fastlane --version

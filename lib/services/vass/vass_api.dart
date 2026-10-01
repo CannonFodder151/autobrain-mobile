@@ -145,8 +145,8 @@ class VassApi {
     if (minRating != null) query['min_rating'] = minRating.toString();
 
     final data = await api.get('/vass/engineers', query: query) as Map<String, dynamic>;
-    final list = data['engineers'] as List;
-    return list.map((e) => VassEngineer.fromJson(e as Map<String, dynamic)>).toList();
+    final list = (data['engineers'] as List).cast<Map<String, dynamic>>();
+    return list.map(VassEngineer.fromJson).toList();
   }
 
   Future<VassEngineer?> getEngineer(String engineerId) async {

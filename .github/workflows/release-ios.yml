@@ -13,9 +13,14 @@ name: Mobile Release (.ipa)
 # Once AUT-2725 provisions 10.0.3.40, change `runs-on: macos-latest` to
 # [self-hosted, macOS, vm-macos] for cost control.
 
+# AUT-4766: dispatch-only. This repo is private on a GitHub Free plan, so
+# branch protection AND rulesets both return 403 ("Upgrade to GitHub Pro") —
+# there is no server-side gate on who may push to main. `push: main` therefore
+# turned "anyone with write access pushes" into "signed App Store Connect
+# upload". This workflow loads IOS_CERT_P12_BASE64, IOS_PROVISIONING_PROFILE_BASE64
+# and APPLE_STORE_API_KEY, so it carries the same exposure as release-mobile.yml.
+# Reinforced by rule 3 of scripts/check-workflow-runner-isolation.sh.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -50,17 +55,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve release version (input or pubspec)
-        # Push-triggered runs have no inputs.version — derive it from
-        # pubspec.yaml so sync commits to main build + publish automatically.
+      - name: Resolve release version (dispatch input)
+        # Dispatch-only (AUT-4766), so inputs.version is always present.
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.version }}" ]; then
-            tag="${{ inputs.version }}"
-          else
-            version="$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}')"
-            tag="v${version}"
-          fi
+          tag="${{ inputs.version }}"
           tag="${tag#v}"
           tag="v${tag}"
           echo "Resolved release tag: $tag"

@@ -109,7 +109,7 @@ class _FindMechanicScreenState extends State<FindMechanicScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Request service from ${mechanic.name}?'),
+        title: Text('Request service from ${mechanic.name}?'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
