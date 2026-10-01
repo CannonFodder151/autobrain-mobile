@@ -36,12 +36,23 @@ esac
 grep -qx '/fake/gem' <<<"$out" && ok "toolchain-env.sh exports GEM_HOME" \
   || fail "toolchain-env.sh did not export GEM_HOME: $out"
 
-# provision-runner.sh must gate on a working SDK: a Ruby without ruby/config.h
-# is exactly what broke AUT-4290, so the script has to check for it.
-grep -q 'ruby/config.h' "$DIR/provision-runner.sh" && ok "provision checks for ruby/config.h" \
-  || fail "provision does not check for ruby/config.h"
+# provision-runner.sh must gate on a working SDK: mkmf compiles against
+# rubyhdrdir/ruby.h and rubyarchhdrdir/ruby/config.h, and the CommandLineTools
+# Ruby 2.6 that broke AUT-4290 has neither.
+grep -q 'rubyarchhdrdir' "$DIR/provision-runner.sh" && ok "provision checks rubyarchhdrdir" \
+  || fail "provision does not check rubyarchhdrdir"
+grep -q 'ruby/ruby.h' "$DIR/provision-runner.sh" && ok "provision checks for ruby/ruby.h" \
+  || fail "provision does not check for ruby/ruby.h"
 
-# The workflow must stay dispatch-only (runner isolation gate rule 3).
+# ruby-build vendors OpenSSL but not libyaml, and forces `--with-ext=psych`,
+# so the build dies on macOS CommandLineTools unless libyaml is supplied. The
+# script must both build it and pin its checksum.
+grep -q 'with-libyaml-dir=' "$DIR/provision-runner.sh" && ok "provision supplies libyaml to ruby configure" \
+  || fail "provision does not pass --with-libyaml-dir (psych will fail to build)"
+grep -qE 'LIBYAML_SHA256=[0-9a-f]{64}' "$DIR/provision-runner.sh" && ok "libyaml tarball checksum is pinned" \
+  || fail "libyaml tarball has no pinned sha256"
+
+# The workflow must stay dispatch-only (runner isolation rule 3).
 wf="$ROOT/.github/workflows/install-fastlane.yml"
 grep -qE '^on:' "$wf" && grep -q 'workflow_dispatch' "$wf" && ok "install-fastlane.yml is dispatch-only" \
   || fail "install-fastlane.yml must be workflow_dispatch only"
