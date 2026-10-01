@@ -35,8 +35,13 @@ jobs:
       - name: "Guard: no PR-triggered workflow on a self-hosted runner; no secret workflow on push"
         run: bash scripts/check-workflow-runner-isolation.sh
 
-      - name: "Guard self-check"
+- name: "Guard self-check"
         run: bash scripts/check-workflow-runner-isolation.test.sh
+
+      # AUT-4823: self-check for the release CARTO_API_KEY guard. Cheap (no
+      # Flutter, no network), and a silently broken guard is worse than none.
+      - name: "Guard: CARTO_API_KEY release guard self-check"
+        run: bash scripts/check-carto-key.test.sh
 
       - uses: subosito/flutter-action@v2
         with:

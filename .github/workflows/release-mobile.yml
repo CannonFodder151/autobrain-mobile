@@ -222,11 +222,30 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
+      # AUT-4823: fail fast, before the multi-minute Gradle build, when the
+      # CARTO secret is unset/expired. An empty --dart-define still produces a
+      # *green* release that ships the watermapped Servo Spy basemap
+      # (AUT-4533, AUT-4649) — the only detection was a human QA curl weeks
+      # later.
+      - name: Require CARTO_API_KEY (fail fast before build)
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CARTO_API_KEY" ]; then
+            echo "::error::CARTO_API_KEY secret is unset or empty. Refusing to build a release that would ship the watermapped CARTO basemap in Servo Spy." >&2
+            exit 1
+          fi
+          echo "CARTO_API_KEY present (${#CARTO_API_KEY} chars)"
+
       - name: Build release appbundle
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
         run: |
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
+            --dart-define=CARTO_API_KEY="${CARTO_API_KEY}" \
             --dart-define=MOBILE_STORE_BUILD=true
 
       - name: Decide whether to build the APK (2-day throttle + meaningful change gate)
@@ -280,12 +299,29 @@ jobs:
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
+            --dart-define=CARTO_API_KEY="${CARTO_API_KEY}" \
             --dart-define=MOBILE_STORE_BUILD=true
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
 
       - name: Skip APK build — throttled (AUT-2619)
         if: steps.apk-decision.outputs.build_apk == 'false'
         run: |
           echo "::notice::APK build skipped: no meaningful lib/asset change since last APK build, or within 48h cooldown. .aab already produced for Play Console."
+
+      # AUT-4823: post-build assertion, mirroring the docker/frontend guard from
+      # PR #822 (AUT-4690). Catches the case the pre-flight check cannot: the
+      # secret was set but the --dart-define never reached the AOT snapshot.
+      - name: Assert CARTO_API_KEY is in the compiled AOT snapshot — always runs
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY || '' }}
+        run: |
+          set -euo pipefail
+          artifacts=(build/app/outputs/bundle/release/app-release.aab)
+          if [ "${{ steps.apk-decision.outputs.build_apk }}" = "true" ]; then
+            artifacts+=(build/app/outputs/flutter-apk/app-release.apk)
+          fi
+          bash scripts/check-carto-key.sh "${artifacts[@]}"
 
       - name: Verify .aab signing (v1/JAR) — always runs
         run: |
