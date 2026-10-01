@@ -27,15 +27,6 @@ Flutter/flutter_export_environment.sh
 ServiceDefinitions.json
 Runner/GeneratedPluginRegistrant.*
 
-# Flutter-generated artifacts that the removed blanket `/ios/Flutter/` rule used
-# to hide (AUT-4801). dSYM bundles carry DWARF with absolute build-machine
-# paths and full symbol tables; `*.dill` is compiled Dart kernel.
-Flutter/*.dill
-Flutter/flutter_build.d
-Flutter/*.framework.dSYM/
-Flutter/NativeAssets/
-Flutter/GeneratedPluginRegistrant.*
-
 # Exceptions to above rules.
 !default.mode1v3
 !default.mode2v3

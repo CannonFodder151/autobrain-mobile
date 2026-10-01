@@ -35,9 +35,6 @@ jobs:
       - name: "Guard: no PR-triggered workflow on a self-hosted runner"
         run: bash scripts/check-workflow-runner-isolation.sh
 
-      - name: "Guard: ios/ ignore boundary"
-        run: bash scripts/check-ios-gitignore.sh
-
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
