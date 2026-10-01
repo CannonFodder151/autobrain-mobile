@@ -11,6 +11,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed (AUT-4845)
+- ci(macos-runner): `install-fastlane.yml` no longer tries to `gem install fastlane` against the CommandLineTools Ruby 2.6, whose SDK is missing `ruby/config.h` — that made all 5 runs of the workflow fail while building native extensions. It now calls `scripts/macos/provision-runner.sh`, which builds a self-contained Ruby under `~/.rbenv` (no sudo, no system paths) and installs fastlane into `~/.gem`. Re-provision after a runner reimage with a single dispatch.
+- ci(macos-runner): `scripts/macos/toolchain-env.sh` + `~/.autobrain-toolchain.env` make the toolchain visible to Actions steps. Steps run `/bin/bash -e` with a launchd-inherited `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), so `~/.zshrc` edits — which the previous attempt relied on — are never read.
+- ponytail: Homebrew is not installed on the runner. Its installer needs `sudo`, the runner user has no passwordless sudo, and `/usr/local` is `root:wheel`. `provision-runner.sh` installs it automatically once NOPASSWD sudo is granted; until then rbenv Ruby covers the toolchain. Add a `brew` arm only when a formula we need has no gem path.
+- test(macos-runner): `scripts/macos/provision-runner.test.sh` asserts the env-file contract, the `ruby/config.h` gate, and that the workflow stays `workflow_dispatch`-only with no secrets (runner-isolation rule 3).
+
 ### Security (AUT-4766)
 - ci(mobile-release): `release-mobile.yml` and `release-ios.yml` are now `workflow_dispatch`-only. `autobrain-mobile` is private on a GitHub Free plan, so branch protection **and** repository rulesets both return `403 — Upgrade to GitHub Pro`; there is no server-side gate on who may push to `main`. A `push: main` trigger meant any write-access push built and signed a store artifact — Play upload key and Apple distribution cert — with no review step. Dispatch requires write access **and** an explicit human action.
 - ci(mobile-release): `scripts/check-workflow-runner-isolation.sh` gains rule 3 — a workflow that reads `${{ secrets.* }}` may not declare a `push:` trigger. Comment lines are stripped so the header trust-model note does not count as a read. Covered by a new `scripts/check-workflow-runner-isolation.test.sh`, run in `analyze.yml` next to the guard itself.
