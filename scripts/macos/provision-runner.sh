@@ -65,12 +65,49 @@ export RBENV_ROOT="$RBENV_DIR"
 PATH="$RBENV_DIR/bin:$PATH"
 export PATH
 
+# -- libyaml -----------------------------------------------------------
+# ruby-build vendors OpenSSL but not libyaml, and its ruby definitions force
+# `--with-ext=openssl,psych,+`, so a host without `brew --prefix libyaml` fails
+# the build on psych. macOS 12's CommandLineTools ship no libyaml headers, so
+# build it into a private prefix and point ruby's configure at it.
+LIBYAML_VERSION=0.2.5
+LIBYAML_SHA256=c642ae9b75fee120b2d96c712538bd2cf283228d2337df2cf2988e3c02678ef4
+VENDOR_DIR="$RBENV_DIR/vendor"
+LIBYAML_DIR="$VENDOR_DIR/yaml-$LIBYAML_VERSION"
+LIBYAML_TARBALL="$VENDOR_DIR/yaml-$LIBYAML_VERSION.tar.gz"
+
+if [ ! -f "$LIBYAML_DIR/include/yaml.h" ]; then
+  mkdir -p "$VENDOR_DIR"
+  if [ ! -f "$LIBYAML_TARBALL" ]; then
+    say "downloading libyaml $LIBYAML_VERSION"
+    curl -fsSL -o "$LIBYAML_TARBALL.part" \
+      "https://github.com/yaml/libyaml/releases/download/$LIBYAML_VERSION/yaml-$LIBYAML_VERSION.tar.gz"
+    mv "$LIBYAML_TARBALL.part" "$LIBYAML_TARBALL"
+  fi
+  echo "$LIBYAML_SHA256  $LIBYAML_TARBALL" | shasum -a 256 -c - >/dev/null \
+    || die "libyaml $LIBYAML_VERSION checksum mismatch — refusing to build it"
+  say "building libyaml $LIBYAML_VERSION -> $LIBYAML_DIR"
+  rm -rf "$LIBYAML_DIR"
+  tar -xzf "$LIBYAML_TARBALL" -C "$VENDOR_DIR"
+  # shellcheck disable=SC2086
+  ( cd "$LIBYAML_DIR" && ./configure --prefix="$LIBYAML_DIR" >/dev/null \
+      && make -j"$(sysctl -n hw.ncpu)" >/dev/null && make install >/dev/null ) \
+    || die "libyaml build failed"
+else
+  say "libyaml already built at $LIBYAML_DIR"
+fi
+
+# -- Ruby --------------------------------------------------------------
+# Keep the failed build tree so a failure is inspectable on the host instead
+# of only in a job log.
+export RUBY_BUILD_BUILD_PATH="$RBENV_DIR/build/ruby-$RUBY_VERSION"
+
 if [ ! -x "$RBENV_DIR/versions/$RUBY_VERSION/bin/ruby" ]; then
   say "building Ruby $RUBY_VERSION (no-doc, ~10-25 min on this host)"
   # --disable-install-doc keeps the build to minutes, not tens of minutes.
-  RUBY_CONFIGURE_OPTS="--disable-install-doc" \
-    "$RBENV_DIR/bin/rbenv" install --verbose "$RUBY_VERSION" \
-    || die "ruby-build failed for $RUBY_VERSION; see the ruby-build log above"
+  RUBY_CONFIGURE_OPTS="--disable-install-doc --with-libyaml-dir=$LIBYAML_DIR" \
+    "$RBENV_DIR/bin/rbenv" install "$RUBY_VERSION" \
+    || die "ruby-build failed for $RUBY_VERSION; build tree left at $RUBY_BUILD_BUILD_PATH"
 else
   say "Ruby $RUBY_VERSION already built"
 fi

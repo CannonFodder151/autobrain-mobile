@@ -41,7 +41,15 @@ grep -qx '/fake/gem' <<<"$out" && ok "toolchain-env.sh exports GEM_HOME" \
 grep -q 'ruby/config.h' "$DIR/provision-runner.sh" && ok "provision checks for ruby/config.h" \
   || fail "provision does not check for ruby/config.h"
 
-# The workflow must stay dispatch-only (runner isolation gate rule 3).
+# ruby-build vendors OpenSSL but not libyaml, and forces `--with-ext=psych`,
+# so the build dies on macOS CommandLineTools unless libyaml is supplied. The
+# script must both build it and pin its checksum.
+grep -q 'with-libyaml-dir=' "$DIR/provision-runner.sh" && ok "provision supplies libyaml to ruby configure" \
+  || fail "provision does not pass --with-libyaml-dir (psych will fail to build)"
+grep -qE 'LIBYAML_SHA256=[0-9a-f]{64}' "$DIR/provision-runner.sh" && ok "libyaml tarball checksum is pinned" \
+  || fail "libyaml tarball has no pinned sha256"
+
+# The workflow must stay dispatch-only (runner isolation rule 3).
 wf="$ROOT/.github/workflows/install-fastlane.yml"
 grep -qE '^on:' "$wf" && grep -q 'workflow_dispatch' "$wf" && ok "install-fastlane.yml is dispatch-only" \
   || fail "install-fastlane.yml must be workflow_dispatch only"
