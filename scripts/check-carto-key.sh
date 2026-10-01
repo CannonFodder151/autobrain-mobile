@@ -10,8 +10,10 @@
 #
 # Two checks, both fatal:
 #   1. CARTO_API_KEY is non-empty  -> fail fast, names the secret.
-#   2. the key value is present in the compiled AOT snapshot -> catches a build
-#      that dropped the --dart-define, or a string the app never reads.
+#   2. the key value is present in EVERY compiled AOT member -> catches a build
+#      that dropped the --dart-define, or a string the app never reads. An .aab
+#      carries one libapp.so per ABI, so a define embedded for arm64-v8a only
+#      still ships a watermapped basemap to every other device (AUT-4867).
 #
 # Usage:
 #   CARTO_API_KEY=cb1_... bash scripts/check-carto-key.sh <artifact> [more...]
@@ -84,6 +86,8 @@ PY
   fi
 
   artifact_checked=0
+  # NOT the pass/fail decision (every member must HIT, AUT-4867); it only picks
+  # the "value not found at all" error message over the per-member miss line.
   artifact_found=false
   while IFS= read -r line; do
     case "$line" in
@@ -95,6 +99,7 @@ PY
       MISS\ *)
         artifact_checked=$((artifact_checked + 1))
         echo "  miss: CARTO_API_KEY absent from ${line#MISS } in $artifact"
+        failures=$((failures + 1))
         ;;
       NONE\ *)
         echo "::error::$artifact contains no AOT snapshot (expected libapp.so / App.framework/App / *.dill)" >&2

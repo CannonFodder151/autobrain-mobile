@@ -10,6 +10,8 @@
 #      vacuously — this is the "checked 0 members" case)
 #   5. mixed good/bad artifacts                 -> overall FAIL
 #   6. artifact missing / not a zip             -> FAIL
+#   7. one AOT member with the key, one without -> FAIL (AUT-4867: a per-member
+#      MISS is itself a failure, not just a missing HIT somewhere)
 #
 # Run: bash scripts/check-carto-key.test.sh
 # Requires: bash, python3.
@@ -47,13 +49,28 @@ with zipfile.ZipFile(sys.argv[1], "w") as zf:
 PY
 }
 
+# An .aab whose per-ABI snapshots disagree: arm64-v8a has the key, x86_64 does
+# not. Every other fixture is uniform across ABIs, so this is the only case
+# that proves a per-member MISS is fatal (AUT-4867).
+make_mixed() {
+  python3 - "$1" "$2" <<'PY'
+import sys, zipfile
+out, payload = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out, "w") as zf:
+    zf.writestr("lib/arm64-v8a/libapp.so", payload)
+    zf.writestr("lib/x86_64/libapp.so", "AOT snapshot with no key")
+PY
+}
+
 ok_aab="$TMP/with-key.aab"
 bad_aab="$TMP/without-key.aab"
 no_aot_aab="$TMP/no-aot.aab"
 not_zip="$TMP/not-a-zip.aab"
+mixed_aab="$TMP/mixed-key.aab"
 make_aab "$ok_aab" 'AAB-filler cb1_TESTKEY_abc123 tileTemplate ?key='
 make_aab "$bad_aab" 'AAB-filler no key here tileTemplate'
 make_no_aot "$no_aot_aab"
+make_mixed "$mixed_aab" 'AAB-filler cb1_TESTKEY_abc123 tileTemplate ?key='
 printf 'this is definitely not a zip archive' > "$not_zip"
 
 check() {
@@ -104,6 +121,11 @@ check "artifact that is not a zip -> fail" 1 \
 #    full literal value and not a prefix such as "cb1_"
 check "near-miss key (prefix only) -> fail" 1 \
   env CARTO_API_KEY=cb1_TESTKEY_abc123_SUFFIX bash "$SCRIPT" "$ok_aab"
+
+# 9. per-ABI disagreement -> fail (AUT-4867). Before the fix this printed both a
+#    miss: line and OK:, and exited 0.
+check "one ABI with key + one without -> fail" 1 \
+  env CARTO_API_KEY=cb1_TESTKEY_abc123 bash "$SCRIPT" "$mixed_aab"
 
 echo "$pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
