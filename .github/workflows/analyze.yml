@@ -18,7 +18,7 @@ on:
 # GitHub-hosted runner: release-mobile.yml loads UPLOAD_KEYSTORE_BASE64 +
 # GOOGLE_PLAY_SERVICE_ACCOUNT_JSON on the non-ephemeral
 # gh-runner-autobrain-mobile box, so any PR code run there can plant a
-# persistent artifact that the next `push: main` release picks up (AUT-4722).
+# persistent artifact that the next release dispatch picks up (AUT-4722).
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -32,8 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: "Guard: no PR-triggered workflow on a self-hosted runner"
+      - name: "Guard: no PR-triggered workflow on a self-hosted runner; no secret workflow on push"
         run: bash scripts/check-workflow-runner-isolation.sh
+
+      - name: "Guard self-check"
+        run: bash scripts/check-workflow-runner-isolation.test.sh
 
       - uses: subosito/flutter-action@v2
         with:

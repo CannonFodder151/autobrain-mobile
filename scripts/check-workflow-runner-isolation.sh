@@ -15,6 +15,14 @@
 # so exactly one workflow may claim it. A second claimant silently shares those
 # secrets with whatever else that workflow runs.
 #
+# Third rule (AUT-4766): a workflow that reads secrets must be dispatch-only.
+# This repo is private on a GitHub Free plan — branch protection and rulesets
+# both 403 with "Upgrade to GitHub Pro", so nothing on the server gates who may
+# push to main. A `push:` trigger on a secret-reading workflow means any push
+# to main executes that secret-reading code with no review in between. Only
+# `workflow_dispatch` adds a deliberate human action. Pro allows dropping this
+# rule in favour of a real required-review branch rule.
+#
 # Run: bash scripts/check-workflow-runner-isolation.sh
 set -euo pipefail
 
@@ -49,6 +57,16 @@ for wf in "$WF_DIR"/*.yml "$WF_DIR"/*.yaml; do
   if grep -qE '^[[:space:]]*runs-on:.*release-signing' "$wf"; then
     signing_claimants+=("$name")
   fi
+
+  # Rule 3: secret-reading workflow must not auto-fire on push. Comment lines
+  # are stripped first so a `${{ secrets.X }}` mentioned in the header trust
+  # model note does not count as a read.
+  if grep -vE '^[[:space:]]*#' "$wf" | grep -qE '\$\{\{[[:space:]]*secrets\.'; then
+    if grep -qwE 'push' <<<"$on_block"; then
+      echo "::error::$name reads secrets AND triggers on push; with no branch protection (Pro required, AUT-4766) any push to main runs it unreviewed. Use workflow_dispatch only." >&2
+      failures=$((failures + 1))
+    fi
+  fi
 done
 
 if [[ "${#signing_claimants[@]}" -eq 0 ]]; then
@@ -60,7 +78,7 @@ elif [[ "${#signing_claimants[@]}" -gt 1 ]]; then
 fi
 
 if [[ "$failures" -gt 0 ]]; then
-  echo "AUT-4722: $failures runner-isolation violation(s)." >&2
+  echo "AUT-4722/AUT-4766: $failures runner-isolation violation(s)." >&2
   exit 1
 fi
-echo "OK: no pull_request-triggered workflow runs on a self-hosted runner; release-signing claimed by ${signing_claimants[0]}."
+echo "OK: no pull_request-triggered workflow runs on a self-hosted runner; release-signing claimed by ${signing_claimants[0]}; no secret-reading workflow triggers on push."
