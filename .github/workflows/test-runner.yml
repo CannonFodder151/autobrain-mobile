@@ -9,36 +9,8 @@ jobs:
         run: echo "Runner is alive"; uname -a
       - name: Check Xcode
         run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      # AUT-4845 PROBE: replace with real provisioning once merged.
-      - name: Probe host provisioning capabilities
+      - name: Install fastlane via Homebrew
         run: |
-          set -uo pipefail
-          echo "user: $(whoami)  home: $HOME"
-          echo "sw_vers: $(sw_vers -productVersion) $(sw_vers -buildVersion)"
-          echo "PATH=$PATH"
-          echo "--- sudo"
-          if sudo -n true 2>/dev/null; then echo "SUDO_NOPASSWD=yes"; else echo "SUDO_NOPASSWD=no"; fi
-          echo "--- admin group"
-          id -Gn 2>/dev/null || echo "id failed"
-          echo "--- /usr/local"
-          ls -ld /usr/local 2>&1 || echo "no /usr/local"
-          ls -ld /usr/local/bin 2>&1 || echo "no /usr/local/bin"
-          if [ -w /usr/local/bin ]; then echo "USRLOCALBIN_WRITABLE=yes"; else echo "USRLOCALBIN_WRITABLE=no"; fi
-          echo "--- disk"
-          df -h / /Users 2>&1 | head -5
-          echo "--- compiler"
-          xcode-select -p 2>&1
-          cc --version 2>&1 | head -2
-          echo "--- runner service plist"
-          ls -1 ~/Library/LaunchAgents/ 2>&1 | head -20
-          ls -1 /Library/LaunchDaemons/ 2>&1 | grep -i -E 'runner|actions' || echo "no runner LaunchDaemon"
-          echo "--- runner install dir"
-          ls -ld ~/actions-runner* 2>&1 || true
-          echo "--- shell rc"
-          ls -la ~/.zshrc ~/.bash_profile ~/.zprofile 2>&1
-          echo "--- xcode ruby headers"
-          RHDR=$(ruby -e "puts RbConfig::CONFIG['rubyhdrdir']" 2>/dev/null)
-          echo "rubyhdrdir=$RHDR"
-          ls -la "$RHDR/ruby/config.h" 2>&1 || echo "config.h NOT FOUND"
-          echo "--- git/curl"
-          git --version; curl --version | head -1
+          set -euo pipefail
+          brew install fastlane
+          fastlane --version
