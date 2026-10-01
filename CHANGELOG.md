@@ -11,6 +11,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security (AUT-4766)
+- ci(mobile-release): `release-mobile.yml` and `release-ios.yml` are now `workflow_dispatch`-only. `autobrain-mobile` is private on a GitHub Free plan, so branch protection **and** repository rulesets both return `403 — Upgrade to GitHub Pro`; there is no server-side gate on who may push to `main`. A `push: main` trigger meant any write-access push built and signed a store artifact — Play upload key and Apple distribution cert — with no review step. Dispatch requires write access **and** an explicit human action.
+- ci(mobile-release): `scripts/check-workflow-runner-isolation.sh` gains rule 3 — a workflow that reads `${{ secrets.* }}` may not declare a `push:` trigger. Comment lines are stripped so the header trust-model note does not count as a read. Covered by a new `scripts/check-workflow-runner-isolation.test.sh`, run in `analyze.yml` next to the guard itself.
+- ponytail: rule 3 stays in place after GitHub Pro lands. Delete it in the same PR that adds the required-review branch rule; until then it is the only server-side enforcement available on the Free plan.
+
 ### Fixed (AUT-4736)
 - fix(mobile,servo-spy): CARTO basemap `urlTemplate` now interpolates `${_kCartoKeyParam}` in both the dark and light branches. The key param was declared but never referenced, so release builds that inject `CARTO_API_KEY` via `--dart-define` still rendered the "API key required" watermark, and `flutter analyze` only flagged it as `unused_element`.
 - test(mobile,servo-spy): restore `test/servo_spy_carto_key_test.dart` from the monorepo, plus a group asserting both URL branches actually use the key param.
