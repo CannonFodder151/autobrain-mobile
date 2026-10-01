@@ -24,6 +24,14 @@ Flutter/app.flx
 Flutter/app.zip
 Flutter/flutter_assets/
 Flutter/flutter_export_environment.sh
+# AUT-4801: the root .gitignore no longer blanket-ignores /ios/Flutter/ so
+# Debug.xcconfig, Release.xcconfig and AppFrameworkInfo.plist stay tracked.
+# These generated artifacts were only hidden by that blanket rule.
+Flutter/*.dill
+Flutter/flutter_build.d
+Flutter/*.framework.dSYM/
+Flutter/NativeAssets/
+Flutter/GeneratedPluginRegistrant.*
 ServiceDefinitions.json
 Runner/GeneratedPluginRegistrant.*
 

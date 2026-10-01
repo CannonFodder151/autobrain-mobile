@@ -19,6 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Stops a future .gitignore edit from re-hiding the tracked ios/Flutter
+      # xcconfigs, or from dropping the generated artifacts that became
+      # committable when the blanket rule was removed (AUT-4801). Runs against
+      # the checked-out tree, no Flutter toolchain needed.
+      - name: "Guard self-check: ios/Flutter ignore coverage"
+        run: bash scripts/check-ios-flutter-ignore.test.sh
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
