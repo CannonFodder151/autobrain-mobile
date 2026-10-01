@@ -114,6 +114,30 @@ grep -qE '\[ ! -O "\$TOOLCHAIN_ENV_FILE" \]' "$DIR/toolchain-env.sh" \
   && ok "toolchain-env.sh refuses a file it does not own" \
   || fail "toolchain-env.sh does not verify env file ownership"
 
+# AUT-4875: installed_fastlane() must survive fastlane's multi-line --version
+# banner. Run the real function against a stub that prints the real output
+# shape, so a `head -1` regression fails here instead of on the runner.
+mkdir -p "$tmp/gem/bin"
+cat > "$tmp/gem/bin/fastlane" <<'STUB'
+#!/bin/bash
+cat <<'OUT'
+fastlane installation at path:
+/Users/nathan/.gem/gems/fastlane-2.240.1/bin/fastlane
+-----------------------------
+[02:36:20]: WARNING: fastlane requires your locale to be set to UTF-8.
+fastlane 2.240.1
+OUT
+STUB
+chmod +x "$tmp/gem/bin/fastlane"
+fn="$(awk '/^installed_fastlane\(\) \{/{f=1} f{print} /^\}$/{if(f)exit}' "$prov")"
+got="$(GEM_HOME_DIR="$tmp/gem" bash -c "set -uo pipefail
+$fn
+installed_fastlane" 2>/dev/null)"
+[ "$got" = "fastlane 2.240.1" ] && ok "installed_fastlane parses fastlane --version past its banner" \
+  || fail "installed_fastlane returned '$got' (want 'fastlane 2.240.1')"
+grep -qF 'grep -Eo' "$prov" && ok "installed_fastlane does not rely on --version line order" \
+  || fail "installed_fastlane takes a fixed line of fastlane --version"
+
 bash "$ROOT/scripts/check-workflow-runner-isolation.sh" >/dev/null 2>&1 \
   && ok "runner isolation gate passes" || fail "runner isolation gate fails"
 

@@ -59,8 +59,13 @@ die()  { echo "::error::$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- fastlane gate
 installed_fastlane() {
+  # `fastlane --version` prints a banner first ("fastlane installation at path:",
+  # the gem path, a rule, a locale warning) and the version last, so `head -1`
+  # returns the banner and every exact-version check fails (run 36846203118).
+  # Match the version line itself instead of trusting line order.
   [ -x "$GEM_HOME_DIR/bin/fastlane" ] \
-    && "$GEM_HOME_DIR/bin/fastlane" --version 2>/dev/null | head -1
+    && "$GEM_HOME_DIR/bin/fastlane" --version 2>/dev/null \
+       | grep -Eo '^fastlane [0-9]+(\.[0-9]+)*$' | head -1
 }
 # Only an exact-version match short-circuits: a drift-tolerant gate would leave
 # an unpinned fastlane in place forever.
