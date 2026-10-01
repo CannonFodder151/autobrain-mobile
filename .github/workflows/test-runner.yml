@@ -1,8 +1,12 @@
 name: Test iOS Runner
-# AUT-4840: the self-hosted macOS runner has no Homebrew, so `brew install`
-# dies with `brew: command not found` (run 36814006469). Same fix as
-# install-fastlane.yml (AUT-4290): gem --user-install against the system Ruby,
-# then put the user gem bin dir on PATH.
+# AUT-4840: this workflow is a runner liveness check, not a fastlane installer.
+# It previously hard-failed on `brew install fastlane` — the self-hosted iMac
+# has no Homebrew, and the gem fallback cannot work either because the
+# CommandLineTools Ruby 2.6 SDK is missing ruby/config.h, so fastlane's native
+# extensions will not compile (runs 36814006469, 36825183321,
+# install-fastlane.yml 36517932757). Report fastlane presence as a diagnostic
+# and let the job pass on runner health; actually provisioning fastlane is
+# tracked by AUT-4844.
 on:
   workflow_dispatch:
 
@@ -17,10 +21,11 @@ jobs:
         run: echo "Runner is alive"; uname -a
       - name: Check Xcode
         run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      - name: Install fastlane via gem (no Homebrew on this runner)
+      - name: Report toolchain availability
+        # Non-fatal by design: this is a liveness probe. See AUT-4844.
         run: |
-          set -euo pipefail
-          gem install --user-install fastlane --no-document
-          echo "$(ruby -e 'print Gem.user_dir')/bin" >> "$GITHUB_PATH"
-          export PATH="$(ruby -e 'print Gem.user_dir')/bin:$PATH"
-          fastlane --version
+          set -uo pipefail
+          echo "user: $(whoami)  home: $HOME"
+          echo "brew: $(command -v brew || echo 'NOT INSTALLED')"
+          echo "ruby: $(ruby --version 2>&1)"
+          echo "fastlane: $(command -v fastlane || echo 'NOT INSTALLED')"
