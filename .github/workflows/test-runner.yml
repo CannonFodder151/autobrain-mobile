@@ -5,14 +5,15 @@ jobs:
   test:
     runs-on: [self-hosted, macOS, X64]
     steps:
-      - name: Probe
+      - name: Probe prebuilt ruby
         run: |
           set -uo pipefail
-          echo "user=$(whoami) groups=$(id -Gn) home=$HOME"
-          echo "PATH=$PATH"
-          sudo -n true 2>&1 && echo "SUDO_NOPASSWD=yes" || echo "SUDO_NOPASSWD=no"
-          ls -ld /usr/local 2>&1
-          test -w /usr/local && echo "USRLOCAL_WRITABLE=yes" || echo "USRLOCAL_WRITABLE=no"
-          echo "--- arch ---"; arch; uname -m
-          echo "--- net ---"; curl -sSI -m 15 https://github.com/ruby/ruby-builder/releases/latest | head -3
-          echo "--- disk ---"; df -h "$HOME" | tail -1
+          P="$HOME/.rubies/probe"
+          rm -rf "$P"; mkdir -p "$P"
+          curl -fsSL --retry 3 -o /tmp/ruby.tar.gz \
+            https://github.com/ruby/ruby-builder/releases/download/toolcache/ruby-3.3.9-macos-latest.tar.gz
+          echo "curl_exit=$?"
+          tar -xzf /tmp/ruby.tar.gz -C "$P" && echo "extract ok"
+          ls "$P" | head
+          file "$P/bin/ruby" 2>&1
+          "$P/bin/ruby" -e 'puts RUBY_PLATFORM; puts RUBY_DESCRIPTION' 2>&1
