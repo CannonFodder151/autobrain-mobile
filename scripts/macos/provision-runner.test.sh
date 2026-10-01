@@ -52,6 +52,39 @@ grep -q 'with-libyaml-dir=' "$DIR/provision-runner.sh" && ok "provision supplies
 grep -qE 'LIBYAML_SHA256=[0-9a-f]{64}' "$DIR/provision-runner.sh" && ok "libyaml tarball checksum is pinned" \
   || fail "libyaml tarball has no pinned sha256"
 
+# AUT-4857: a build that silently skipped psych is still "BUILD SUCCESSFUL", and
+# fastlane --version passes anyway because it parses YAML lazily. Both the script
+# and the workflow must therefore assert psych loads.
+grep -q 'require "psych"' "$DIR/provision-runner.sh" && ok "provision asserts psych loads" \
+  || fail "provision does not assert psych loads (a skipped psych extension passes silently)"
+grep -q 'require "psych"' "$ROOT/.github/workflows/install-fastlane.yml" \
+  && ok "install-fastlane.yml asserts psych loads in the fresh step" \
+  || fail "install-fastlane.yml does not assert psych loads"
+
+# The greps above cannot tell a *working* assertion from one that dies on a bad
+# Ruby API — AUT-4857 shipped `YAML.safe_load` right after `require "psych"`,
+# which raises `uninitialized constant YAML` because `yaml` is the wrapper. That
+# only surfaced on the runner. So execute the real snippet whenever a Ruby
+# exists: it is the one assertion here that can actually be wrong.
+psych_snippet() {
+  # Match both `ruby -e '...'` and the script's `"$RUBY_BIN/ruby" -e '...'`, and
+  # pick the psych one — other `ruby -e` calls (RbConfig probes) would match first.
+  grep -oE "[^ ]*ruby\"? -e '[^']*'" "$1" \
+    | grep 'require "psych"' | head -1 \
+    | sed "s/.*ruby\"\? -e '//; s/'$//"
+}
+for f in "$DIR/provision-runner.sh" "$ROOT/.github/workflows/install-fastlane.yml"; do
+  snip="$(psych_snippet "$f")"
+  [ -n "$snip" ] || { fail "could not extract the psych assertion from ${f##*/}"; continue; }
+  if ! command -v ruby >/dev/null 2>&1; then
+    echo "skip - no ruby on this host to execute the psych assertion from ${f##*/}"
+  elif out="$(ruby -e "$snip" 2>&1)"; then
+    ok "psych assertion from ${f##*/} executes cleanly"
+  else
+    fail "psych assertion from ${f##*/} raised: $out"
+  fi
+done
+
 # The env file is written by an inline block, so run that block for real with a
 # fake prefix and assert every path landed expanded. A `\`-escaped own-variable
 # writes the literal `$GEM_HOME_DIR` and the consuming step dies with
