@@ -126,6 +126,14 @@ ARCHHDRDIR="$("$RUBY_BIN/ruby" -e 'print RbConfig::CONFIG["rubyarchhdrdir"]')"
 [ -f "$ARCHHDRDIR/ruby/config.h" ] || die "ruby/config.h missing under $ARCHHDRDIR — native extensions would fail"
 say "ruby headers OK: $HDRDIR/ruby/ruby.h, $ARCHHDRDIR/ruby/config.h"
 
+# AUT-4857: the extension ruby-build forced `--with-ext=...,psych,+` can still be
+# skipped without failing the build on some paths, and a Ruby without psych breaks
+# gem/bundler/fastlane YAML parsing at a much later, more confusing point. Prove it
+# here, immediately after the build.
+"$RUBY_BIN/ruby" -e 'require "psych"; YAML.safe_load("a: 1")' \
+  || die "psych did not load — libyaml is missing; fastlane cannot parse YAML without it"
+say "psych OK: $("$RUBY_BIN/ruby" -e 'require "psych"; print Psych::VERSION')"
+
 # ------------------------------------------------------------- 2. fastlane gem
 export GEM_HOME="$GEM_HOME_DIR"
 export GEM_PATH="$GEM_HOME_DIR"

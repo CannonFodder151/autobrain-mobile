@@ -30,5 +30,9 @@ jobs:
           # shellcheck disable=SC1091
           . scripts/macos/toolchain-env.sh
           echo "ruby: $(ruby --version)"
+          # AUT-4857: fastlane --version succeeding does NOT prove psych works —
+          # fastlane parses YAML lazily. Assert it, so a future libyaml/headers
+          # regression fails here instead of inside a release build.
+          ruby -e 'require "psych"; YAML.safe_load("a: 1"); puts "psych: #{Psych::VERSION} ok"'
           command -v fastlane
           fastlane --version

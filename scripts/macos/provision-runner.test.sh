@@ -52,6 +52,15 @@ grep -q 'with-libyaml-dir=' "$DIR/provision-runner.sh" && ok "provision supplies
 grep -qE 'LIBYAML_SHA256=[0-9a-f]{64}' "$DIR/provision-runner.sh" && ok "libyaml tarball checksum is pinned" \
   || fail "libyaml tarball has no pinned sha256"
 
+# AUT-4857: a build that silently skipped psych is still "BUILD SUCCESSFUL", and
+# fastlane --version passes anyway because it parses YAML lazily. Both the script
+# and the workflow must therefore assert psych loads.
+grep -q 'require "psych"' "$DIR/provision-runner.sh" && ok "provision asserts psych loads" \
+  || fail "provision does not assert psych loads (a skipped psych extension passes silently)"
+grep -q 'require "psych"' "$ROOT/.github/workflows/install-fastlane.yml" \
+  && ok "install-fastlane.yml asserts psych loads in the fresh step" \
+  || fail "install-fastlane.yml does not assert psych loads"
+
 # The env file is written by an inline block, so run that block for real with a
 # fake prefix and assert every path landed expanded. A `\`-escaped own-variable
 # writes the literal `$GEM_HOME_DIR` and the consuming step dies with
