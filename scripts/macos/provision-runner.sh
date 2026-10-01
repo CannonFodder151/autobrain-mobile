@@ -9,21 +9,22 @@
 #   building native extensions (run 36825183321). install-fastlane.yml has
 #   failed 5/5 times for that reason.
 #
-# Why not Homebrew
-#   Homebrew's installer needs `sudo` to create /usr/local. Probed on this host:
-#   `sudo -n true` fails (the runner user has no NOPASSWD sudo), /usr/local is
-#   root:wheel, and the Actions PATH does not even contain /usr/local/bin. So
-#   Homebrew cannot be provisioned unattended; see the NOPASSWD note at the end
-#   of this script for the one command Nathan has to run once.
+# Homebrew
+#   Homebrew's stock installer needs `sudo` to create /usr/local. Probed on this
+#   host: `sudo -n true` fails (the runner user has no NOPASSWD sudo),
+#   /usr/local is root:wheel, and the Actions PATH does not even contain
+#   /usr/local/bin. So this script falls back to cloning Homebrew into a
+#   $HOME-owned prefix, which needs no privileges, and prefers /usr/local when
+#   SUDO_PASSWORD is supplied or brew is already installed there.
 #
-# What it does instead — no sudo, no system paths, no root
+# What it does — no sudo, no system paths, no root
 #   1. builds a self-contained Ruby 3.x under $HOME/.rbenv via ruby-build
 #      (ruby-build compiles its own OpenSSL/libyaml when the system copies are
 #      too old, so `gem install` can still reach rubygems.org over HTTPS)
 #   2. installs fastlane into a private GEM_HOME ($HOME/.gem)
-#   3. writes $HOME/.autobrain-toolchain.env, which every workflow sources via
+#   3. installs Homebrew into $HOME/.homebrew (or /usr/local when privileged)
+#   4. writes $HOME/.autobrain-toolchain.env, which every workflow sources via
 #      scripts/macos/toolchain-env.sh (Actions steps never read ~/.zshrc)
-#   4. best-effort Homebrew install when privileged access is available
 #
 # Idempotent: re-running is cheap and safe. Exits 0 once `fastlane --version`
 # works, so it is safe to call from a provisioning workflow and from a
@@ -37,6 +38,7 @@ set -euo pipefail
 RUBY_VERSION="${AUTOBRAIN_RUBY_VERSION:-3.3.6}"
 RBENV_DIR="$HOME/.rbenv"
 GEM_HOME_DIR="$HOME/.gem"
+HOMEBREW_DIR="$HOME/.homebrew"
 ENV_FILE="$HOME/.autobrain-toolchain.env"
 RBENV_REPO="https://github.com/rbenv/rbenv.git"
 RUBY_BUILD_REPO="https://github.com/rbenv/ruby-build.git"
@@ -45,8 +47,17 @@ say()  { echo "==> $*"; }
 warn() { echo "::warning::$*" >&2; }
 die()  { echo "::error::$*" >&2; exit 1; }
 
-# ---------------------------------------------------------------- fastlane gate
-if [ -x "$GEM_HOME_DIR/bin/fastlane" ] && "$GEM_HOME_DIR/bin/fastlane" --version >/dev/null 2>&1; then
+# ------------------------------------------------------------- fastlane gate
+# Skip the Ruby build only when fastlane already works AND Homebrew is already
+# on PATH. Gating on fastlane alone meant a re-run after fastlane was installed
+# exited at the top and never provisioned Homebrew, so the Homebrew acceptance
+# criterion could never be met by a re-run.
+brew_on_path() {
+  { [ -x /usr/local/bin/brew ] || [ -x /opt/homebrew/bin/brew ] || [ -x "$HOMEBREW_DIR/bin/brew" ]; }
+}
+
+if brew_on_path && [ -x "$GEM_HOME_DIR/bin/fastlane" ] \
+   && "$GEM_HOME_DIR/bin/fastlane" --version >/dev/null 2>&1; then
   say "fastlane already installed: $("$GEM_HOME_DIR/bin/fastlane" --version | head -1)"
   say "toolchain env: $ENV_FILE"
   exit 0
@@ -137,10 +148,57 @@ say "installing fastlane into $GEM_HOME_DIR"
 
 # ------------------------------------------------------------- 3. env file
 BREW_BIN=""
+HOMEBREW_VARS=""
 if [ -x /usr/local/bin/brew ]; then
   BREW_BIN="/usr/local/bin"
 elif [ -x /opt/homebrew/bin/brew ]; then
   BREW_BIN="/opt/homebrew/bin"
+fi
+
+# ------------------------------------------------- 4. Homebrew (no sudo needed)
+# Order matters: detect/provision Homebrew before the env file is written, so a
+# brew installed here lands in the same env file that puts Ruby and fastlane on
+# PATH.
+if [ -z "$BREW_BIN" ]; then
+  if [ -n "${SUDO_PASSWORD:-}" ]; then
+    say "installing Homebrew to /usr/local (SUDO_PASSWORD supplied)"
+    printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' /bin/bash -c \
+      'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' \
+      || warn "Homebrew install failed; rbenv Ruby still provides fastlane"
+  fi
+  if [ -x /usr/local/bin/brew ]; then
+    BREW_BIN="/usr/local/bin"
+  elif [ -x /opt/homebrew/bin/brew ]; then
+    BREW_BIN="/opt/homebrew/bin"
+  fi
+fi
+
+if [ -n "$BREW_BIN" ]; then
+  say "Homebrew present at $BREW_BIN/brew"
+else
+  # Unprivileged fallback. The stock installer needs sudo to create
+  # /usr/local, and the runner user has no NOPASSWD sudo, so clone brew into a
+  # $HOME-owned prefix instead. Homebrew derives its prefix from where the
+  # repository lives, so HOMEBREW_PREFIX/HOMEBREW_CELLAR/HOMEBREW_REPOSITORY are
+  # all redundant here — they only pin the cache/temp dirs inside $HOME, which
+  # the default would already do but which we set explicitly so later steps
+  # cannot fall back to a root-owned path.
+  # ponytail: a $HOME prefix is not one of Homebrew's supported prefixes, so
+  # `brew update` and bottle installs that hardlink into /usr/local can still
+  # misbehave. Upgrade path: give the runner user NOPASSWD sudo (or an admin
+  # account with one) and re-run this script, which then installs to
+  # /usr/local via SUDO_PASSWORD and drops this branch entirely.
+  say "installing Homebrew to $HOME/.homebrew (no sudo available)"
+  if git clone --depth 1 https://github.com/Homebrew/brew.git "$HOMEBREW_DIR" >/dev/null 2>&1; then
+    HOMEBREW_VARS="export HOMEBREW_NO_ANALYTICS=1"
+    BREW_BIN="$HOMEBREW_DIR/bin"
+    say "Homebrew cloned to $HOMEBREW_DIR"
+  else
+    warn "Homebrew clone failed; rbenv Ruby still provides fastlane"
+    warn "Nathan, to satisfy the Homebrew acceptance criterion for AUT-4845 run once on the iMac:"
+    warn "  sudo sh -c 'printf \"nathan ALL=(ALL) NOPASSWD: ALL\n\" > /etc/sudoers.d/github-actions-runner && chmod 440 /etc/sudoers.d/github-actions-runner'"
+    warn "then re-run the 'Provision macOS runner toolchain' workflow."
+  fi
 fi
 
 {
@@ -150,27 +208,18 @@ fi
   echo "export PATH=\"$RUBY_BIN:$GEM_HOME_DIR/bin:\$PATH\""
   echo "export GEM_HOME=\"$GEM_HOME_DIR\""
   echo "export GEM_PATH=\"$GEM_HOME_DIR\""
+  [ -n "$HOMEBREW_VARS" ] && echo "$HOMEBREW_VARS"
 } > "$ENV_FILE"
 say "wrote $ENV_FILE"
-
-# ------------------------------------------- 4. best-effort Homebrew (needs sudo)
-if [ -n "$BREW_BIN" ]; then
-  say "Homebrew present at $BREW_BIN/brew"
-elif [ -n "${SUDO_PASSWORD:-}" ]; then
-  say "installing Homebrew to /usr/local (SUDO_PASSWORD supplied)"
-  printf '%s\n' "$SUDO_PASSWORD" | sudo -S -p '' /bin/bash -c \
-    'NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' \
-    || warn "Homebrew install failed; rbenv Ruby still provides fastlane"
-else
-  warn "Homebrew skipped: no passwordless sudo on this host."
-  warn "Nathan, to satisfy the Homebrew acceptance criterion for AUT-4845 run once on the iMac:"
-  warn "  sudo sh -c 'printf \"nathan ALL=(ALL) NOPASSWD: ALL\n\" > /etc/sudoers.d/github-actions-runner && chmod 440 /etc/sudoers.d/github-actions-runner'"
-  warn "then re-run the 'Provision macOS runner toolchain' workflow."
-fi
 
 # ----------------------------------------------------------------- 5. verify
 # shellcheck disable=SC1090
 . "$ENV_FILE"
 command -v fastlane >/dev/null || die "fastlane still not on PATH after sourcing $ENV_FILE"
 fastlane --version
+if command -v brew >/dev/null; then
+  brew --version | head -1
+else
+  die "brew not on PATH after sourcing $ENV_FILE"
+fi
 say "toolchain OK — source scripts/macos/toolchain-env.sh in later steps"

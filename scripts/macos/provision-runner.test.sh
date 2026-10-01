@@ -58,13 +58,25 @@ grep -qE 'LIBYAML_SHA256=[0-9a-f]{64}' "$DIR/provision-runner.sh" && ok "libyaml
 # "GEM_HOME_DIR: unbound variable" under `set -u` (run 36840539520).
 gen="$(awk '/^\{$/{f=1;next} /^\} > /{f=0} f' "$DIR/provision-runner.sh")"
 out="$(bash -c "set -eu
-GEM_HOME_DIR=/fake/gem; RUBY_BIN=/fake/rbenv/bin; BREW_BIN=''
+GEM_HOME_DIR=/fake/gem; RUBY_BIN=/fake/rbenv/bin; BREW_BIN=/fake/brew/bin; HOMEBREW_VARS=''
 $gen" 2>&1)"
 case "$out" in
   *'$GEM_HOME_DIR'*|*'$RUBY_BIN'*) fail "env file block emits unexpanded variables: $out" ;;
-  *'PATH="/fake/rbenv/bin:/fake/gem/bin:$PATH"'*) ok "env file block expands paths and defers only \$PATH" ;;
+  *'PATH="/fake/brew/bin:$PATH"'*'PATH="/fake/rbenv/bin:/fake/gem/bin:$PATH"'*) ok "env file block expands paths and defers only \$PATH" ;;
   *) fail "env file block produced unexpected output: $out" ;;
 esac
+
+# The Homebrew acceptance criterion (AUT-4845) requires brew on the runner's
+# PATH, and the runner user has no sudo, so the script must fall back to a
+# $HOME-owned clone instead of only warning.
+grep -q 'HOMEBREW_DIR' "$DIR/provision-runner.sh" \
+  && grep -q 'github.com/Homebrew/brew.git' "$DIR/provision-runner.sh" \
+  && ok "provision falls back to a \$HOME Homebrew clone" \
+  || fail "provision has no unprivileged Homebrew fallback"
+# The early exit keyed on fastlane alone skipped Homebrew on every re-run: the
+# gate line itself has to test brew, not just declare the helper.
+grep -qE '^\s*if brew_on_path &&' "$DIR/provision-runner.sh" && ok "fastlane gate also checks brew" \
+  || fail "fastlane gate exits before Homebrew is provisioned"
 
 # The workflow must stay dispatch-only (runner isolation rule 3).
 wf="$ROOT/.github/workflows/install-fastlane.yml"
@@ -74,6 +86,9 @@ grep -vE '^[[:space:]]*#' "$wf" | grep -qE '\$\{\{[[:space:]]*secrets\.' \
   && fail "install-fastlane.yml reads secrets" || ok "install-fastlane.yml reads no secrets"
 grep -q 'scripts/macos/provision-runner.sh' "$wf" && ok "workflow calls the committed provisioning script" \
   || fail "workflow does not call scripts/macos/provision-runner.sh"
+# The verify step is the Homebrew acceptance check, so it must assert brew.
+grep -q 'brew --version' "$wf" && ok "workflow verify step asserts brew" \
+  || fail "workflow verify step does not assert brew"
 
 bash "$ROOT/scripts/check-workflow-runner-isolation.sh" >/dev/null 2>&1 \
   && ok "runner isolation gate passes" || fail "runner isolation gate fails"
