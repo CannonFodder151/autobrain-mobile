@@ -4,6 +4,13 @@
 *.pyc
 *.swp
 .DS_Store
+
+# AUT-4919: editor backup artifacts. Lineage sync commits with `git add -A`, so a
+# stray backup sitting in the working tree gets committed wholesale (b102347
+# tracked CHANGELOG.md.bak, 140KB, forever). scripts/sync-mobile.sh in the
+# autobrain monorepo also refuses to copy these out of frontend/.
+*.bak
+*~
 .atom/
 .build/
 .buildlog/
