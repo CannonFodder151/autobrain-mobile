@@ -1,16 +1,24 @@
 name: Test iOS Runner
 on:
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   test:
     runs-on: [self-hosted, macOS, X64]
     steps:
+      - uses: actions/checkout@v4
       - name: Check runner
         run: echo "Runner is alive"; uname -a
       - name: Check Xcode
         run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      - name: Install fastlane via Homebrew
-        run: |
-          set -euo pipefail
-          brew install fastlane
-          fastlane --version
+      # AUT-4840: this runner (Nathans-iMac-Pro, x86_64) has no Homebrew at any
+      # prefix and no passwordless sudo, so `brew install fastlane` can only
+      # ever exit 127 (run 36814006469). The script prefers Homebrew when it
+      # exists and otherwise provisions a user-space Ruby via micromamba.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.rubies
+          key: ios-runner-ruby-micromamba-3.3
+      - name: Install fastlane
+        run: ./scripts/install-fastlane-macos.sh

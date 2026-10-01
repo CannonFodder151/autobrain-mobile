@@ -1,8 +1,9 @@
 name: Install fastlane on macOS runner
 
-# AUT-4290: the runner has no Homebrew (`brew: command not found`, run
-# 36517932757), so install via gem against the system Ruby that ships with
-# CommandLineTools, then persist the bin dir on PATH for later jobs.
+# AUT-4290 / AUT-4840: the runner has no Homebrew (`brew: command not found`,
+# runs 36517932757 and 36814006469) and no passwordless sudo, so fastlane is
+# installed from a user-space Ruby provisioned by
+# scripts/install-fastlane-macos.sh, then verified in a separate step.
 on:
   workflow_dispatch:
 
@@ -13,18 +14,16 @@ jobs:
   install-fastlane:
     runs-on: [self-hosted, macOS, X64]
     steps:
-      - name: Install fastlane via gem (no Homebrew on this runner)
-        run: |
-          set -euo pipefail
-          gem install --user-install fastlane --no-document
-          GEM_BIN="$(ruby -e 'print Gem.user_dir')/bin"
-          echo "$GEM_BIN" >> "$GITHUB_PATH"
-          echo "GEM_BIN=$GEM_BIN" >> "$GITHUB_ENV"
-          export PATH="$GEM_BIN:$PATH"
-          fastlane --version
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.rubies
+          key: ios-runner-ruby-micromamba-3.3
+      - name: Install fastlane
+        run: ./scripts/install-fastlane-macos.sh
       - name: Verify fastlane install
         run: |
           set -euo pipefail
-          export PATH="$(ruby -e 'print Gem.user_dir')/bin:$PATH"
+          export PATH="$HOME/.rubies/ruby/bin:$PATH"
           which fastlane
           fastlane --version
