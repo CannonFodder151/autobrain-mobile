@@ -33,9 +33,9 @@ jobs:
         run: git config --global --add safe.directory '*'
 
       - name: Verify Flutter installation
-      run: |
-        flutter --version
-        flutter doctor -v
+        run: |
+          flutter --version
+          flutter doctor -v
 
       - name: Fetch dependencies
         run: flutter pub get
