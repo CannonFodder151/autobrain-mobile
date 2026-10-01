@@ -745,6 +745,16 @@ class _StationSheetState extends State<_StationSheet> {
   }
 
   Future<void> _loadHistory({bool force = false}) async {
+    if (widget.station.id.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _history = null;
+          _historyError = 'No history available for this station.';
+          _historyLoading = false;
+        });
+      }
+      return;
+    }
     final cache = _StationHistoryCache.instance;
     if (!force) {
       final cached = cache.get(widget.station.id);
@@ -1203,7 +1213,7 @@ class _ServoSpyList extends StatefulWidget {
 
   void _openStation(ServoStationRow s) {
     final station = _MapStation(
-      id: '',
+      id: s.id ?? '',
       name: s.name,
       brand: s.brand,
       logoUrl: s.logoUrl,
