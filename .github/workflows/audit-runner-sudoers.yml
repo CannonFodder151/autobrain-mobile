@@ -1,0 +1,36 @@
+name: Audit runner sudoers state (read-only, AUT-4880)
+# Reports whether the blanket NOPASSWD grant from AUT-4880 ever landed on the
+# signing host. Strictly read-only: `sudo -n -l` lists policy, it never runs a
+# command as root, and nothing here writes to /etc/sudoers.d.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: [self-hosted, macOS, X64]
+    steps:
+      - name: Report identity
+        run: |
+          echo "user=$(whoami) uid=$(id -u)"
+          echo "host=$(hostname)"
+
+      - name: Report effective sudo policy for this user
+        run: |
+          echo "== sudo -n -l =="
+          sudo -n -l 2>&1 || echo "(sudo -n -l exit $?)"
+
+      - name: Report the specific drop-in named in the withdrawn command
+        run: |
+          echo "== ls -l /etc/sudoers.d/github-actions-runner =="
+          ls -l /etc/sudoers.d/github-actions-runner 2>&1 || echo "(absent)"
+
+      - name: Grep every sudoers source for a NOPASSWD grant to this user
+        run: |
+          echo "== grep -rn NOPASSWD in /etc/sudoers and /etc/sudoers.d =="
+          sudo -n grep -rn 'NOPASSWD' /etc/sudoers /etc/sudoers.d 2>&1 || true
+
+      - name: Report sudoers.d directory listing
+        run: |
+          echo "== ls -la /etc/sudoers.d =="
+          ls -la /etc/sudoers.d 2>&1 || true
