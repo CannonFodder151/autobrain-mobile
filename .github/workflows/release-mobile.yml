@@ -29,9 +29,14 @@ name: Mobile Release (.aab)
 # x64]` alone matches any future self-hosted Linux runner, which would silently
 # re-share the signing secrets with whatever that runner is used for.
 
+# AUT-4766: dispatch-only. This repo is private on a GitHub Free plan, so
+# branch protection AND rulesets both return 403 ("Upgrade to GitHub Pro") —
+# there is no server-side gate on who may push to main. A `push: main` trigger
+# therefore turned "anyone with write access pushes" into "signed Play upload",
+# with no review step in between. workflow_dispatch requires write access AND
+# an explicit human action. Reinforced by rule 3 of
+# scripts/check-workflow-runner-isolation.sh.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -49,7 +54,6 @@ permissions:
 
 jobs:
   release:
-    if: github.event_name != 'pull_request'
     runs-on: [self-hosted, linux, x64, release-signing]
     steps:
       - uses: actions/checkout@v4
@@ -59,17 +63,11 @@ jobs:
           # apk-built tag ref.
           fetch-depth: 0
 
-      - name: Resolve release version (input or pubspec)
-        # Push-triggered runs have no inputs.version — derive it from
-        # pubspec.yaml so sync commits to main build + publish automatically.
+      - name: Resolve release version (dispatch input)
+        # Dispatch-only (AUT-4766), so inputs.version is always present.
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.version }}" ]; then
-            tag="${{ inputs.version }}"
-          else
-            version="$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}')"
-            tag="v${version}"
-          fi
+          tag="${{ inputs.version }}"
           tag="${tag#v}"
           tag="v${tag}"
           echo "Resolved release tag: $tag"
