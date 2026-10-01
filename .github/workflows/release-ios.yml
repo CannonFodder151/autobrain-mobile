@@ -281,6 +281,13 @@ jobs:
         # profile. Without them xcodebuild has no way to authenticate to the
         # portal and the archive fails with "No profiles for
         # 'com.autobrainservice.autobrain' were found".
+        #
+        # -destination 'generic/platform=iOS' is load-bearing too (run 36916568032).
+        # With no destination xcodebuild resolves to the generic *simulator* build,
+        # so automatic signing asks for an iOS App **Development** profile and dies
+        # with "Your team has no devices from which to generate a provisioning
+        # profile" -- this team registers distribution certs only. Naming the iOS
+        # device destination forces the App Store distribution profile path.
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           KEY_ID: ${{ env.APPLE_STORE_CONNECT_API_KEY_ID }}
@@ -295,6 +302,7 @@ jobs:
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
+            -destination 'generic/platform=iOS' \
             -archivePath "$BUILD_DIR/Runner.xcarchive" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$AUTH_KEY_PATH" \
