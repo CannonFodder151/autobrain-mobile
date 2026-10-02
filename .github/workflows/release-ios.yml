@@ -122,16 +122,27 @@ jobs:
           mv "$PROJ.tmp" "$PROJ"
           n="$(grep -c "DEVELOPMENT_TEAM = ${TEAM_ID};" "$PROJ")"
           [[ "$n" -eq 3 ]] || { echo "::error::expected 3 DEVELOPMENT_TEAM insertions (Debug/Release/Profile), got $n"; exit 1; }
-          # AUT-4355: the generated project hard-codes
+          # AUT-4355/AUT-5113: the generated project hard-codes
           # "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer", the legacy
-          # development identity name, while CODE_SIGN_STYLE = Automatic. Renaming
-          # it to "Apple Distribution" does NOT fix that -- archive then fails with
-          # "Runner is automatically signed for development, but a conflicting code
-          # signing identity Apple Distribution has been manually specified"
-          # (run 36912730915). Under automatic signing Xcode resolves the identity
-          # itself, so the pin has to go rather than be rewritten. This team holds
-          # distribution certs only, which is what -allowProvisioningUpdates plus the
-          # App Store Connect key then pick for the Release configuration.
+          # development identity name, while CODE_SIGN_STYLE = Automatic.
+          # Renaming that pin to "Apple Distribution" does NOT work -- archive
+          # then fails with "Runner is automatically signed for development, but
+          # a conflicting code signing identity Apple Distribution has been
+          # manually specified" (run 36912730915): under automatic signing Xcode
+          # rejects a hand-specified identity.
+          #
+          # Leaving it automatic does NOT work either, which is what runs
+          # 36916568032 / 36917499472 / 36995056277 / 37006711682 proved: even
+          # with a valid App Store profile installed, -destination
+          # 'generic/platform=iOS' and -allowProvisioningUpdates, automatic
+          # signing still resolves to the *development* profile type, and this
+          # team has zero registered devices, so it fails with "Your team has no
+          # devices from which to generate a provisioning profile" / "No
+          # profiles ... iOS App Development provisioning profiles".
+          #
+          # So: drop the legacy pin here, and pin manual signing on the Runner
+          # target in the archive step, which runs after the profile install
+          # step has verified the exact profile name.
           before="$(grep -c 'CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]' "$PROJ" || true)"
           sed -i '' '/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = /d' "$PROJ"
           after="$(grep -c 'CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]' "$PROJ" || true)"
@@ -186,12 +197,12 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Install provisioning profile
-        # AUT-4355: secrets.IOS_PROVISIONING_PROFILE_BASE64 is empty (verified on
-        # run 36814828691). An empty profile secret is no longer fatal — the
-        # archive step below now passes the App Store Connect API key to
-        # `xcodebuild -allowProvisioningUpdates`, which registers/creates the
-        # distribution profile itself. A stale base64 profile would override that
-        # anyway, so only install one when it is actually present.
+        # AUT-4355: an empty profile secret is not fatal — the archive step below
+        # passes the App Store Connect API key to `xcodebuild
+        # -allowProvisioningUpdates`, which can create the distribution profile
+        # itself. The secret is populated now (run 36998058429), and when it is
+        # present it is installed and verified rather than trusted.
+        id: profile
         env:
           PROVISIONING_PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
@@ -245,6 +256,13 @@ jobs:
           if p.get("ProvisionedDevices"):
               die("has ProvisionedDevices; that is a development/ad-hoc profile, not App Store distribution")
           print(f"  Checks OK: App ID {want}, get-task-allow=false, no ProvisionedDevices")
+          # Hand the verified name to the archive step, which pins it as
+          # PROVISIONING_PROFILE_SPECIFIER. Keeping it in one place means the
+          # name we sign with cannot drift from the name we verified.
+          out = os.environ.get("GITHUB_OUTPUT")
+          if out:
+              with open(out, "a") as fh:
+                  fh.write(f"name={name}\n")
           PY
 
       - name: Materialize App Store Connect API key
@@ -344,6 +362,34 @@ jobs:
             || { echo "::error::App Store Connect key was not materialized; the provisioning step above must run first"; exit 1; }
           BUILD_DIR="build/ios/ipa"
           mkdir -p "$BUILD_DIR"
+          # AUT-5113: pin manual signing on the Runner target. Automatic
+          # signing picks the profile type itself and resolves to the
+          # *development* path, which this team cannot satisfy (zero
+          # registered devices) — see the long note in the project-patch step
+          # above. Name the identity and the profile that the install step
+          # verified instead of letting Xcode guess. RunnerTests is excluded so
+          # the test target keeps its own settings.
+          PROFILE_NAME="${{ steps.profile.outputs.name }}"
+          [[ -n "$PROFILE_NAME" ]] \
+            || { echo "::error::no verified provisioning profile name; the install step above must run first and must not take its empty-secret path"; exit 1; }
+          PROJ=ios/Runner.xcodeproj/project.pbxproj
+          awk -v profile="$PROFILE_NAME" '
+            /PRODUCT_BUNDLE_IDENTIFIER = .*;/ && !/\.RunnerTests;$/ {
+              print
+              match($0, /^[\t ]*/)
+              ind = substr($0, 1, RLENGTH)
+              print ind "CODE_SIGN_STYLE = Manual;"
+              print ind "CODE_SIGN_IDENTITY[sdk=iphoneos*] = \"Apple Distribution\";"
+              print ind "PROVISIONING_PROFILE_SPECIFIER = \"" profile "\";"
+              next
+            }
+            { print }
+          ' "$PROJ" > "$PROJ.tmp"
+          mv "$PROJ.tmp" "$PROJ"
+          m="$(grep -c "PROVISIONING_PROFILE_SPECIFIER = \"${PROFILE_NAME}\";" "$PROJ")"
+          [[ "$m" -eq 3 ]] \
+            || { echo "::error::expected 3 PROVISIONING_PROFILE_SPECIFIER insertions (Debug/Release/Profile), got $m"; exit 1; }
+          echo "Runner target pinned to manual signing with profile '$PROFILE_NAME'"
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
