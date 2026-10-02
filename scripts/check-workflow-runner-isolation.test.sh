@@ -393,19 +393,26 @@ $SIGNING_JOB
           set -uo pipefail
           df -h /"
 
-# AUT-5189: the archive step must pin manual distribution signing. With automatic
-# signing, xcodebuild resolves an empty PROVISIONING_PROFILE_SPECIFIER and asks
-# Apple for a Development profile, which team UWQFQ6YJ5U cannot mint (no devices).
+# AUT-5189: the Runner target's Release config must pin manual distribution
+# signing. With automatic signing, xcodebuild resolves an empty
+# PROVISIONING_PROFILE_SPECIFIER and asks Apple for a Development profile, which
+# team UWQFQ6YJ5U cannot mint (no registered devices). The pins belong in the
+# target's build settings, not the xcodebuild command line — command-line
+# settings also reach Pods and SwiftPM targets, which reject the specifier.
 wf="$(dirname "$0")/../.github/workflows/release-ios.yml"
 for needle in \
-  'CODE_SIGN_STYLE=Manual' \
-  '"CODE_SIGN_IDENTITY[sdk=iphoneos*]=Apple Distribution"' \
-  '"PROVISIONING_PROFILE_SPECIFIER=$PROFILE_NAME"'
+  'CODE_SIGN_STYLE = Manual;' \
+  'CODE_SIGN_IDENTITY = "Apple Distribution";' \
+  'PROVISIONING_PROFILE_SPECIFIER = "{profile}";'
 do
   if grep -qF "$needle" "$wf"; then pass=$((pass+1)); else
-    fail=$((fail+1)); echo "not ok $fail - archive step missing: $needle"
+    fail=$((fail+1)); echo "not ok $fail - Runner/Release signing pin missing: $needle"
   fi
 done
+
+if grep -qE '^\s+CODE_SIGN_STYLE=Manual' "$wf"; then
+  fail=$((fail+1)); echo "not ok $fail - signing pinned on the xcodebuild command line leaks into Pods/SwiftPM targets"
+else pass=$((pass+1)); fi
 
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]

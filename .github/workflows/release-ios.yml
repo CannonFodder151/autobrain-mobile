@@ -236,6 +236,57 @@ jobs:
             echo "IOS_PROFILE_BUNDLE_ID=${APPID#*.}"
           } >> "$GITHUB_ENV"
 
+      - name: Pin manual distribution signing on the Runner target
+        # AUT-5189: the archive used to run with automatic signing and an empty
+        # PROVISIONING_PROFILE_SPECIFIER, so Xcode asked Apple to *mint* a
+        # Development profile and the team — distribution certs only, zero
+        # devices — refused ("Your team has no devices from which to generate a
+        # provisioning profile", run 37012631045). The profile installed above
+        # is exactly the right one; it just was not named.
+        #
+        # The pins go into the Runner target's own Release configuration, not
+        # the xcodebuild command line. Command-line settings are inherited by
+        # every target in the build: PROVISIONING_PROFILE_SPECIFIER that way
+        # reaches Pods-Runner and each SwiftPM package, which then fail with
+        # "'file_picker_file_picker' does not support the AutoBrain App Store
+        # provisioning profile" (run 37031213870), and a bracketed
+        # "CODE_SIGN_IDENTITY[sdk=iphoneos*]" argument is not parsed as a single
+        # setting by xcodebuild at all. RunnerTests and the pods keep automatic
+        # signing, which is what they want.
+        #
+        # CODE_SIGN_STYLE accompanies the specifier: specifier with Automatic
+        # style is AUT-4959's "conflicting provisioning settings".
+        env:
+          PROFILE_NAME: ${{ env.IOS_PROFILE_NAME }}
+          PROFILE_BUNDLE_ID: ${{ env.IOS_PROFILE_BUNDLE_ID }}
+          BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "${PROFILE_NAME:-}" ]] \
+            || { echo "::error::no distribution profile was installed; refusing to sign automatically"; exit 1; }
+          if [[ "${PROFILE_BUNDLE_ID:-}" != "${BUNDLE_ID}" ]]; then
+            echo "::error::profile '$PROFILE_NAME' is provisioned for '${PROFILE_BUNDLE_ID:-<none>}', not '$BUNDLE_ID'"
+            exit 1
+          fi
+          python3 - "$PROFILE_NAME" "$BUNDLE_ID" <<'PY'
+          import re, sys
+          path, profile, bundle = "ios/Runner.xcodeproj/project.pbxproj", sys.argv[1], sys.argv[2]
+          src = open(path).read()
+          blocks = re.findall(r'\t\t[A-F0-9]{24} /\* [^\n]*? \*/ = \{\n.*?\n\t\t\};\n', src, re.S)
+          hits = [b for b in blocks
+                  if 'INFOPLIST_FILE = Runner/Info.plist;' in b
+                  and 'name = Release;' in b
+                  and f'PRODUCT_BUNDLE_IDENTIFIER = {bundle};' in b]
+          if len(hits) != 1:
+              sys.exit(f"::error::expected 1 Runner-target Release configuration, matched {len(hits)}")
+          pins = ('\t\t\t\tCODE_SIGN_STYLE = Manual;\n'
+                  '\t\t\t\tCODE_SIGN_IDENTITY = "Apple Distribution";\n'
+                  f'\t\t\t\tPROVISIONING_PROFILE_SPECIFIER = "{profile}";\n')
+          new = re.sub(r'(buildSettings = \{\n)', lambda m: m.group(1) + pins, hits[0], count=1)
+          open(path, 'w').write(src.replace(hits[0], new, 1))
+          print(f"Pinned manual distribution signing on Runner/Release with profile '{profile}'")
+          PY
+
       - name: Materialize App Store Connect API key
         # AUT-4355: this key is what lets `xcodebuild -allowProvisioningUpdates`
         # fetch or create the App Store profile, replacing the empty
@@ -322,27 +373,21 @@ jobs:
         # asked for a Development profile and the team — which registers
         # distribution certificates only, with zero devices — refuses
         # ("Your team has no devices from which to generate a provisioning
-        # profile"). AUT-5189: pin manual signing to the distribution
-        # certificate and the profile installed above. CODE_SIGN_STYLE must
-        # accompany the specifier — setting only the specifier (AUT-4959) or
-        # only the identity gives "conflicting provisioning settings".
+        # profile"). The "Pin manual distribution signing" step writes Manual
+        # signing plus the profile name into the Runner target's own Release
+        # configuration, which is the only level that does not also hit the
+        # Pods and SwiftPM targets.
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           KEY_ID: ${{ env.APPLE_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ env.APPLE_STORE_CONNECT_API_ISSUER_ID }}
           AUTH_KEY_PATH: ${{ env.APPLE_STORE_AUTH_KEY_PATH }}
-          PROFILE_NAME: ${{ env.IOS_PROFILE_NAME }}
-          PROFILE_BUNDLE_ID: ${{ env.IOS_PROFILE_BUNDLE_ID }}
         run: |
           set -euo pipefail
           [[ -n "${KEY_ID:-}" && -n "${ISSUER_ID:-}" && -n "${AUTH_KEY_PATH:-}" ]] \
             || { echo "::error::App Store Connect key was not materialized; the provisioning step above must run first"; exit 1; }
-          [[ -n "${PROFILE_NAME:-}" ]] \
-            || { echo "::error::secrets.IOS_PROVISIONING_PROFILE_BASE64 is unset or undecodable, so there is no distribution profile to pin"; exit 1; }
-          if [[ -n "${PROFILE_BUNDLE_ID:-}" && "$PROFILE_BUNDLE_ID" != "${{ env.IOS_BUNDLE_ID }}" ]]; then
-            echo "::error::profile '$(echo "$PROFILE_NAME")' is provisioned for '$PROFILE_BUNDLE_ID', not '${{ env.IOS_BUNDLE_ID }}'"
-            exit 1
-          fi
+          [[ -n "${IOS_PROFILE_NAME:-}" ]] \
+            || { echo "::error::no provisioning profile was installed; refusing to archive with automatic signing"; exit 1; }
           BUILD_DIR="build/ios/ipa"
           mkdir -p "$BUILD_DIR"
           xcodebuild -workspace ios/Runner.xcworkspace \
@@ -354,9 +399,6 @@ jobs:
             -authenticationKeyPath "$AUTH_KEY_PATH" \
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID" \
-            CODE_SIGN_STYLE=Manual \
-            "CODE_SIGN_IDENTITY[sdk=iphoneos*]=Apple Distribution" \
-            "PROVISIONING_PROFILE_SPECIFIER=$PROFILE_NAME" \
             archive
           xcodebuild -exportArchive \
             -archivePath "$BUILD_DIR/Runner.xcarchive" \
