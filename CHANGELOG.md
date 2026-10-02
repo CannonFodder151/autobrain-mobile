@@ -11,6 +11,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed (AUT-5242)
+- ci(ios): the altool failure branch in `.github/workflows/release-ios.yml` told the operator to "see altool-output.xml in job artifacts", but the workflow had no `actions/upload-artifact` step anywhere, so `$RUNNER_TEMP/altool-output.xml` was discarded when the job ended. A failure-gated `Upload altool output (on failure)` step now retains the XML as the `altool-output` artifact after the upload step.
+
 ### Security (AUT-5164)
 - ci(ios): the "Install provisioning profile" step in `.github/workflows/release-ios.yml` printed the profile's `Name` and `application-identifier` raw and interpolated them into a `::error::` annotation. A profile whose `Name` contained a newline made the Actions runner parse the rest of the line as a workflow command (verified with `Name = "Injected\n::set-output name=pwn::1"`). Both fields are now sanitised at the parse site, before they reach the log, `GITHUB_ENV` or any `::` annotation — a newline in `GITHUB_ENV` would otherwise inject a whole extra variable.
 - ci(ios): the step never compared `ExpirationDate`, so an expired profile passed the gate and failed later inside xcodebuild with an error that never named the profile. The date is now compared against the current UTC time. `plistlib` returns a *naive* datetime for `<date>`, so it is normalised to UTC first — the direct comparison against an aware `now()` raises `TypeError` on every genuine profile.

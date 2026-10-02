@@ -595,6 +595,20 @@ jobs:
           echo "altool upload completed for $ipa"
           # Notarization not required for TestFlight/App Store distribution; skip
 
+      - name: Upload altool output (on failure)
+        # AUT-5242: the ::error:: above points the operator at
+        # altool-output.xml "in job artifacts", but nothing uploaded it --
+        # $RUNNER_TEMP/altool-output.xml dies with the job, so a real upload
+        # failure left no retained diagnostic. Gate on failure() so the happy
+        # path uploads nothing; if-no-files-found: ignore so a failure that
+        # happened before altool ran does not error a second time.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: altool-output
+          path: ${{ runner.temp }}/altool-output.xml
+          if-no-files-found: ignore
+
       - name: Conditionally publish GitHub Release (release lane only)
         if: ${{ inputs.lane == 'release' }}
         id: release
