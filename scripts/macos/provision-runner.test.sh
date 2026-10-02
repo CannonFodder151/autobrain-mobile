@@ -167,6 +167,60 @@ grep -qE '\[ "\$have" = "\$FASTLANE_VERSION" \]' "$prov" \
 grep -q 'head -1' "$prov" && fail "provision-runner.sh still reads a fixed output line" \
   || ok "provision-runner.sh reads no fixed output line"
 
+# AUT-5020: `$GEM_HOME_DIR/bin/fastlane` is RubyGems' loader stub, which
+# activates the gem through `Gem.path`, so the pre-install gate only works when
+# GEM_HOME is already exported. It was exported ~100 lines further down (just
+# before `gem install`), so the stub died on an already-provisioned runner, the
+# gate read "not installed", and every run reinstalled fastlane (runs
+# 36947677248 / 36948309563). Run the *call site* — not just the function —
+# against a stub that refuses to answer without GEM_HOME, which is how the real
+# stub behaves and how the old `cat`-stub test hid this.
+GEM_STUB="$tmp/gem/bin/fastlane"
+stub_gem_fastlane() { # $1 = GEM_HOME guard body, $2 = --version output
+  rm -rf "$tmp/gem"; mkdir -p "$tmp/gem/bin"
+  { echo '#!/bin/sh'
+    echo "$1"
+    echo "cat <<'STUB_EOF'"
+    printf '%s\n' "$2"
+    echo STUB_EOF
+  } > "$GEM_STUB"
+  chmod +x "$GEM_STUB"
+}
+gate_block="$(awk '/^if have=/{f=1} f{print} f&&/^fi$/{exit}' "$prov")"
+run_gate_block() { # $1 = fake --version output; runs the real gate call site
+  stub_gem_fastlane '[ -n "$GEM_HOME" ] || { echo "stub: cannot activate fastlane without GEM_HOME (GEM_HOME=${GEM_HOME:-unset})" >&2; exit 1; }' "$1"
+  GEM_HOME_DIR="$tmp/gem" FASTLANE_VERSION=2.240.1 ENV_FILE="$tmp/toolchain.env" \
+    bash -c "say() { echo \"==> \$*\"; }
+$gate_fn
+$gate_block" 2>&1
+}
+out="$(run_gate_block 'fastlane 2.240.1')"
+case "$out" in
+  *'==> fastlane already installed: fastlane 2.240.1'*) ok "pre-install gate short-circuits with GEM_HOME exported" ;;
+  *) fail "pre-install gate reinstalled an already-installed fastlane (GEM_HOME missing at the gate): $out" ;;
+esac
+case "$out" in
+  *reinstall*) fail "gate fell through to reinstall on an exact version match: $out" ;;
+  *) ok "gate does not fall through to reinstall on an exact version match" ;;
+esac
+# The gate call site must carry GEM_HOME; asserting it on the real line keeps the
+# check from passing again because some unrelated export moved.
+grep -qE '^if have="\$\(GEM_HOME="\$GEM_HOME_DIR" GEM_PATH="\$GEM_HOME_DIR" installed_fastlane\)"; then$' "$prov" \
+  && ok "gate call site exports GEM_HOME/GEM_PATH" \
+  || fail "gate call site does not export GEM_HOME/GEM_PATH"
+
+# Diagnosability: a stub that answers but prints no version line must say so,
+# instead of the output vanishing into the read loop (AUT-5020).
+stub_gem_fastlane ':' 'fastlane installation at path:'
+out="$(GEM_HOME_DIR="$tmp/gem" FASTLANE_VERSION=2.240.1 bash -c "$gate_fn
+installed_fastlane" 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ] && [[ "$out" == *"printed no parseable version"* ]] \
+     && [[ "$out" == *"fastlane installation at path:"* ]]; then
+  ok "installed_fastlane echoes the unparsed output to stderr on rc 1"
+else
+  fail "installed_fastlane hid its unparsed output (rc=$rc): $out"
+fi
+
 # AUT-4882 F3: rbenv, ruby-build and fastlane must all be pinned. A moving
 # default branch here is code exec that every later job sources through
 # $HOME/.rbenv.

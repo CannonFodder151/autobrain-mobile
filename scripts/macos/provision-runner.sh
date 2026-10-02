@@ -74,25 +74,39 @@ die()  { echo "::error::$*" >&2; exit 1; }
 # Returning a status rather than an empty string keeps "not installed" (rc 1)
 # distinct from "installed at an unexpected version" (rc 0, value printed) —
 # otherwise a missing binary looks like an empty version and the caller logs
-# bogus drift. The read loop is fed by process substitution so it runs in this
-# shell and `out` survives it; a pipeline would put the function body in a
-# subshell and lose the assignment.
+# bogus drift. The child's output is captured first so the version can be matched
+# and, when nothing matches, echoed to stderr instead of silently vanishing.
 installed_fastlane() {
   [ -x "$GEM_HOME_DIR/bin/fastlane" ] || return 1
-  local line out=""
+  local line out="" raw
+  raw="$("$GEM_HOME_DIR/bin/fastlane" --version 2>&1)" || true
   while IFS= read -r line; do
     if [[ "$line" =~ ^fastlane\ ([0-9]+(\.[0-9]+)*)$ ]]; then
       out="${BASH_REMATCH[1]}"
       break
     fi
-  done < <("$GEM_HOME_DIR/bin/fastlane" --version 2>&1)
-  [ -n "$out" ] || return 1
+  done <<<"$raw"
+  if [ -z "$out" ]; then
+    # The read loop above discards every non-matching line, so a stub that cannot
+    # even start (wrong GEM_HOME, broken Ruby) used to be indistinguishable from
+    # "not installed" in the runner log (AUT-5020). Print what it actually said.
+    printf 'fastlane --version printed no parseable version:\n%s\n' "$raw" >&2
+    return 1
+  fi
   printf '%s\n' "$out"
 }
 
 # Only an exact-version match short-circuits: a drift-tolerant gate would leave
 # an unpinned fastlane in place forever.
-if have="$(installed_fastlane)"; then
+#
+# GEM_HOME/GEM_PATH are set for this call because `$GEM_HOME_DIR/bin/fastlane`
+# is RubyGems' generated loader stub, which activates the gem through `Gem.path`.
+# The script only exported GEM_HOME further down (right before `gem install`), so
+# here $HOME/.gem was not on the gem path, the stub died, printed no version line,
+# and the gate reported "not installed" on every single run — an unconditional
+# `gem install` of fastlane on an already-provisioned runner (AUT-5020, runs
+# 36947677248 / 36948309563).
+if have="$(GEM_HOME="$GEM_HOME_DIR" GEM_PATH="$GEM_HOME_DIR" installed_fastlane)"; then
   if [ "$have" = "$FASTLANE_VERSION" ]; then
     say "fastlane already installed: fastlane $have"
     say "toolchain env: $ENV_FILE"
