@@ -194,6 +194,10 @@ jobs:
         # anyway, so only install one when it is actually present.
         env:
           PROVISIONING_PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          # AUT-5164 (F5): lets the verifier confirm the profile belongs to the
+          # team we are signing for, instead of trusting the profile's own
+          # application-identifier prefix. Checked only when non-empty.
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
         run: |
           set -euo pipefail
           if [[ -z "${PROVISIONING_PROFILE_B64:-}" ]]; then
@@ -214,27 +218,105 @@ jobs:
           # "Invalid object in plist for JSON format"). Decode straight to a
           # plist with `security cms -D -o` and assert on its exit status.
           DECODED="$RUNNER_TEMP/autobrain_distribution.plist"
+          # AUT-5164 (F6): the expanded plist carries DeveloperCertificates and,
+          # for a development profile, every device UDID. Nothing downstream
+          # reads it, so drop it as the step ends. The installed
+          # .mobileprovision in $PROFILE_DIR has to stay — codesign and
+          # exportArchive resolve the pinned PROVISIONING_PROFILE_SPECIFIER
+          # against it.
+          trap 'rm -f "$DECODED"' EXIT
           if ! security cms -D -i "$PROFILE" -o "$DECODED"; then
             echo "::error::secrets.IOS_PROVISIONING_PROFILE_BASE64 is not a decodable CMS-signed .mobileprovision"
             exit 1
           fi
-          field() { plutil -extract "$1" raw -o - "$DECODED" 2>/dev/null || echo "?"; }
-          NAME="$(field Name)"
-          APPID="$(field Entitlements.application-identifier)"
-          echo "Provisioning profile installed:"
-          echo "  Name:    $NAME"
-          echo "  Team:    $(field TeamIdentifier.0)"
-          echo "  AppID:   $(field AppIDName)"
-          echo "  Bundle:  $APPID"
-          echo "  Expires: $(field ExpirationDate)"
-          # AUT-5189: hand the profile's real Name to the archive step. The archive
-          # step used to leave PROVISIONING_PROFILE_SPECIFIER empty, so xcodebuild
-          # fell back to automatic signing and asked Apple for a *Development*
-          # profile — which this team cannot mint (zero registered devices).
-          {
-            echo "IOS_PROFILE_NAME=$NAME"
-            echo "IOS_PROFILE_BUNDLE_ID=${APPID#*.}"
-          } >> "$GITHUB_ENV"
+          # AUT-5113: verify the decoded profile instead of printing it and
+          # trusting it. A profile for the wrong App ID, or a
+          # development/ad-hoc one, previously failed four runs later inside
+          # xcodebuild, with an error that never named the profile.
+          #
+          # AUT-5164: the profile is attacker-influenced data (CWE-93), so its
+          # fields are sanitised at the parse site — once, before any of them
+          # reaches a log line, GITHUB_ENV or the ::error:: annotation — and its
+          # expiry and ProvisionsAllDevices flag are checked too.
+          PROFILE_PLIST="$DECODED" IOS_BUNDLE_ID="$IOS_BUNDLE_ID" \
+            TEAM_ID="${TEAM_ID:-}" python3 - <<'PY'
+          import datetime, os, plistlib, sys
+
+          try:
+              with open(os.environ["PROFILE_PLIST"], "rb") as fh:
+                  p = plistlib.load(fh)
+          except Exception as exc:
+              print("::error::provisioning profile: CMS payload is not a valid property list (%s)" % exc)
+              sys.exit(1)
+          want = os.environ["IOS_BUNDLE_ID"]
+          ent = p.get("Entitlements") or {}
+
+          # AUT-5164 (F2, CWE-93): a CR or LF in a profile field makes the
+          # Actions runner parse the rest of the line as a workflow command —
+          # verified with Name = "Injected\n::set-output name=pwn::1", which
+          # emitted a standalone ::set-output line. Collapse both here, at the
+          # parse site, so every consumer is covered: the log, the ::error::
+          # annotation, and GITHUB_ENV (a newline there injects a whole extra
+          # variable). Comparisons use the raw value; everything printed,
+          # written or interpolated uses the sanitised one.
+          def clean(value):
+              return str(value).replace("\r", " ").replace("\n", " ").strip()
+
+          name = clean(p.get("Name", "<none>"))
+          raw_app_id = ent.get("application-identifier", "")
+          app_id = clean(raw_app_id)
+
+          def die(msg):
+              print(f"::error::provisioning profile '{name}': {msg}")
+              sys.exit(1)
+
+          print("Provisioning profile installed:")
+          print("  Name:    %s" % name)
+          print("  Team:    %s" % (app_id.split(".")[0] if app_id else "?"))
+          print("  AppID:   %s" % (app_id or "<none>"))
+          print("  Expires: %s" % clean(p.get("ExpirationDate", "?")))
+
+          if not raw_app_id:
+              die("has no application-identifier entitlement")
+          if raw_app_id.split(".", 1)[-1] != want:
+              die("App ID is %s, but this run builds %s" % (app_id or "<none>", want))
+          # AUT-5164 (F5): the Team: line above is derived from the profile's
+          # own application-identifier prefix, which is why nothing caught a
+          # profile minted for another team. Skipped when the secret is unset
+          # so an absent secret does not become a new failure mode.
+          team = os.environ.get("TEAM_ID", "").strip()
+          if team and not raw_app_id.startswith(team + "."):
+              die("application-identifier %s is not in team %s" % (app_id or "<none>", team))
+          # AUT-5164 (F3): plistlib yields a *naive* datetime for <date>, so
+          # normalise to UTC before comparing — the direct comparison against
+          # an aware now() raises TypeError on every genuine profile.
+          exp = p.get("ExpirationDate")
+          if isinstance(exp, datetime.datetime):
+              if exp.tzinfo is None:
+                  exp = exp.replace(tzinfo=datetime.timezone.utc)
+              if exp < datetime.datetime.now(datetime.timezone.utc):
+                  die("expired on %s" % exp)
+          # AUT-5164 (F4): an in-house/enterprise profile is not exportable via
+          # app-store, so it previously only failed later inside xcodebuild.
+          if p.get("ProvisionsAllDevices"):
+              die("ProvisionsAllDevices; that is an in-house/enterprise profile, not App Store distribution")
+          if ent.get("get-task-allow", True):
+              die("get-task-allow is set; that is a development profile and cannot be exported to the App Store")
+          if p.get("ProvisionedDevices"):
+              die("has ProvisionedDevices; that is a development/ad-hoc profile, not App Store distribution")
+          print("  Checks OK: App ID %s, not expired, get-task-allow=false, no ProvisionedDevices, not ProvisionsAllDevices" % want)
+
+          # AUT-5189: hand the profile's real Name to the archive step, which
+          # pins it as PROVISIONING_PROFILE_SPECIFIER. Keeping the two in one
+          # place means the name we sign with cannot drift from the name we
+          # verified. Written from here so the values are already sanitised —
+          # a newline in either would otherwise inject a second GITHUB_ENV var.
+          out = os.environ.get("GITHUB_ENV")
+          if out:
+              with open(out, "a") as fh:
+                  fh.write(f"IOS_PROFILE_NAME={name}\n")
+                  fh.write(f"IOS_PROFILE_BUNDLE_ID={raw_app_id.split('.', 1)[-1]}\n")
+          PY
 
       - name: Pin manual distribution signing on the Runner target
         # AUT-5189: the archive used to run with automatic signing and an empty
