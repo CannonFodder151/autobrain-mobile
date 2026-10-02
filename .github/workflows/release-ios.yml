@@ -122,16 +122,27 @@ jobs:
           mv "$PROJ.tmp" "$PROJ"
           n="$(grep -c "DEVELOPMENT_TEAM = ${TEAM_ID};" "$PROJ")"
           [[ "$n" -eq 3 ]] || { echo "::error::expected 3 DEVELOPMENT_TEAM insertions (Debug/Release/Profile), got $n"; exit 1; }
-          # AUT-4355: the generated project hard-codes
+          # AUT-4355/AUT-5113: the generated project hard-codes
           # "CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer", the legacy
-          # development identity name, while CODE_SIGN_STYLE = Automatic. Renaming
-          # it to "Apple Distribution" does NOT fix that -- archive then fails with
-          # "Runner is automatically signed for development, but a conflicting code
-          # signing identity Apple Distribution has been manually specified"
-          # (run 36912730915). Under automatic signing Xcode resolves the identity
-          # itself, so the pin has to go rather than be rewritten. This team holds
-          # distribution certs only, which is what -allowProvisioningUpdates plus the
-          # App Store Connect key then pick for the Release configuration.
+          # development identity name, while CODE_SIGN_STYLE = Automatic.
+          # Renaming that pin to "Apple Distribution" does NOT work -- archive
+          # then fails with "Runner is automatically signed for development, but
+          # a conflicting code signing identity Apple Distribution has been
+          # manually specified" (run 36912730915): under automatic signing Xcode
+          # rejects a hand-specified identity.
+          #
+          # Leaving it automatic does NOT work either, which is what runs
+          # 36916568032 / 36917499472 / 36995056277 / 37006711682 proved: even
+          # with a valid App Store profile installed, -destination
+          # 'generic/platform=iOS' and -allowProvisioningUpdates, automatic
+          # signing still resolves to the *development* profile type, and this
+          # team has zero registered devices, so it fails with "Your team has no
+          # devices from which to generate a provisioning profile" / "No
+          # profiles ... iOS App Development provisioning profiles".
+          #
+          # So: drop the legacy pin here, and pin manual signing on the Runner
+          # target in the archive step, which runs after the profile install
+          # step has verified the exact profile name.
           before="$(grep -c 'CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]' "$PROJ" || true)"
           sed -i '' '/"CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]" = /d' "$PROJ"
           after="$(grep -c 'CODE_SIGN_IDENTITY\[sdk=iphoneos\*\]' "$PROJ" || true)"
@@ -186,12 +197,12 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Install provisioning profile
-        # AUT-4355: secrets.IOS_PROVISIONING_PROFILE_BASE64 is empty (verified on
-        # run 36814828691). An empty profile secret is no longer fatal — the
-        # archive step below now passes the App Store Connect API key to
-        # `xcodebuild -allowProvisioningUpdates`, which registers/creates the
-        # distribution profile itself. A stale base64 profile would override that
-        # anyway, so only install one when it is actually present.
+        # AUT-4355: an empty profile secret is not fatal — the archive step below
+        # passes the App Store Connect API key to `xcodebuild
+        # -allowProvisioningUpdates`, which can create the distribution profile
+        # itself. The secret is populated now (run 36998058429), and when it is
+        # present it is installed and verified rather than trusted.
+        id: profile
         env:
           PROVISIONING_PROFILE_B64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
@@ -202,28 +213,57 @@ jobs:
           fi
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
+          echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$PROFILE_DIR/autobrain_distribution.mobileprovision"
           PROFILE="$PROFILE_DIR/autobrain_distribution.mobileprovision"
-          echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$PROFILE"
-          # Fail closed if a profile IS supplied but is undecodable — that is a
-          # real signing fault, unlike an absent profile.
+          # Fail closed if a profile IS supplied but is wrong — that is a real
+          # signing fault, unlike an absent profile.
           #
-          # AUT-5149: this used to pipe through `plutil -convert json`. That
-          # cannot represent a real .mobileprovision — the CMS payload carries
-          # <data> blobs and nested dicts plutil will not flatten — so it failed
-          # on *every* genuine profile (run 36998058429:
-          # "Invalid object in plist for JSON format"). Decode straight to a
-          # plist with `security cms -D -o` and assert on its exit status.
-          DECODED="$RUNNER_TEMP/autobrain_distribution.plist"
-          if ! security cms -D -i "$PROFILE" -o "$DECODED"; then
-            echo "::error::secrets.IOS_PROVISIONING_PROFILE_BASE64 is not a decodable CMS-signed .mobileprovision"
-            exit 1
-          fi
-          field() { plutil -extract "$1" raw -o - "$DECODED" 2>/dev/null || echo "?"; }
-          echo "Provisioning profile installed:"
-          echo "  Name:    $(field Name)"
-          echo "  Team:    $(field TeamIdentifier.0)"
-          echo "  AppID:   $(field AppIDName)"
-          echo "  Expires: $(field ExpirationDate)"
+          # AUT-5113: do NOT pipe this through `plutil -convert json`. A
+          # mobileprovision carries CreationDate/ExpirationDate as <date>, and
+          # JSON has no date type, so plutil refuses the conversion
+          # ("Invalid object in plist for JSON format", run 36998058429) —
+          # that form failed on a perfectly valid profile. plistlib is
+          # date-safe. Fail here, naming both values, on the two things that
+          # made the archive step fail for four runs: a profile for the wrong
+          # App ID, and a development/ad-hoc profile.
+          plist="$RUNNER_TEMP/autobrain_distribution.plist"
+          security cms -D -i "$PROFILE" -o "$plist" \
+            || { echo "::error::IOS_PROVISIONING_PROFILE_BASE64 is not a CMS-signed provisioning profile"; exit 1; }
+          PROFILE_PLIST="$plist" IOS_BUNDLE_ID="$IOS_BUNDLE_ID" python3 - <<'PY'
+          import os, plistlib, sys
+          with open(os.environ["PROFILE_PLIST"], "rb") as fh:
+              p = plistlib.load(fh)
+          want = os.environ["IOS_BUNDLE_ID"]
+          ent = p.get("Entitlements", {})
+          app_id = ent.get("application-identifier", "")
+          name = p.get("Name", "<none>")
+
+          def die(msg):
+              print(f"::error::provisioning profile '{name}': {msg}")
+              sys.exit(1)
+
+          print("Provisioning profile installed:")
+          print("  Name:", name)
+          print("  Team:", app_id.split(".")[0] if app_id else "?")
+          print("  AppID:", app_id or "<none>")
+          print("  Expires:", p.get("ExpirationDate", "?"))
+          if not app_id:
+              die("no application-identifier entitlement")
+          if app_id.split(".", 1)[-1] != want:
+              die(f"App ID is {app_id}, but this run builds {want}")
+          if ent.get("get-task-allow", True):
+              die("get-task-allow is set; that is a development profile and cannot be exported to the App Store")
+          if p.get("ProvisionedDevices"):
+              die("has ProvisionedDevices; that is a development/ad-hoc profile, not App Store distribution")
+          print(f"  Checks OK: App ID {want}, get-task-allow=false, no ProvisionedDevices")
+          # Hand the verified name to the archive step, which pins it as
+          # PROVISIONING_PROFILE_SPECIFIER. Keeping it in one place means the
+          # name we sign with cannot drift from the name we verified.
+          out = os.environ.get("GITHUB_OUTPUT")
+          if out:
+              with open(out, "a") as fh:
+                  fh.write(f"name={name}\n")
+          PY
 
       - name: Materialize App Store Connect API key
         # AUT-4355: this key is what lets `xcodebuild -allowProvisioningUpdates`
@@ -305,12 +345,10 @@ jobs:
         # portal and the archive fails with "No profiles for
         # '<bundle id>' were found".
         #
-        # -destination 'generic/platform=iOS' is load-bearing too (run 36916568032).
-        # With no destination xcodebuild resolves to the generic *simulator* build,
-        # so automatic signing asks for an iOS App **Development** profile and dies
-        # with "Your team has no devices from which to generate a provisioning
-        # profile" -- this team registers distribution certs only. Naming the iOS
-        # device destination forces the App Store distribution profile path.
+        # -destination 'generic/platform=iOS' is load-bearing too (run 36916568032):
+        # with no destination xcodebuild resolves to the generic *simulator*
+        # build. Note that it is NOT sufficient on its own -- run 37007735317
+        # had it and still resolved to a development profile.
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           KEY_ID: ${{ env.APPLE_STORE_CONNECT_API_KEY_ID }}
@@ -322,6 +360,41 @@ jobs:
             || { echo "::error::App Store Connect key was not materialized; the provisioning step above must run first"; exit 1; }
           BUILD_DIR="build/ios/ipa"
           mkdir -p "$BUILD_DIR"
+          # AUT-5113: pin manual signing on the Runner target. Automatic
+          # signing picks the profile type itself and resolves to the
+          # *development* path, which this team cannot satisfy (zero
+          # registered devices) — see the long note in the project-patch step
+          # above. Name the identity and the profile that the install step
+          # verified instead of letting Xcode guess. RunnerTests is excluded so
+          # the test target keeps its own settings.
+          PROFILE_NAME="${{ steps.profile.outputs.name }}"
+          [[ -n "$PROFILE_NAME" ]] \
+            || { echo "::error::no verified provisioning profile name; the install step above must run first and must not take its empty-secret path"; exit 1; }
+          PROJ=ios/Runner.xcodeproj/project.pbxproj
+          awk -v profile="$PROFILE_NAME" '
+            /PRODUCT_BUNDLE_IDENTIFIER = .*;/ && !/\.RunnerTests;$/ {
+              print
+              match($0, /^[\t ]*/)
+              ind = substr($0, 1, RLENGTH)
+              print ind "CODE_SIGN_STYLE = Manual;"
+              print ind "\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"Apple Distribution\";"
+              print ind "PROVISIONING_PROFILE_SPECIFIER = \"" profile "\";"
+              next
+            }
+            { print }
+          ' "$PROJ" > "$PROJ.tmp"
+          mv "$PROJ.tmp" "$PROJ"
+          m="$(grep -c "PROVISIONING_PROFILE_SPECIFIER = \"${PROFILE_NAME}\";" "$PROJ")"
+          [[ "$m" -eq 3 ]] \
+            || { echo "::error::expected 3 PROVISIONING_PROFILE_SPECIFIER insertions (Debug/Release/Profile), got $m"; exit 1; }
+          echo "Runner target pinned to manual signing with profile '$PROFILE_NAME'"
+          # A malformed project.pbxproj fails deep inside xcodebuild with
+          # "The project 'Runner' is damaged and cannot be opened due to a
+          # parse error" (run 37007735317, an unquoted
+          # CODE_SIGN_IDENTITY[sdk=iphoneos*] key). Lint here so the message
+          # names the offending construct instead of the symptom.
+          plutil -lint "$PROJ" \
+            || { echo "::error::$PROJ does not parse as a property list after the signing patch"; exit 1; }
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
