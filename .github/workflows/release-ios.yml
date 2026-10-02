@@ -324,9 +324,15 @@ jobs:
         # beta lane -> development (TestFlight), release lane -> app-store.
         # xcodebuild -exportArchive reads this plist; must exist BEFORE archive+export.
         # AUT-3214: previously this step ran AFTER the build and the export always failed.
+        env:
+          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          PROFILE_NAME: ${{ env.IOS_PROFILE_NAME }}
+          BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
         run: |
           set -euo pipefail
           METHOD="${{ env.EXPORT_METHOD }}"
+          [[ -n "${TEAM_ID:-}" && -n "${PROFILE_NAME:-}" && -n "${BUNDLE_ID:-}" ]] \
+            || { echo "::error::team id, installed profile name or bundle id missing; the export cannot resolve signing without them"; exit 1; }
           cat > ios/ExportOptions.plist <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -334,6 +340,8 @@ jobs:
           <dict>
             <key>method</key>
             <string>__METHOD__</string>
+            <key>teamID</key>
+            <string>__TEAM_ID__</string>
             <key>uploadBitcode</key>
             <false/>
             <key>compileBitcode</key>
@@ -342,11 +350,22 @@ jobs:
             <true/>
             <key>destination</key>
             <string>export</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>__BUNDLE_ID__</key>
+              <string>__PROFILE_NAME__</string>
+            </dict>
           </dict>
           </plist>
           PLIST
-          sed -i '' "s/__METHOD__/${METHOD}/" ios/ExportOptions.plist
-          echo "ExportOptions.plist method=$METHOD"
+          sed -i '' \
+            -e "s/__METHOD__/${METHOD}/" \
+            -e "s/__TEAM_ID__/${TEAM_ID}/" \
+            -e "s/__BUNDLE_ID__/${BUNDLE_ID}/" \
+            -e "s/__PROFILE_NAME__/${PROFILE_NAME}/" \
+            ios/ExportOptions.plist
+          plutil -lint ios/ExportOptions.plist
+          echo "ExportOptions.plist method=$METHOD team=$TEAM_ID profile=$PROFILE_NAME"
 
       - name: Build iOS release (export method, code-signed)
         env:
@@ -378,7 +397,6 @@ jobs:
         # configuration, which is the only level that does not also hit the
         # Pods and SwiftPM targets.
         env:
-          TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           KEY_ID: ${{ env.APPLE_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ env.APPLE_STORE_CONNECT_API_ISSUER_ID }}
           AUTH_KEY_PATH: ${{ env.APPLE_STORE_AUTH_KEY_PATH }}
@@ -400,16 +418,35 @@ jobs:
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID" \
             archive
-          xcodebuild -exportArchive \
-            -archivePath "$BUILD_DIR/Runner.xcarchive" \
-            -exportPath "$BUILD_DIR" \
-            -exportOptionsPlist ios/ExportOptions.plist \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$AUTH_KEY_PATH" \
-            -authenticationKeyID "$KEY_ID" \
-            -authenticationKeyIssuerID "$ISSUER_ID" \
-            -teamId "$TEAM_ID" \
-            -bundleId "${{ env.IOS_BUNDLE_ID }}"
+          # AUT-5201: `xcodebuild -exportArchive` accepts only the flags in
+          # valid_flags — there is no -teamId or -bundleId (it rejected them with
+          # "invalid option '-teamId'" *after* the archive had already
+          # succeeded, runs 37033210067 / 37031213870). Team and bundle
+          # identity belong in ExportOptions.plist, which the step above writes.
+          # An unknown flag aborts the run only once a full signed archive
+          # exists, so validate the flag set first: cheap, and it keeps this
+          # class of CLI-surface bug from costing another ~5 min signed build.
+          valid_flags=(
+            -archivePath -exportPath -exportOptionsPlist -configuration
+            -allowProvisioningUpdates
+            -authenticationKeyPath -authenticationKeyID -authenticationKeyIssuerID
+          )
+          export_args=(
+            -archivePath "$BUILD_DIR/Runner.xcarchive"
+            -exportPath "$BUILD_DIR"
+            -exportOptionsPlist ios/ExportOptions.plist
+            -allowProvisioningUpdates
+            -authenticationKeyPath "$AUTH_KEY_PATH"
+            -authenticationKeyID "$KEY_ID"
+            -authenticationKeyIssuerID "$ISSUER_ID"
+          )
+          for arg in "${export_args[@]}"; do
+            case "$arg" in
+              -*) printf '%s\n' "${valid_flags[@]}" | grep -qx -- "$arg" \
+                   || { echo "::error::-exportArchive does not accept '$arg' (valid: ${valid_flags[*]})"; exit 1; } ;;
+            esac
+          done
+          xcodebuild -exportArchive "${export_args[@]}"
 
       - name: Verify .ipa produced
         run: |
