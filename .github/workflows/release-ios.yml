@@ -202,12 +202,28 @@ jobs:
           fi
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
-          echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$PROFILE_DIR/autobrain_distribution.mobileprovision"
+          PROFILE="$PROFILE_DIR/autobrain_distribution.mobileprovision"
+          echo "$PROVISIONING_PROFILE_B64" | base64 --decode > "$PROFILE"
           # Fail closed if a profile IS supplied but is undecodable — that is a
           # real signing fault, unlike an absent profile.
-          security cms -D -i "$PROFILE_DIR/autobrain_distribution.mobileprovision" \
-            | plutil -convert json - -o - \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print('Provisioning profile installed:'); print('  Name:', d.get('Name','?')); print('  Team:', d.get('TeamIdentifier',['?'])[0]); print('  AppID:', d.get('AppIDName','?')); print('  Expires:', d.get('ExpirationDate','?'))"
+          #
+          # AUT-5149: this used to pipe through `plutil -convert json`. That
+          # cannot represent a real .mobileprovision — the CMS payload carries
+          # <data> blobs and nested dicts plutil will not flatten — so it failed
+          # on *every* genuine profile (run 36998058429:
+          # "Invalid object in plist for JSON format"). Decode straight to a
+          # plist with `security cms -D -o` and assert on its exit status.
+          DECODED="$RUNNER_TEMP/autobrain_distribution.plist"
+          if ! security cms -D -i "$PROFILE" -o "$DECODED"; then
+            echo "::error::secrets.IOS_PROVISIONING_PROFILE_BASE64 is not a decodable CMS-signed .mobileprovision"
+            exit 1
+          fi
+          field() { plutil -extract "$1" raw -o - "$DECODED" 2>/dev/null || echo "?"; }
+          echo "Provisioning profile installed:"
+          echo "  Name:    $(field Name)"
+          echo "  Team:    $(field TeamIdentifier.0)"
+          echo "  AppID:   $(field AppIDName)"
+          echo "  Expires: $(field ExpirationDate)"
 
       - name: Materialize App Store Connect API key
         # AUT-4355: this key is what lets `xcodebuild -allowProvisioningUpdates`
