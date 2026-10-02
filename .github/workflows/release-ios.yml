@@ -94,6 +94,13 @@ jobs:
         # (run 36814417622 proved a replace-sed matches 0 and trips pipefail).
         # awk rather than sed because BSD sed cannot insert a newline from the
         # replacement side.
+        #
+        # AUT-5113: the anchor matches the Runner target by shape, not by the
+        # literal com.autobrainservice.autobrain. PR #109 rewrites the bundle
+        # ID to com.autobrain.autobrain (the App ID Apple actually registered);
+        # a hard-coded anchor matched 0 lines after that landed, so
+        # DEVELOPMENT_TEAM was never inserted and the n -eq 3 assertion below
+        # hard-failed the build. Exclude *.RunnerTests instead.
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
         run: |
@@ -104,7 +111,7 @@ jobs:
           sed -i '' 's/IPHONEOS_DEPLOYMENT_TARGET = 13.0;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g' "$PROJ"
           sed -i '' 's/TARGETED_DEVICE_FAMILY = "1";/TARGETED_DEVICE_FAMILY = "1,2";/g' "$PROJ"
           awk -v team="$TEAM_ID" '
-            /PRODUCT_BUNDLE_IDENTIFIER = com\.autobrainservice\.autobrain;$/ {
+            /PRODUCT_BUNDLE_IDENTIFIER = .*;/ && !/\.RunnerTests;$/ {
               print
               match($0, /^[\t ]*/)
               print substr($0, 1, RLENGTH) "DEVELOPMENT_TEAM = " team ";"
@@ -280,7 +287,7 @@ jobs:
         # -allowProvisioningUpdates able to create/refresh the distribution
         # profile. Without them xcodebuild has no way to authenticate to the
         # portal and the archive fails with "No profiles for
-        # 'com.autobrainservice.autobrain' were found".
+        # '<bundle id>' were found".
         #
         # -destination 'generic/platform=iOS' is load-bearing too (run 36916568032).
         # With no destination xcodebuild resolves to the generic *simulator* build,
