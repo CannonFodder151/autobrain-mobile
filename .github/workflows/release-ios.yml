@@ -10,9 +10,14 @@ name: Mobile Release (.ipa)
 # Once AUT-2725 provisions 10.0.3.40, change `runs-on: macos-latest` to
 # [self-hosted, macOS, vm-macos] for cost control.
 
+# AUT-4766: dispatch-only. This repo is private on a GitHub Free plan, so
+# branch protection AND rulesets both return 403 ("Upgrade to GitHub Pro") —
+# there is no server-side gate on who may push to main. `push: main` therefore
+# turned "anyone with write access pushes" into "signed App Store Connect
+# upload". This workflow loads IOS_CERT_P12_BASE64, IOS_PROVISIONING_PROFILE_BASE64
+# and APPLE_STORE_API_KEY, so it carries the same exposure as release-mobile.yml.
+# Reinforced by rule 3 of scripts/check-workflow-runner-isolation.sh.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -36,23 +41,22 @@ jobs:
     runs-on: macos-latest
     env:
       IOS_BUNDLE_ID: com.autobrainservice.autobrain
-      EXPORT_METHOD: ${{ inputs.lane == 'beta' && 'development' || 'app-store' }}
+      # Both lanes use app-store: the team only holds an iPhone Distribution cert
+      # (no Development cert in the portal), and TestFlight submission is done
+      # with the app-store export method. 'development' would fail the compile
+      # step with "No development certificates available to code sign app for
+      # device deployment" — verified on run 36280199047.
+      EXPORT_METHOD: app-store
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Resolve release version (input or pubspec)
-        # Push-triggered runs have no inputs.version — derive it from
-        # pubspec.yaml so sync commits to main build + publish automatically.
+      - name: Resolve release version (dispatch input)
+        # Dispatch-only (AUT-4766), so inputs.version is always present.
         run: |
           set -euo pipefail
-          if [ -n "${{ inputs.version }}" ]; then
-            tag="${{ inputs.version }}"
-          else
-            version="$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}')"
-            tag="v${version}"
-          fi
+          tag="${{ inputs.version }}"
           tag="${tag#v}"
           tag="v${tag}"
           echo "Resolved release tag: $tag"
@@ -172,11 +176,10 @@ jobs:
           PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.IOS_PROVISIONING_PROFILE_SPECIFIER }}
         run: |
           set -euo pipefail
-          flutter build ios --release \
+          flutter build ios --release --no-codesign \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
             --dart-define=MOBILE_STORE_BUILD=true \
-            --export-method="$EXPORT_METHOD" \
             --build-number="$(grep -E '^version: ' pubspec.yaml | head -1 | awk -F'[+]' '{print $2}')"
 
       - name: Archive + export .ipa (Xcode, universal device+sim build)

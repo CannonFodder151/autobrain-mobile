@@ -1,0 +1,16 @@
+name: Test iOS Runner
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: [self-hosted, macOS, X64]
+    steps:
+      - name: Check runner
+        run: echo "Runner is alive"; uname -a
+      - name: Check Xcode
+        run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
+      - name: Install fastlane via Homebrew
+        run: |
+          set -euo pipefail
+          brew install fastlane
+          fastlane --version

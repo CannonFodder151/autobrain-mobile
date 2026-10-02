@@ -1,0 +1,52 @@
+name: Provision macOS runner toolchain (fastlane)
+
+# AUT-4845: provision Ruby + fastlane on the self-hosted macOS runner.
+# Dispatch-only, and that satisfies scripts/check-workflow-runner-isolation.sh
+# rule 1 (and now rule 4): the runner is a persistent host and this script
+# installs software on it, so it must never fire from a push, a pull_request or
+# a schedule. It reads no secrets, so rule 3 was never the applicable control.
+#
+# The dispatch ref is still caller-chosen: anyone with write access can dispatch
+# from a branch whose provision-runner.sh does anything. That is not a new hole
+# on a Free-plan repo with no branch protection, but it is why rule 4 exists
+# rather than trusting the header comment (AUT-4882 F6).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two dispatches writing the same $HOME/.rbenv and $HOME/.gem interleave.
+# Queue instead of cancelling: a cancelled run can leave a half-written
+# GEM_HOME behind (AUT-4882 F8).
+concurrency:
+  group: macos-provision
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    runs-on: [self-hosted, macOS, X64]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision toolchain (rbenv Ruby + fastlane)
+        run: bash scripts/macos/provision-runner.sh
+
+      # Separate step on purpose: this is the acceptance check that fastlane
+      # resolves in a plain non-interactive Actions step, i.e. only from the
+      # committed env file and not from anything left over in the step above.
+      - name: Verify fastlane in a fresh non-interactive step
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          . scripts/macos/toolchain-env.sh
+          echo "ruby: $(ruby --version)"
+          # AUT-4857: fastlane --version succeeding does NOT prove psych works —
+          # fastlane parses YAML lazily. Assert it, so a future libyaml/headers
+          # regression fails here instead of inside a release build.
+          # `require "psych"` does not define the top-level YAML constant; `yaml`
+          # is the wrapper. Exercise both so this checks psych and its binding.
+          ruby -e 'require "psych"; Psych.safe_load("a: 1"); require "yaml"; YAML.safe_load("a: 1"); puts "psych: #{Psych::VERSION} ok"'
+          command -v fastlane
+          fastlane --version
