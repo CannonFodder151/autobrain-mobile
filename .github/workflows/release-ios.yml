@@ -40,7 +40,7 @@ jobs:
   ios-release:
     runs-on: macos-latest
     env:
-      IOS_BUNDLE_ID: com.autobrainservice.autobrain
+      IOS_BUNDLE_ID: com.autobrain.autobrain
       # Both lanes use app-store: the team only holds an iPhone Distribution cert
       # (no Development cert in the portal), and TestFlight submission is done
       # with the app-store export method. 'development' would fail the compile
