@@ -345,12 +345,10 @@ jobs:
         # portal and the archive fails with "No profiles for
         # '<bundle id>' were found".
         #
-        # -destination 'generic/platform=iOS' is load-bearing too (run 36916568032).
-        # With no destination xcodebuild resolves to the generic *simulator* build,
-        # so automatic signing asks for an iOS App **Development** profile and dies
-        # with "Your team has no devices from which to generate a provisioning
-        # profile" -- this team registers distribution certs only. Naming the iOS
-        # device destination forces the App Store distribution profile path.
+        # -destination 'generic/platform=iOS' is load-bearing too (run 36916568032):
+        # with no destination xcodebuild resolves to the generic *simulator*
+        # build. Note that it is NOT sufficient on its own -- run 37007735317
+        # had it and still resolved to a development profile.
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           KEY_ID: ${{ env.APPLE_STORE_CONNECT_API_KEY_ID }}
@@ -379,7 +377,7 @@ jobs:
               match($0, /^[\t ]*/)
               ind = substr($0, 1, RLENGTH)
               print ind "CODE_SIGN_STYLE = Manual;"
-              print ind "CODE_SIGN_IDENTITY[sdk=iphoneos*] = \"Apple Distribution\";"
+              print ind "\"CODE_SIGN_IDENTITY[sdk=iphoneos*]\" = \"Apple Distribution\";"
               print ind "PROVISIONING_PROFILE_SPECIFIER = \"" profile "\";"
               next
             }
@@ -390,6 +388,13 @@ jobs:
           [[ "$m" -eq 3 ]] \
             || { echo "::error::expected 3 PROVISIONING_PROFILE_SPECIFIER insertions (Debug/Release/Profile), got $m"; exit 1; }
           echo "Runner target pinned to manual signing with profile '$PROFILE_NAME'"
+          # A malformed project.pbxproj fails deep inside xcodebuild with
+          # "The project 'Runner' is damaged and cannot be opened due to a
+          # parse error" (run 37007735317, an unquoted
+          # CODE_SIGN_IDENTITY[sdk=iphoneos*] key). Lint here so the message
+          # names the offending construct instead of the symptom.
+          plutil -lint "$PROJ" \
+            || { echo "::error::$PROJ does not parse as a property list after the signing patch"; exit 1; }
           xcodebuild -workspace ios/Runner.xcworkspace \
             -scheme Runner \
             -configuration Release \
