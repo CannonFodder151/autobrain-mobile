@@ -219,11 +219,22 @@ jobs:
             exit 1
           fi
           field() { plutil -extract "$1" raw -o - "$DECODED" 2>/dev/null || echo "?"; }
+          NAME="$(field Name)"
+          APPID="$(field Entitlements.application-identifier)"
           echo "Provisioning profile installed:"
-          echo "  Name:    $(field Name)"
+          echo "  Name:    $NAME"
           echo "  Team:    $(field TeamIdentifier.0)"
           echo "  AppID:   $(field AppIDName)"
+          echo "  Bundle:  $APPID"
           echo "  Expires: $(field ExpirationDate)"
+          # AUT-5189: hand the profile's real Name to the archive step. The archive
+          # step used to leave PROVISIONING_PROFILE_SPECIFIER empty, so xcodebuild
+          # fell back to automatic signing and asked Apple for a *Development*
+          # profile — which this team cannot mint (zero registered devices).
+          {
+            echo "IOS_PROFILE_NAME=$NAME"
+            echo "IOS_PROFILE_BUNDLE_ID=${APPID#*.}"
+          } >> "$GITHUB_ENV"
 
       - name: Materialize App Store Connect API key
         # AUT-4355: this key is what lets `xcodebuild -allowProvisioningUpdates`
@@ -305,21 +316,33 @@ jobs:
         # portal and the archive fails with "No profiles for
         # '<bundle id>' were found".
         #
-        # -destination 'generic/platform=iOS' is load-bearing too (run 36916568032).
-        # With no destination xcodebuild resolves to the generic *simulator* build,
-        # so automatic signing asks for an iOS App **Development** profile and dies
-        # with "Your team has no devices from which to generate a provisioning
-        # profile" -- this team registers distribution certs only. Naming the iOS
-        # device destination forces the App Store distribution profile path.
+        # -destination 'generic/platform=iOS' alone is not enough: automatic
+        # signing still resolves CODE_SIGN_IDENTITY="Apple Development" and an
+        # empty PROVISIONING_PROFILE_SPECIFIER (run 37012631045), so Apple is
+        # asked for a Development profile and the team — which registers
+        # distribution certificates only, with zero devices — refuses
+        # ("Your team has no devices from which to generate a provisioning
+        # profile"). AUT-5189: pin manual signing to the distribution
+        # certificate and the profile installed above. CODE_SIGN_STYLE must
+        # accompany the specifier — setting only the specifier (AUT-4959) or
+        # only the identity gives "conflicting provisioning settings".
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           KEY_ID: ${{ env.APPLE_STORE_CONNECT_API_KEY_ID }}
           ISSUER_ID: ${{ env.APPLE_STORE_CONNECT_API_ISSUER_ID }}
           AUTH_KEY_PATH: ${{ env.APPLE_STORE_AUTH_KEY_PATH }}
+          PROFILE_NAME: ${{ env.IOS_PROFILE_NAME }}
+          PROFILE_BUNDLE_ID: ${{ env.IOS_PROFILE_BUNDLE_ID }}
         run: |
           set -euo pipefail
           [[ -n "${KEY_ID:-}" && -n "${ISSUER_ID:-}" && -n "${AUTH_KEY_PATH:-}" ]] \
             || { echo "::error::App Store Connect key was not materialized; the provisioning step above must run first"; exit 1; }
+          [[ -n "${PROFILE_NAME:-}" ]] \
+            || { echo "::error::secrets.IOS_PROVISIONING_PROFILE_BASE64 is unset or undecodable, so there is no distribution profile to pin"; exit 1; }
+          if [[ -n "${PROFILE_BUNDLE_ID:-}" && "$PROFILE_BUNDLE_ID" != "${{ env.IOS_BUNDLE_ID }}" ]]; then
+            echo "::error::profile '$(echo "$PROFILE_NAME")' is provisioned for '$PROFILE_BUNDLE_ID', not '${{ env.IOS_BUNDLE_ID }}'"
+            exit 1
+          fi
           BUILD_DIR="build/ios/ipa"
           mkdir -p "$BUILD_DIR"
           xcodebuild -workspace ios/Runner.xcworkspace \
@@ -331,6 +354,9 @@ jobs:
             -authenticationKeyPath "$AUTH_KEY_PATH" \
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID" \
+            CODE_SIGN_STYLE=Manual \
+            "CODE_SIGN_IDENTITY[sdk=iphoneos*]=Apple Distribution" \
+            "PROVISIONING_PROFILE_SPECIFIER=$PROFILE_NAME" \
             archive
           xcodebuild -exportArchive \
             -archivePath "$BUILD_DIR/Runner.xcarchive" \

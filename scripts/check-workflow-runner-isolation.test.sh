@@ -393,5 +393,19 @@ $SIGNING_JOB
           set -uo pipefail
           df -h /"
 
+# AUT-5189: the archive step must pin manual distribution signing. With automatic
+# signing, xcodebuild resolves an empty PROVISIONING_PROFILE_SPECIFIER and asks
+# Apple for a Development profile, which team UWQFQ6YJ5U cannot mint (no devices).
+wf="$(dirname "$0")/../.github/workflows/release-ios.yml"
+for needle in \
+  'CODE_SIGN_STYLE=Manual' \
+  '"CODE_SIGN_IDENTITY[sdk=iphoneos*]=Apple Distribution"' \
+  '"PROVISIONING_PROFILE_SPECIFIER=$PROFILE_NAME"'
+do
+  if grep -qF "$needle" "$wf"; then pass=$((pass+1)); else
+    fail=$((fail+1)); echo "not ok $fail - archive step missing: $needle"
+  fi
+done
+
 echo "passed=$pass failed=$fail"
 [[ "$fail" -eq 0 ]]
