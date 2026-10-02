@@ -58,15 +58,43 @@ warn() { echo "::warning::$*" >&2; }
 die()  { echo "::error::$*" >&2; exit 1; }
 
 # ---------------------------------------------------------------- fastlane gate
+# Print the installed fastlane version, bare, or return 1 if there is none.
+#
+# `fastlane --version` does not print a version on its first line. fastlane's
+# own `bin/fastlane` wrapper prints a three-line preamble first — the install
+# path, so a bundled fastlane is obvious to the user — and only then does
+# commander's `-v` handler emit `fastlane <version>`. Reading the first line
+# therefore returns "fastlane installation at path:" and the version gate can
+# never match (AUT-4964). `tail -1` is no better: `CLIToolsDistributor#take_off`
+# runs UpdateChecker in an `ensure` block, so an available upgrade appends a
+# banner and a changelog *after* the version.
+#
+# So match the version line itself and extract the version from it. Both streams
+# are captured because UpdateChecker and the locale warning write to stderr.
+# Returning a status rather than an empty string keeps "not installed" (rc 1)
+# distinct from "installed at an unexpected version" (rc 0, value printed) —
+# otherwise a missing binary looks like an empty version and the caller logs
+# bogus drift. The read loop is fed by process substitution so it runs in this
+# shell and `out` survives it; a pipeline would put the function body in a
+# subshell and lose the assignment.
 installed_fastlane() {
-  [ -x "$GEM_HOME_DIR/bin/fastlane" ] \
-    && "$GEM_HOME_DIR/bin/fastlane" --version 2>/dev/null | head -1
+  [ -x "$GEM_HOME_DIR/bin/fastlane" ] || return 1
+  local line out=""
+  while IFS= read -r line; do
+    if [[ "$line" =~ ^fastlane\ ([0-9]+(\.[0-9]+)*)$ ]]; then
+      out="${BASH_REMATCH[1]}"
+      break
+    fi
+  done < <("$GEM_HOME_DIR/bin/fastlane" --version 2>&1)
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
 }
+
 # Only an exact-version match short-circuits: a drift-tolerant gate would leave
 # an unpinned fastlane in place forever.
 if have="$(installed_fastlane)"; then
-  if [ "$have" = "fastlane $FASTLANE_VERSION" ]; then
-    say "fastlane already installed: $have"
+  if [ "$have" = "$FASTLANE_VERSION" ]; then
+    say "fastlane already installed: fastlane $have"
     say "toolchain env: $ENV_FILE"
     exit 0
   fi
@@ -183,8 +211,14 @@ say "installing fastlane $FASTLANE_VERSION into $GEM_HOME_DIR"
   --no-document --conservative \
   || die "gem install fastlane $FASTLANE_VERSION failed"
 [ -x "$GEM_HOME_DIR/bin/fastlane" ] || die "fastlane not at $GEM_HOME_DIR/bin/fastlane"
-[ "$(installed_fastlane)" = "fastlane $FASTLANE_VERSION" ] \
-  || die "fastlane version mismatch: want $FASTLANE_VERSION, got '$(installed_fastlane)'"
+# Distinguish "could not read a version at all" from "read the wrong version":
+# the first is a broken fastlane or a changed CLI, the second is real drift, and
+# they need different fixes. Reporting both as "version mismatch" is what made
+# AUT-4964's real cause invisible in the runner log.
+got="$(installed_fastlane)" \
+  || die "fastlane $FASTLANE_VERSION installed but '--version' printed no parseable version"
+[ "$got" = "$FASTLANE_VERSION" ] \
+  || die "fastlane version mismatch: want $FASTLANE_VERSION, got '$got'"
 
 # ------------------------------------------------------------- 3. env file
 BREW_BIN=""

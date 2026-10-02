@@ -125,6 +125,48 @@ else
   ok "provision-runner.sh pipes no network response into a shell"
 fi
 
+# AUT-4964: `fastlane --version` is not a one-line command. fastlane's own
+# `bin/fastlane` wrapper prints a three-line install-path preamble *before*
+# commander's version line, and UpdateChecker appends an upgrade banner to
+# stderr *after* it. The gate read the first line and compared it to
+# "fastlane <version>", so a successful gem install died with
+# `got 'fastlane installation at path:'`. Run the real function against a fake
+# fastlane that reproduces that output shape.
+gate_fn="$(awk '/^installed_fastlane\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$prov")"
+run_gate() { # $1 = fake --version output (empty = no binary installed)
+  rm -rf "$tmp/gem"; mkdir -p "$tmp/gem/bin"
+  if [ -n "$1" ]; then
+    { echo '#!/bin/sh'; echo "cat <<'STUB_EOF'"; printf '%s\n' "$1"; echo STUB_EOF; } > "$tmp/gem/bin/fastlane"
+    chmod +x "$tmp/gem/bin/fastlane"
+  fi
+  GEM_HOME_DIR="$tmp/gem" bash -c "$gate_fn
+installed_fastlane" 2>/dev/null
+}
+# The shape from the failing run: preamble, then the version, then a stderr
+# upgrade banner — all merged, as a user actually sees them.
+PREAMBLE='fastlane installation at path:
+/fake/bundled
+-----
+fastlane 2.240.1
+A new version of fastlane is available: 2.241.0'
+for case in "$PREAMBLE" 'fastlane 2.239.0'; do
+  got="$(run_gate "$case")"; rc=$?
+  want="$(sed -nE 's/^(fastlane )?([0-9]+(\.[0-9]+)*)$/\2/p' <<<"$case" | head -1)"
+  if [ "$rc" -eq 0 ] && [ "$got" = "$want" ]; then
+    ok "installed_fastlane extracts '${want:-<none>}' from multi-line output"
+  else
+    fail "installed_fastlane on [$(head -1 <<<"$case")…] -> rc=$rc got='$got' want='$want'"
+  fi
+done
+got="$(run_gate '')"; rc=$?
+[ "$rc" -ne 0 ] && [ -z "$got" ] && ok "installed_fastlane reports not-installed with rc 1, not an empty version" \
+  || fail "installed_fastlane with no binary -> rc=$rc got='$got' (want rc!=0 and no version)"
+# And the gate must compare bare, so the caller's short-circuit is not fooled.
+grep -qE '\[ "\$have" = "\$FASTLANE_VERSION" \]' "$prov" \
+  && ok "gate compares the bare version" || fail "gate does not compare the bare version"
+grep -q 'head -1' "$prov" && fail "provision-runner.sh still reads a fixed output line" \
+  || ok "provision-runner.sh reads no fixed output line"
+
 # AUT-4882 F3: rbenv, ruby-build and fastlane must all be pinned. A moving
 # default branch here is code exec that every later job sources through
 # $HOME/.rbenv.
