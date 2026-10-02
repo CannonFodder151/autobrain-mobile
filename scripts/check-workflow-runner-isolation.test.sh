@@ -17,6 +17,7 @@
 #   ok      `set -euo pipefail` step (errexit stays ON)         -> pass
 #   ok      `set -uo pipefail` + `continue-on-error: true`      -> pass
 #   ok      `set -uo pipefail` mentioned only in a comment      -> pass
+#   ok      `- continue-on-error: true` as the step's first key -> pass
 #
 # Run: bash scripts/check-workflow-runner-isolation.test.sh
 # Requires: bash.
@@ -298,8 +299,6 @@ $SIGNING_JOB
           set -euo pipefail
           flutter build apk"
 
-echo "passed=$pass failed=$fail"
-[[ "$fail" -eq 0 ]]
 # AUT-4876 F1: a nested list inside `run:` used to split the step and drop the
 # trailing continue-on-error, flagging a correct workflow.
 check pass "continue-on-error survives a nested list in run:" \
@@ -349,3 +348,50 @@ $SIGNING_JOB
           set -uo pipefail
           whoami
         continue-on-error: true-ish"
+
+# AUT-4995 continued: the pass/fail counts must cover every case, so the
+# summary lives at the very end — it used to sit mid-file and under-report.
+
+# AUT-4995: `continue-on-error` as the FIRST key of the list item. The rule used
+# to anchor on `^[[:space:]]*continue-on-error:`, which cannot match a line that
+# starts with the list dash, so this equally valid YAML was a false positive.
+check pass "continue-on-error as the first key of the step item" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - continue-on-error: true
+        name: Probe host
+        run: |
+          set -uo pipefail
+          ls -1 ~/Library/LaunchAgents/"
+
+check fail "dash-first step without continue-on-error still fails" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - name: Probe host
+        run: |
+          set -uo pipefail
+          ls -1 ~/Library/LaunchAgents/"
+
+# The widened dash anchor must not leak ACROSS steps: a continue-on-error on a
+# neighbouring step does not excuse the unguarded one.
+check fail "dash-first continue-on-error does not cover the next step" \
+"on:
+  workflow_dispatch:
+$SIGNING_JOB
+    steps:
+      - continue-on-error: true
+        name: Probe host
+        run: |
+          set -uo pipefail
+          whoami
+      - name: Probe disk
+        run: |
+          set -uo pipefail
+          df -h /"
+
+echo "passed=$pass failed=$fail"
+[[ "$fail" -eq 0 ]]
