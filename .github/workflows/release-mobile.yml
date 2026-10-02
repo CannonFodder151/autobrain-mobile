@@ -222,12 +222,33 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
+      - name: Require CARTO_API_KEY (basemap watermark guard AUT-4691)
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+        run: |
+          set -euo pipefail
+          # lib/screens/servo_spy/servo_spy_screen.dart reads
+          # String.fromEnvironment('CARTO_API_KEY'). Unset -> '' ->
+          # cartoKeyParam('') == '' -> key-less tile URL -> CARTO serves the
+          # "API key required" watermark tile in the released app (same failure
+          # as AUT-4533 / AUT-4649 on web). The mobile build does not go
+          # through docker/frontend/Dockerfile, so the web build guard does not
+          # cover it: fail here instead of publishing a watermarked build.
+          if [[ -z "${CARTO_API_KEY:-}" ]]; then
+            echo "::error::CARTO_API_KEY secret is unset — release would ship the key-less CARTO basemap (watermark tiles). Set the repo secret and re-dispatch."
+            exit 1
+          fi
+          echo "CARTO_API_KEY present (${#CARTO_API_KEY} chars)"
+
       - name: Build release appbundle
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
           flutter build appbundle --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
-            --dart-define=MOBILE_STORE_BUILD=true
+            --dart-define=MOBILE_STORE_BUILD=true \
+            --dart-define=CARTO_API_KEY=${CARTO_API_KEY}
 
       - name: Decide whether to build the APK (2-day throttle + meaningful change gate)
         id: apk-decision
@@ -276,11 +297,14 @@ jobs:
 
       - name: Build release APK (same signingConfig, for apksigner scheme check)
         if: steps.apk-decision.outputs.build_apk == 'true'
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
           flutter build apk --release \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
-            --dart-define=MOBILE_STORE_BUILD=true
+            --dart-define=MOBILE_STORE_BUILD=true \
+            --dart-define=CARTO_API_KEY=${CARTO_API_KEY}
 
       - name: Skip APK build — throttled (AUT-2619)
         if: steps.apk-decision.outputs.build_apk == 'false'
