@@ -400,6 +400,19 @@ jobs:
           echo "APPLE_STORE_CONNECT_API_ISSUER_ID=$issuer_id" >> "$GITHUB_ENV"
           echo "APPLE_STORE_AUTH_KEY_PATH=$HOME/.app-store-connect/AuthKey_${key_id}.p8" >> "$GITHUB_ENV"
           chmod 600 "$HOME/.app-store-connect/AuthKey_${key_id}.p8"
+          # xcodebuild honours APPLE_STORE_AUTH_KEY_PATH, but
+          # `xcrun altool --upload-app --apiKey/--apiIssuer` does not: it only
+          # searches ./private_keys, ~/private_keys, ~/.private_keys and
+          # ~/.appstoreconnect/private_keys, then aborts in ~20ms with
+          # "Failed to load AuthKey file. (-43) The file 'AuthKey_<keyid>.p8'
+          # could not be found in any of these locations" -- verified on run
+          # 37048191304, whose whole pipeline was green while App Store Connect
+          # still listed 0 builds. Stage a copy where altool actually looks.
+          altool_keydir="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$altool_keydir"
+          cp "$HOME/.app-store-connect/AuthKey_${key_id}.p8" "$altool_keydir/"
+          chmod 600 "$altool_keydir/AuthKey_${key_id}.p8"
+          echo "Staged AuthKey_${key_id}.p8 in $altool_keydir for altool"
           echo "App Store Connect API key ready (key id ${key_id:0:4}…, issuer ${issuer_id:0:4}…)"
 
       - name: Create ExportOptions.plist (lane-aware)
@@ -563,11 +576,23 @@ jobs:
           [[ -n "${KEY_ID:-}" && -n "${ISSUER_ID:-}" ]] \
             || { echo "::error::App Store Connect key id/issuer id missing; the materialize step above must run first"; exit 1; }
           echo "Uploading $ipa (${{ inputs.lane }} lane) to App Store Connect"
-          # altool requires --apiKey/--apiIssuer for App Store Connect API key auth
+          # altool requires --apiKey/--apiIssuer for App Store Connect API
+          # key auth, plus the .p8 staged in ~/.appstoreconnect/private_keys
+          # by the Materialize step above. The exit status is NOT swallowed:
+          # `|| true` here turned a failed upload into a green run with zero
+          # TestFlight builds (run 37048191304 -- altool failed with
+          # "Failed to load AuthKey file. (-43)" in 20ms and the step
+          # still reported success). With pipefail the tee pipeline now
+          # propagates altool's failure.
           xcrun altool --upload-app \
             -t ios -f "$ipa" \
             --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" \
-            --output-format xml 2>&1 | tee "$RUNNER_TEMP/altool-output.xml" || true
+            --output-format xml 2>&1 | tee "$RUNNER_TEMP/altool-output.xml"
+          if grep -q "ERROR" "$RUNNER_TEMP/altool-output.xml"; then
+            echo "::error::altool reported an error uploading $ipa -- see altool-output.xml in job artifacts"
+            exit 1
+          fi
+          echo "altool upload completed for $ipa"
           # Notarization not required for TestFlight/App Store distribution; skip
 
       - name: Conditionally publish GitHub Release (release lane only)
