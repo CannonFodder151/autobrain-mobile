@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Verify every AppIcon.appiconset manifest entry resolves to a file with the exact pixel size actool requires."""
+"""Verify every AppIcon.appiconset manifest entry names a file with the exact pixel size actool requires.
+
+An entry without a "filename" key leaves its PNG as an actool "unassigned child":
+the icon never reaches Assets.car and altool rejects the upload with 90022/90023
+(run 37085821307). So a manifest entry that resolves only by naming convention
+is a failure, not a pass.
+"""
 import json, struct, sys, os
 
 ICONSET = "ios/Runner/Assets.xcassets/AppIcon.appiconset"
@@ -7,15 +13,18 @@ ICONSET = "ios/Runner/Assets.xcassets/AppIcon.appiconset"
 with open(os.path.join(ICONSET, "Contents.json")) as f:
     images = json.load(f)["images"]
 
-required_pixel = {}  # (size, scale) -> pixel dimension
 fail = False
+assigned = set()
 for entry in images:
     size = entry["size"]
-    scale = int(entry["scale"][0])
     w, h = (float(x) for x in size.split("x"))
-    px = w * scale
-    # actool convention: Icon-App-<size>@<scale>.png
-    name = f"Icon-App-{size}@{entry['scale']}.png"
+    px = w * int(entry["scale"][0])
+    name = entry.get("filename")
+    if not name:
+        print(f"NO FILENAME: entry {entry['idiom']} {size} {entry['scale']} names no file")
+        fail = True
+        continue
+    assigned.add(name)
     path = os.path.join(ICONSET, name)
     if not os.path.exists(path):
         print(f"MISSING FILE: {name} (declared {size} {entry['scale']})")
@@ -29,6 +38,12 @@ for entry in images:
         fail = True
     else:
         print(f"ok: {name} = {fw}x{fh_}")
+
+on_disk = {f for f in os.listdir(ICONSET) if f.lower().endswith(".png")}
+unassigned = on_disk - assigned
+if unassigned:
+    print(f"UNASSIGNED: {sorted(unassigned)} exist but no Contents.json entry names them")
+    fail = True
 
 # iPad support requires these entries to exist at all
 ipad = {(e["size"], e["scale"]) for e in images if e["idiom"] == "ipad"}
