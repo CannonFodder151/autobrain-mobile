@@ -11,9 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### Fixed (AUT-5317)
-- ios(Info.plist): added `ITSAppUsesNonExemptEncryption` = `false` to `ios/Runner/Info.plist`. App Store Connect flagged every build for export compliance because the binary carried no answer to "does your app use non-exempt encryption". The app only uses HTTPS (ATS) and `package:crypto` SHA-256 firmware-blob integrity checks — both standard/exempt — so the key is a hard-coded `false`, which pre-answers the compliance question and unblocks uploads.
-- ci(release-ios): new "Verify Info.plist declares encryption use" step guards the key before archive (the same pre-flight pattern as the AppIcon guard), so a dropped key fails in seconds instead of burning a ~15 min signed build plus a rejected upload.
+### Fixed (AUT-5318)
+- fix(backend): auto-suggested service was never created for most vehicles. `_ensure_next_service` (AUT-1275) kept only completed services whose `service_type` was one of ten canonical types, returned early when the vehicle had no service history at all, and silently gave up when the AI gateway was unreachable — so adding a fuel or logbook entry created no scheduled service for a car with only "repair"/"tyres"/"custom" records, a car with no logged services, or during any AI outage. All completed services now count as history, history is no longer required, and a deterministic manufacturer interval (measured gap between past services, else 20,000 km / 12 months — the same baseline as the ai/ service-prediction fallback) creates the suggestion whenever the gateway does not answer. Adds `deterministic_next_due()` + `backend/tests/test_aut5318_deterministic_next_due.py` (no DB) and an end-to-end case in `backend/tests/test_odometer_priority.py` (gateway down, repair-only history, zero history).
 
 ## [0.3.305] - 2026-10-03
 
