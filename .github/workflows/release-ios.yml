@@ -55,6 +55,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify AppIcon manifest entries (AUT-5283)
+        # altool only reports a missing or mis-declared icon entry at
+        # upload time (90022/90023, AUT-2638), after the signed build
+        # and archive have already burned ~15 minutes. The checker
+        # resolves its iconset path relative to the cwd, so it must run
+        # from the repo root — hence working-directory: .
+        working-directory: .
+        run: python3 scripts/check-appicon-entries.py
+
       - name: Resolve release version (dispatch input)
         # Dispatch-only (AUT-4766), so inputs.version is always present.
         run: |
