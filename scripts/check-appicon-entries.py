@@ -45,12 +45,18 @@ if unassigned:
     print(f"UNASSIGNED: {sorted(unassigned)} exist but no Contents.json entry names them")
     fail = True
 
-# iPad support requires these entries to exist at all
-ipad = {(e["size"], e["scale"]) for e in images if e["idiom"] == "ipad"}
-need = {("76x76", "1x"), ("76x76", "2x"), ("83.5x83.5", "2x"), ("152x152", "2x"), ("167x167", "2x")}
-missing = need - ipad
+# iPad support requires these entries to exist at all, and App Store Connect
+# requires the 1024x1024 ios-marketing icon — without it altool rejects the
+# upload with the same 90023 class (AUT-5283). Keyed on (idiom, size, scale) so
+# an iPhone entry cannot stand in for a missing iPad or marketing one.
+have = {(e["idiom"], e["size"], e["scale"]) for e in images}
+need = {("ipad", s, k) for s, k in (
+    ("76x76", "1x"), ("76x76", "2x"), ("83.5x83.5", "2x"),
+    ("152x152", "2x"), ("167x167", "2x"),
+)} | {("ios-marketing", "1024x1024", "1x")}
+missing = need - have
 if missing:
-    print(f"MISSING iPad ENTRIES: {sorted(missing)}")
+    print(f"MISSING ENTRIES: {sorted(missing)}")
     fail = True
 
 sys.exit(1 if fail else 0)

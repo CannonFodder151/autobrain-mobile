@@ -11,6 +11,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### CI (AUT-5283)
+- ci(ios): `scripts/check-appicon-entries.py` ran in no workflow (`grep -rn "check-appicon" .github/` matched nothing across all six), so a manifest regression that altool only reports at upload time — after the signed build and archive had already run — was caught by App Store Connect, not by CI. `release-ios.yml` now runs it as the first step after checkout, with `working-directory: .` because `ICONSET` is a repo-relative path.
+- ci(ios): the checker's required-entry set covered only the five `ipad` entries, so deleting the 1024x1024 `ios-marketing` entry *and* its PNG still exited 0 (verified on head `8521281`). `ios-marketing` / `1024x1024` / `1x` is now required, keyed on `(idiom, size, scale)` so no iPhone entry can stand in for a missing iPad or marketing one.
+- test(ci): `scripts/check-appicon-entries.test.sh` copies the real iconset into throwaway trees and asserts the guard's exit status and reported message for each fault class — untouched copy, the repo checkout itself, `ios-marketing` deleted, iPad `167x167` deleted, a dropped `filename` key, a stray unassigned PNG, a `filename` naming a missing file, and a `filename` naming a wrong-size PNG. Against the pre-fix checker the same harness reports 1 failure.
+
 ### Fixed (AUT-5277, AUT-2638)
 - fix(ios): `UISupportedInterfaceOrientations~ipad` in `ios/Runner/Info.plist` declared only Portrait, LandscapeLeft and LandscapeRight. Because the app is universal (`TARGETED_DEVICE_FAMILY = 1,2`) and `UIRequiresFullScreen` is `false`, Apple requires all four orientations for iPad multitasking, and altool rejected every upload with error `90474` (run 37077070873). `UIInterfaceOrientationPortraitUpsideDown` is now declared; the iPhone-side `UISupportedInterfaceOrientations` is unchanged.
 - fix(ios): `CFBundleIconName` was absent, so the bundled icon set was never selected and altool returned `90713`. Now declared as `AppIcon`.
