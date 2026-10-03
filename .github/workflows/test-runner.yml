@@ -1,12 +1,17 @@
 name: Test iOS Runner
-# AUT-4840: this workflow is a runner liveness check, not a fastlane installer.
-# It previously hard-failed on `brew install fastlane` — the self-hosted iMac
-# has no Homebrew, and the gem fallback cannot work either because the
-# CommandLineTools Ruby 2.6 SDK is missing ruby/config.h, so fastlane's native
-# extensions will not compile (runs 36814006469, 36825183321,
-# install-fastlane.yml 36517932757). Report fastlane presence as a diagnostic
-# and let the job pass on runner health; actually provisioning fastlane is
-# tracked by AUT-4845.
+
+# AUT-4840: this workflow is a runner liveness + toolchain probe, not a
+# fastlane installer. It cannot be one on this host: the iMac is x86_64
+# with no Homebrew at /usr/local or /opt/homebrew (run 36814006469), and
+# `gem install fastlane` cannot build native extensions against the
+# CommandLineTools Ruby 2.6 SDK, which ships no ruby/config.h
+# (run 36825183321). Fastlane provisioning and its hard `fastlane --version`
+# + psych gate live in install-fastlane.yml (AUT-4845, AUT-4857), so this
+# probe reports toolchain state instead of installing anything.
+#
+# The report step keeps errexit ON (AUT-4864): every probe is guarded
+# explicitly rather than disabling -e, so an unexpected failure still turns
+# the job red while host-state reporting stays non-fatal.
 on:
   workflow_dispatch:
 
@@ -17,15 +22,36 @@ jobs:
   test:
     runs-on: [self-hosted, macOS, X64]
     steps:
+      - uses: actions/checkout@v4
+
       - name: Check runner
-        run: echo "Runner is alive"; uname -a
-      - name: Check Xcode
-        run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      - name: Report toolchain availability
-        # Non-fatal by design: this is a liveness probe. See AUT-4845.
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          echo "Runner is alive"
+          uname -a
+      - name: Check Xcode
+        run: |
+          set -euo pipefail
+          xcodebuild -showsdks 2>&1 || echo "xcodebuild not installed"
+      - name: Report toolchain availability
+        run: |
+          set -euo pipefail
           echo "user: $(whoami)  home: $HOME"
-          echo "brew: $(command -v brew || echo 'NOT INSTALLED')"
-          echo "ruby: $(ruby --version 2>&1)"
-          echo "fastlane: $(command -v fastlane || echo 'NOT INSTALLED')"
+          for prefix in /usr/local/bin /opt/homebrew/bin; do
+            if [ -x "$prefix/brew" ]; then
+              echo "brew: $prefix/brew"
+            else
+              echo "brew: NOT INSTALLED (checked $prefix/brew)"
+            fi
+          done
+          echo "system ruby: $(ruby --version 2>&1 || true)"
+          # Report the provisioned toolchain too, so a green probe after
+          # AUT-4845 shows the exact Ruby/fastlane the release jobs use.
+          if [ -f "$HOME/.autobrain-toolchain.env" ]; then
+            # shellcheck disable=SC1091
+            . scripts/macos/toolchain-env.sh
+            echo "provisioned ruby: $(ruby --version)"
+            fastlane --version 2>&1 | tail -n 1 || echo "fastlane: --version failed"
+          else
+            echo "fastlane: NOT PROVISIONED — dispatch 'Provision macOS runner toolchain (fastlane)' (AUT-4845)"
+          fi
