@@ -11,62 +11,474 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-### CI (AUT-5283)
-- ci(ios): `scripts/check-appicon-entries.py` ran in no workflow (`grep -rn "check-appicon" .github/` matched nothing across all six), so a manifest regression that altool only reports at upload time — after the signed build and archive had already run — was caught by App Store Connect, not by CI. `release-ios.yml` now runs it as the first step after checkout, with `working-directory: .` because `ICONSET` is a repo-relative path.
-- ci(ios): the checker's required-entry set covered only the five `ipad` entries, so deleting the 1024x1024 `ios-marketing` entry *and* its PNG still exited 0 (verified on head `8521281`). `ios-marketing` / `1024x1024` / `1x` is now required, keyed on `(idiom, size, scale)` so no iPhone entry can stand in for a missing iPad or marketing one.
-- test(ci): `scripts/check-appicon-entries.test.sh` copies the real iconset into throwaway trees and asserts the guard's exit status and reported message for each fault class — untouched copy, the repo checkout itself, `ios-marketing` deleted, iPad `167x167` deleted, a dropped `filename` key, a stray unassigned PNG, a `filename` naming a missing file, and a `filename` naming a wrong-size PNG. Against the pre-fix checker the same harness reports 1 failure.
+## [0.3.305] - 2026-10-03
 
-### Fixed (AUT-5277, AUT-2638)
-- fix(ios): `UISupportedInterfaceOrientations~ipad` in `ios/Runner/Info.plist` declared only Portrait, LandscapeLeft and LandscapeRight. Because the app is universal (`TARGETED_DEVICE_FAMILY = 1,2`) and `UIRequiresFullScreen` is `false`, Apple requires all four orientations for iPad multitasking, and altool rejected every upload with error `90474` (run 37077070873). `UIInterfaceOrientationPortraitUpsideDown` is now declared; the iPhone-side `UISupportedInterfaceOrientations` is unchanged.
-- fix(ios): `CFBundleIconName` was absent, so the bundled icon set was never selected and altool returned `90713`. Now declared as `AppIcon`.
-- fix(ios): every `AppIcon.appiconset` `Contents.json` entry lacked a `filename`, leaving all 24 PNGs as actool "unassigned children" that never reached `Assets.car` (`90022` / `90023`). Entries now name their PNG explicitly, the 10 unreferenced legacy icons are removed, and `scripts/check-appicon-entries.py` fails on a filename-less entry, a pixel-size mismatch, or an on-disk icon no entry claims.
-- Verified: Mobile Release (`.ipa`) run 37087496038 on head `8521281` — "Upload to App Store Connect" succeeded, so `90474`, `90713`, `90022` and `90023` are all cleared.
+### Fixed (AUT-5268)
+- fix(backend): migration `f7e8d9c0b1a2` called `PGInspector.get_constraints`, which does not exist in SQLAlchemy, so every `alembic upgrade head` raised `AttributeError` at that revision, fell back to `create_all` and left `alembic_version` stuck at two rows (EP2 Default). It now reflects the UNIQUE constraint via `get_unique_constraints` and no-ops when the constraint or the `passkey_credentials` table is absent (idempotent + offline-safe); adds `backend/tests/test_f7e8d9c0b1a2_passkey_unique.py` covering create / already-exists / downgrade / missing-table / offline paths.
 
-### Fixed (AUT-5242)
-- ci(ios): the altool failure branch in `.github/workflows/release-ios.yml` told the operator to "see altool-output.xml in job artifacts", but the workflow had no `actions/upload-artifact` step anywhere, so `$RUNNER_TEMP/altool-output.xml` was discarded when the job ended. A failure-gated `Upload altool output (on failure)` step now retains the XML as the `altool-output` artifact after the upload step.
+## [0.3.304] - 2026-10-03
 
-### Security (AUT-5164)
-- ci(ios): the "Install provisioning profile" step in `.github/workflows/release-ios.yml` printed the profile's `Name` and `application-identifier` raw and interpolated them into a `::error::` annotation. A profile whose `Name` contained a newline made the Actions runner parse the rest of the line as a workflow command (verified with `Name = "Injected\n::set-output name=pwn::1"`). Both fields are now sanitised at the parse site, before they reach the log, `GITHUB_ENV` or any `::` annotation — a newline in `GITHUB_ENV` would otherwise inject a whole extra variable.
-- ci(ios): the step never compared `ExpirationDate`, so an expired profile passed the gate and failed later inside xcodebuild with an error that never named the profile. The date is now compared against the current UTC time. `plistlib` returns a *naive* datetime for `<date>`, so it is normalised to UTC first — the direct comparison against an aware `now()` raises `TypeError` on every genuine profile.
-- ci(ios): a profile with `ProvisionsAllDevices` set (in-house/enterprise) also passed the gate. It is not exportable via `app-store`, so it previously only failed later inside xcodebuild; it is now rejected up front.
-- ci(ios): `Team:` was derived from the profile's own `application-identifier` prefix and never compared to `secrets.IOS_TEAM_ID`, so a profile minted for another team passed silently. The step now takes `TEAM_ID` from the secret and rejects a mismatch when the secret is present.
-- ci(ios): the expanded profile plist (which carries `DeveloperCertificates`, and every device UDID for a development profile) was left on the runner for the rest of the job. It is now removed as the step ends; the installed `.mobileprovision` stays, because codesign and `exportArchive` resolve the pinned `PROVISIONING_PROFILE_SPECIFIER` against it.
-- test(ci): `scripts/ios-profile-verify.test.sh` extracts the step body from the workflow with `yaml.safe_load` and executes it under `bash -euo pipefail` against real CMS-signed fixtures, with `security cms` shimmed by `openssl cms`. Covers: valid App Store profile (exit 0), expired, `ProvisionsAllDevices`, wrong App ID, development, `get-task-allow` absent, malformed base64, non-CMS payload, CMS-wrapped non-plist, the `::`-injection profile, the team pin, and the empty-secret path. Against the un-hardened step the same harness reports 19 failures.
+### Fixed (AUT-2203)
+- fix(backend): `test_aut2203_station_annotations.py` constructed `FuelStats` with `avg_litres_per_fill` instead of the declared `avg_fill_litres` field, so 2 of its 7 tests raised a pydantic `ValidationError` and the `cost_per_km` / `avg_fill_cost` coverage the issue asked for never actually ran on `main`
 
-### Fixed (AUT-4909)
-- fix(models): `lib/core/models.dart` was missing `part` directives for three model files that exist on disk and declare `part of models;` — `models/vass.dart`, `models/electricity.dart`, `models/shop_mechanic.dart`. Every VASS and electricity symbol therefore resolved to `undefined_identifier` at its call site, which is 146 of the 150 error-severity diagnostics that kept `analyze-pr` red on `main` and on every open PR. Introduced by the frontend-lineage sync in `b1023470`.
-- fix(models): `lib/core/models.dart` now imports `dart:convert`; `models/vass.dart` calls `jsonDecode` in two places and could not resolve it through the library scope.
-- fix(vass): `VassApi.getEngineers` cast `data['engineers'] as List` and left each element `dynamic`, so every field access on it was unchecked. Now `.cast<Map<String, dynamic>>()`.
-- fix(find-mechanic): the "Request service from <name>?" dialog title interpolated a non-const name inside a `const Text`, which cannot be const.
-- fix(config): `AppConfig.validate()`, `AppConfig.lastValidationOk` and `AppConfig.lastValidationError` were called from `main.dart`, `app.dart` and `MisconfiguredBackendScreen` but never existed, so the AUT-2272 boot reachability probe was dead code and the "Backend unreachable" recovery screen could never appear. Implemented as a 5s-capped `GET /health`: 5xx is unhealthy, 4xx still counts as reachable, and the probe no-ops until the server picker has set a base. Never throws.
-- fix(services): deleted `lib/shared/widgets/shared_widgets.dart`. It had zero importers and re-exported four `package:autobrain/core/...` targets that do not exist in this repo, producing 4 `uri_does_not_exist` errors. It is frontend-lineage copy; `scripts/sync-mobile.sh` uses additive-only `cp -a`, so the deletion survives future syncs.
-- test(config): `test/app_config_validate_test.dart` covers the probe against a live loopback `/health`, an unreachable port, the 5xx/4xx split and a malformed base URL.
+## [0.3.303] - 2026-10-03
 
-### Security (AUT-4882)
-- ci(macos-runner): `scripts/macos/provision-runner.sh` loses its root path. It no longer pipes `raw.githubusercontent.com/Homebrew/install/HEAD/install.sh` into a `sudo` root shell from a moving `HEAD` ref (a compromised upstream was root on the signing host) and no longer suggests a `NOPASSWD` sudoers grant. Homebrew is reported, never installed.
-- ci(macos-runner): every downloaded artefact in `provision-runner.sh` is pinned — rbenv and ruby-build to full commit SHAs checked out with `--detach`, the libyaml tarball to its SHA-256 (already), and fastlane to an exact version (`AUTOBRAIN_FASTLANE_VERSION`, default 2.240.1) instead of an unconstrained `gem install`. The idempotence gate now only short-circuits on an exact version match.
-- ci(macos-runner): `~/.autobrain-toolchain.env` is written `0600` via `mktemp` + `mv` instead of a truncating redirect, so a concurrent step cannot load a partial `PATH`. `scripts/macos/toolchain-env.sh` refuses to source a file not owned by the runner user (`[ -O ]`), closing a `PATH` hijack that persists across jobs on the runner.
-- ci(macos-runner): `install-fastlane.yml` gains `concurrency: {group: macos-provision, cancel-in-progress: false}` so two dispatches cannot interleave writes into the same `~/.rbenv` / `~/.gem`. Its header now names rule 1 as the control it satisfies (it reads no secrets, so rule 3 was never the applicable one).
-- ci(runner-isolation): `scripts/check-workflow-runner-isolation.sh` rule 3 now matches `push|schedule|workflow_run|workflow_call`, not `push` alone — a nightly cron reading `APPLE_STORE_API_KEY` previously passed with exit 0.
-- ci(runner-isolation): new rule 4 — a self-hosted-runner workflow may only be `workflow_dispatch`. Rule 1 only looked at `pull_request`, so adding a `push:` trigger to a host-mutating workflow passed the guard and put main's code on the signing box every commit.
-- test(macos-runner): `scripts/macos/provision-runner.test.sh` now runs in `analyze.yml`. Its assertions (dispatch-only, no secrets, no sudo, pinned refs) were previously decorative — nothing in CI executed them. Extended to 22 checks covering no-sudo, no-curl-pipe, SHA-pinned clones, pinned fastlane, `0600` env file and the ownership check.
-- test(runner-isolation): `scripts/check-workflow-runner-isolation.test.sh` grows from 6 to 12 cases — `schedule`, `workflow_run` and `workflow_call` secret workflows must fail; a scheduled no-secret workflow and a dispatch-only self-hosted provisioning workflow must pass; a push-triggered self-hosted workflow must fail.
-- ponytail: pinning removes upstream *drift* risk, not upstream *compromise* risk, and the script still spends ~20 minutes compiling a source Ruby on the signing host on every reimage. Bake a runner image with the toolchain once the iMac's image pipeline exists; this whole script then shrinks to an image pull.
+### Added
+- Demo-tier frontend image build (`cannonfodder151/autobrain-frontend:demo`) in `dockerhub-publish.yml` (AUT-5261). The Demo stack had no frontend build job: `API_BASE_URL` is compiled into the Flutter bundle, so Demo needed its own image and the only pre-existing `:demo` artifact was built 2026-09-28 with Hosted's API base.
 
-### Fixed (AUT-4845)
-- ci(macos-runner): `install-fastlane.yml` no longer tries to `gem install fastlane` against the CommandLineTools Ruby 2.6, whose SDK is missing `ruby/config.h` — that made all 5 runs of the workflow fail while building native extensions. It now calls `scripts/macos/provision-runner.sh`, which builds a self-contained Ruby under `~/.rbenv` (no sudo, no system paths) and installs fastlane into `~/.gem`. Re-provision after a runner reimage with a single dispatch.
-- ci(macos-runner): `scripts/macos/toolchain-env.sh` + `~/.autobrain-toolchain.env` make the toolchain visible to Actions steps. Steps run `/bin/bash -e` with a launchd-inherited `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), so `~/.zshrc` edits — which the previous attempt relied on — are never read.
-- ponytail: Homebrew is not installed on the runner and `provision-runner.sh` no longer installs it. Its installer needs `sudo`, the runner user has no passwordless sudo, and `/usr/local` is `root:wheel`. The script only reports whether `brew` is present (and prepends its bin dir to `PATH` when it is). Add a `brew` arm when a formula we need has no gem path.
-- test(macos-runner): `scripts/macos/provision-runner.test.sh` asserts the env-file contract, the `ruby/config.h` gate, and that the workflow stays `workflow_dispatch`-only with no secrets (runner-isolation rule 3).
+## [0.3.302] - 2026-10-02
+- fix(fuel): disable the SA (SAFPIS) feed (AUT-5072).
+  `FUEL_SA_ENABLED: "true"` was set in both compose files
+  (AUT-2610) with a seeded `fuel_sa_api_key` secret, but no
+  `ingest_sa_*` function exists — `ingest_all_fuel()` only
+  loops `wa`, `nsw`, `vic`, `qld`, so SA was nominally enabled
+  and silently produced zero stations forever. The SAFPIS
+  Direct API host `fppdirectapi.safuelpricinginformation.com.au`
+  is NXDOMAIN (verified against the authoritative nameserver via
+  public DoH) and the AUT-2372 research doc lists the production
+  URL as "to be confirmed from registration" — no subscriber
+  token was ever contracted. Building the ingester would have
+  reproduced the AUT-4143 VIC dead-feed failure mode. Both
+  `docker-compose.hosted.yml` and `docker-compose.prod.yml` now
+  set `FUEL_SA_ENABLED: "false"` (same pattern as VIC/AUT-4976);
+  the secret file stays mounted so re-enabling is a one-line flip
+  once an aggregator is contracted. `/fuel/stations` and
+  `/fuel/attribution` advertise only `wa`/`nsw`/`qld`, so SA
+  coverage is not advertised. Guarded by
+  `backend/tests/test_fuel_feed_flags.py`.
 
-### Security (AUT-4766)
-- ci(mobile-release): `release-mobile.yml` and `release-ios.yml` are now `workflow_dispatch`-only. `autobrain-mobile` is private on a GitHub Free plan, so branch protection **and** repository rulesets both return `403 — Upgrade to GitHub Pro`; there is no server-side gate on who may push to `main`. A `push: main` trigger meant any write-access push built and signed a store artifact — Play upload key and Apple distribution cert — with no review step. Dispatch requires write access **and** an explicit human action.
-- ci(mobile-release): `scripts/check-workflow-runner-isolation.sh` gains rule 3 — a workflow that reads `${{ secrets.* }}` may not declare a `push:` trigger. Comment lines are stripped so the header trust-model note does not count as a read. Covered by a new `scripts/check-workflow-runner-isolation.test.sh`, run in `analyze.yml` next to the guard itself.
-- ponytail: rule 3 stays in place after GitHub Pro lands. Delete it in the same PR that adds the required-review branch rule; until then it is the only server-side enforcement available on the Free plan.
+## [0.3.301] - 2026-10-02
 
-### Fixed (AUT-4736)
-- fix(mobile,servo-spy): CARTO basemap `urlTemplate` now interpolates `${_kCartoKeyParam}` in both the dark and light branches. The key param was declared but never referenced, so release builds that inject `CARTO_API_KEY` via `--dart-define` still rendered the "API key required" watermark, and `flutter analyze` only flagged it as `unused_element`.
-- test(mobile,servo-spy): restore `test/servo_spy_carto_key_test.dart` from the monorepo, plus a group asserting both URL branches actually use the key param.
+### Fixed (AUT-5131)
+- security(ci): corrected the `.trivyignore` reachability rationale for
+  `CVE-2026-103111` (pcre2 OOB write). The old condition-2 paragraph
+  claimed the nginx base image "ships no JIT-enabled pcre2 build for our
+  config" — false: the pinned `nginxinc/nginx-unprivileged:stable-alpine`
+  binary (nginx 1.30.5-r1, pcre2 10.48-r0) links `libpcre2-8.so.0` and
+  imports `pcre2_jit_compile_8` (plus `pcre2_compile_8`,
+  `pcre2_match_8`, `pcre2_pattern_info_8`) from its `.dynsym`, which is
+  the proof that PCRE2 JIT is compiled in. The suppression itself is
+  unchanged and stays approved: condition 1 (attacker-controlled regex)
+  fails independently — nginx only matches the static
+  `location ~ ^/(autobrain-assets|autobrainservice-assets)/` literal —
+  and CPython 3.13 links no pcre2 at all. No entry added or dropped;
+  the 2026-11-30 re-check date stands. Comment-only change, no runtime
+  effect.
+
+### Fixed (AUT-4718)
+- security(ci,docker): repinned the two base images that were failing the
+  `Security — base image CVE scan (trivy)` gate on `main`, and dropped the
+  `.trivyignore` entries the bumps made redundant. The gate had been red on `main`
+  since 2026-09-26, so every open PR looked like it had a regression.
+  - `nginxinc/nginx-unprivileged:stable-alpine` → `@sha256:ed04ec1f…`
+    (Alpine 3.24.2, `libexpat` 2.8.5-r0, `libuuid` 2.42.3-r1). Clears
+    `CVE-2026-93990`, `CVE-2026-66046` and `CVE-2026-76641` (libexpat) plus all
+    seven util-linux/libuuid and the `CVE-2026-80256` placeholder findings.
+  - `python:3.13.15-slim-trixie` → `python:3.13.16-slim-trixie@sha256:6906dca8…`
+    (Debian 13.7). Clears `CVE-2026-75804` / `CVE-2026-84782` (OpenSSL QUIC/DTLS),
+    `CVE-2026-41992` (gzip), `CVE-2026-11822` / `CVE-2026-11824` (libsqlite3-0) and
+    seven `perl-base` findings, and carries openssl `3.5.7-1~deb13u3` on both the
+    amd64 and arm64 manifests.
+  - All three nginx pins had drifted onto three *different* digests
+    (`docker/frontend/Dockerfile` built `44275388…`, `trivy-image-scan.yml` scanned
+    the amd64-only manifest `ee1643ae…`, and `libexpat-version-check.yml` watched
+    `45ce1e2e…`). All three now pin the same multi-arch index, so the scan again
+    covers the arm64 frontend we actually build.
+- security(ci): added three time-boxed `.trivyignore` entries, each with its
+  reachability argument, for CVEs whose fixes are published upstream but not yet in
+  any published image: `CVE-2026-103111` (pcre2 OOB write — needs an
+  attacker-controlled regex *and* JIT; CPython links no pcre2 and our nginx PCRE
+  patterns are static), and `CVE-2026-97687` / `CVE-2026-97689` (urllib3 2.7.0 as
+  pip's vendored copy — build-time only; the runtime HTTP stack is httpx).
+  Re-check 2026-11-30.
+- fix(ci): `trivy-image-scan.yml` passed `scanner: vuln` to
+  `aquasecurity/trivy-action@v0.36.0`, which does not accept that input (it is
+  `scanners`). GitHub logged `Unexpected input(s) 'scanner'` on all three scan
+  steps and dropped the value.
+- fix(ci): `libexpat-version-check.yml` compared a per-arch manifest digest
+  (`regctl image digest --platform linux/amd64`) against `PINNED_DIGEST`, which holds
+  the multi-arch index digest, so `unchanged` was never true and the daily job
+  re-filed a duplicate Paperclip issue on every run. It now resolves the index
+  digest, and its threshold is raised to 2.8.5-r0.
+- Verified 2026-10-02 with trivy 0.70.0 against the edited `.trivyignore`: all three
+  pinned base images return 0 findings at HIGH/CRITICAL with `--ignore-unfixed`
+  (exit 0 each).
+
+## [0.3.300] - 2026-10-02
+- fix(ci): restore automatic deploys for the **Demo** and **Default** tiers.
+  AUT-2409 narrowed `DEFAULT_TIERS` in `scripts/upgrade-instances.sh` to
+  Hosted-only, so neither EP2 stack was ever redeployed again and demo
+  (`demo.autobrainservice.app`) went 502 and stayed down. The full
+  Demo → Default → Hosted promotion chain is back in the defaults, still
+  health-gated per tier (AUT-107). Hosted keeps its 03:00–04:00 AEST window
+  (AUT-2409 / AUT-5172); scope a `deploy-instances.yml` dispatch with the new
+  `tiers` input to honour it.
+
+## [0.3.299] - 2026-10-02
+- fix(backend): `backup_offsite_hourly` now wraps `run_backup_offsite()` in the
+  persistent-loop `_run()` wrapper. Before the fix the async function was passed
+  bare, so the coroutine was never executed and the hourly off-site backup never
+  ran.
+
+## [0.3.298] - 2026-10-02
+- fix(backup): the backend no longer runs a second retention engine against the
+  off-site backup store. `backup_offsite.py::_apply_tiered_retention()` pruned
+  by file **age** (via `_tier_for_age`) while `autobrain-backup` prunes by
+  **count per tier directory** (`engine.py::_prune`, defaults hourly 24 /
+  daily 30 / weekly 12) — two policies, one store. Age-derived tiers ignored
+  the tier directory the API returns (a `daily/` snapshot 10 days old collapsed
+  to one per ISO week) and the backend's `monthly` tier does not exist on the
+  service side at all, so anything older than 24 weeks was deleted outright.
+  Repro against `main` @ `0f1f9248`: a listing the service itself considers
+  fully in-policy (24 hourly + 30 daily + 12 weekly) lost **29 of 66**
+  snapshots. Removed `_apply_tiered_retention`, `_list_existing_offsite`,
+  `_delete_offsite`, `_tier_for_age`, `_slot_key` and `_OFFSITE_TIERS`; the
+  hourly push and the `BACKUP_OFFSITE_ENABLED` guard are unchanged. Per-tier
+  retention is configured on the autobrain-backup instance
+  (`retention.hourly` / `retention.daily` / `retention.weekly`). Regression test
+  feeds the 66-snapshot in-policy listing through `run_backup_offsite()` and
+  asserts one ingest POST and zero deletes. Note: this task was a no-op before
+  AUT-3975 / PR #757, so no production data was lost yet.
+
+## [0.3.297] - 2026-10-02
+- fix(hosted): the hosted backend now runs `alembic upgrade head` before
+  bootstrap, so migration-only changes (new index, constraint, column rename,
+  data backfill) stop being dead code in production. Hosted booted straight
+  into `app.db.bootstrap`, whose `create_all` fallback swallowed every
+  migration failure — `alembic_version` sat at `aut4925_missing_tables` and
+  `fuel_price_snapshots` existed only because `create_all` happened to build it.
+  Guarded by `scripts/check-compose-consolidation.py` (with negative tests) and
+  a new `alembic-migrations` CI job that proves a create_all-built database
+  at the hosted stamp reaches head and that the pending revision performs real
+  DDL instead of only bumping a version string.
+- feat(alembic): add migration for `fuel_price_snapshots` — the table was only
+
+### Fixed (AUT-4678)
+- `scripts/check-compose-config.py` crashed with `KeyError: 'ai'` on `main`
+  after the AUT-3153 merge removed the standalone `ai` service, so the hosted
+  compose structural guard had been dead. Optional services are now filtered
+  by presence (`SECRET_SERVICES` + `present()`), `BACKUP_OFFSITE_GUI_KEY_FILE`
+  / `BACKUP_OFFSITE_INGEST_KEY_FILE` (and gh-runner's `github_pat`) are known
+  secret files, and the corresponding plain-env keys are forbidden.
+- `scripts/check-compose-consolidation.py` asserted the standalone `ai`
+  service existed; it now asserts the merged gateway indirection
+  (`AI_GATEWAY_API_KEY_FILE` / `AI_ROUTER_API_KEY_FILE`) lives on `backend`.
+- `scripts/seed-secrets.sh` aborted immediately: a comment inside a `sed`
+  backslash continuation (`# -e 's/^FUEL_VIC_API_KEY$/…' \`) terminated the
+  pipeline, so `set -eu` killed the script and **no** secret file was ever
+  seeded. Comment moved above the pipeline; `BACKUP_OFFSITE_GUI_KEY` /
+  `BACKUP_OFFSITE_INGEST_KEY` are now mapped to secret files.
+- New `.github/workflows/compose-checks.yml` runs every `scripts/check-*.py`
+  plus `scripts/test_check_compose_config.py` on compose/script changes, so
+  the guards can no longer rot unnoticed.
+
+## [0.3.296] - 2026-10-02
+
+### Fixed (AUT-5032)
+- test: three pre-existing failures in `backend/tests/test_workers.py` that
+  reproduced on a clean `origin/main` checkout (not env-dependent, and not
+  caused by the AUT-3827/AUT-3977 branch diff — root cause was the test
+  harness, not the code under test):
+  - `test_scheduled_backup_skips_on_missing_minio_credentials` asserted on
+    `caplog` (stdlib `logging`), but the worker logs through `structlog`, so the
+    records never reached `caplog`. It now uses
+    `structlog.testing.capture_logs()` and asserts on the
+    `reason="minio_credentials_missing"` event field, matching the pattern in
+    `backend/tests/test_aut324_rego_log_redaction.py`.
+  - `test_ingest_fuel_prices_no_typeerror_when_source_in_result` and
+    `test_run_due_checks_runs_inner_coro_via_run` raised `NameError` at the
+    `patch.object(...)` / `asyncio.new_event_loop()` call sites because
+    `unittest.mock.patch` and `asyncio` were never imported. Both are now
+    imported at module top.
+  - No production code changed. `python3 -m pytest backend/tests/test_workers.py`
+    is green (7 passed) with only `DATABASE_URL` + `SECRET_KEY` exported.
+
+### Security (AUT-5041)
+- deps: bump `pypdf` `6.16.1` -> `6.19.0` in `backend/requirements.txt` and
+  `ai/requirements.txt`. 6.16.1 carried 8 known vulnerabilities
+  (PYSEC-2026-4153..4160), which kept the `pip-audit-gate` job of
+  `Publish images to Docker Hub` red on `main` and blocked every PR merge.
+  `pip-audit --disable-pip --no-deps` over the deduplicated backend+ai pin
+  list is now clean. The receipt worker's `_pdf_text()` and the reportlab PDF
+  export paths are unchanged (`pypdf` is only ever a reader there); guarded by
+  `backend/tests/test_deps_pypdf_pin.py` (floor raised to 6.19.0),
+  `backend/tests/test_pdf_dos_regression.py` and the `test_api.py` PDF export
+  tests.
+
+## [0.3.295] - 2026-10-02
+
+### Fixed (AUT-3827)
+- backup: include the `monthly` tier when listing off-site snapshots
+  (`backend/app/services/backup_offsite.py`). Retention manages four tiers but the
+  off-site listing flattened only `hourly`/`daily`/`weekly`, so monthly backups were
+  invisible to `_apply_tiered_retention` — never deduped per month slot and never
+  pruned past the 6-month window. Tier list is now a single `_OFFSITE_TIERS`
+  constant. Guarded by `backend/tests/test_backup_offsite.py` (new).
+
+### Fixed (AUT-4976)
+- deploy(hosted): set `FUEL_VIC_ENABLED: "false"` in `docker-compose.hosted.yml`,
+  matching `docker-compose.prod.yml`. The VIC Servo Saver endpoint
+  `api.servosaver.com.au` is NXDOMAIN (AUT-4143), so the hosted nightly beat
+  (`ingest-fuel-prices`) raised `FuelFeedError` for VIC on every run. NSW, QLD and
+  SA feeds are unaffected. The VIC secret files stay mounted so the feed can be
+  re-enabled when a paid VIC aggregator is available. Guarded by
+  `backend/tests/test_fuel_feed_flags.py`.
+
+## [0.3.294] - 2026-10-01
+
+### Fixed (AUT-4911)
+- deploy(hosted): remove the `gh-runner` service from `docker-compose.hosted.yml`.
+  It carried an inline `build:` block, and Portainer cannot build service images for
+  a remote endpoint with no uploaded build context, so every compose-pin sync of this
+  file failed with `HTTP 500` on `PUT /stacks/122?endpointId=5` (body:
+  `failed to deploy a stack: compose build operation failed: listing workers for Build`)
+  — reproduced on EP5 and EP6. The ARM64 runner already runs as its own Portainer
+  stack (`gh-runner-autobrain-arm64`, stack 123 on EP5) on the external
+  `autobrain-hosted_default` network, and its image `autobrain-gh-runner:arm64-latest`
+  is unpublished, so the inlined service could never have started on EP5 anyway.
+- deploy(hosted): `scripts/sync-compose-to-portainer.py` now prints the Portainer
+  response body on failure and exits 4 instead of logging a bare `HTTP Error 500`,
+  so the next such error names itself in the CI log.
+- ci: this entry lands as a `CHANGELOG.md`-only commit. The AUT-4911 merge itself
+  shipped without one, so the post-merge `changelog-gate` job failed on `main` and
+  took the `Publish images to Docker Hub` run down with it, leaving the release queue
+  stuck. A changelog-only diff does not re-trip the gate.
+
+## [0.3.293] - 2026-10-01
+
+### Fixed (AUT-4919)
+- fix(ci): stop lineage sync from committing editor backup files. `sync-mobile.yml`
+  commits with `git add -A`, so a stray `CHANGELOG.md.bak` left in the
+  `autobrain-mobile` working tree was swept into commit `b102347` and stayed
+  tracked (140KB) in every clone. Two fixes: `autobrain-mobile` now gitignores
+  `*.bak` and `*~`, and `scripts/sync-mobile.sh` runs a pre-flight that aborts
+  the sync if a backup artifact is present on either side of the copy — before
+  any file is written, so there is no partial sync. Covered by
+  `scripts/test_sync_mobile_backup_guard.sh`.
+
+### Fixed (AUT-4925)
+- fix(backend): repair the Alembic head that hard-failed on every boot of the hosted
+  stack. `alembic_version` read `aut3447_passkey_credentials`, but `passkey_credentials`,
+  `engineers` and `engineer_reviews` did not exist, so head migration `f7e8d9c0b1a2`
+  raised `UndefinedTableError: relation "passkey_credentials" does not exist`.
+  `bootstrap()` then fell back to `create_all`, which could not repair the gap
+  because `app/models/__init__.py` never imported those three models — so the
+  version never advanced and the loop repeated indefinitely. Passkey sign-in and
+  the engineer marketplace were both non-functional on hosted as a result. Three
+  changes: `f7e8d9c0b1a2` is now guarded and no-ops when the table is absent; a new
+  guarded migration `aut4925_missing_tables` creates the three tables
+  column-for-column identical to the ORM models (including
+  `engineer_reviews.updated_at`, which `a3661engineers` omits); and the three
+  models are imported so the `create_all` fallback covers them. A new
+  `test_every_model_table_is_exported_for_create_all` guard fails if any model
+  class declaring `__tablename__` is not exported from `app.models`.
+
+## [0.3.292] - 2026-10-01
+
+### Security (AUT-4701)
+- test(backend): add a PyJWT floor guard to `test_deps_transitive_cves.py` —
+  `pyjwt >= 2.15.0`, so a future downgrade cannot silently re-expose
+  GHSA-42vr-xj54-vc7v (unauthenticated `RecursionError` DoS via
+  `PyJWKClient.get_signing_key_from_jwt` with `verify_signature=False`),
+  which 2.14.0 does **not** fix. The pin guard itself is also hardened:
+  `_pins()` now strips `[extras]` (`PyJWT[crypto]` -> `pyjwt`) and tolerates
+  PEP 440 suffixes (`2.9.0.post0`), which previously raised `ValueError` and
+  took down the whole module. The 2.15.1 pin itself already landed via
+  AUT-4743 (#828).
+
+## [0.3.291] - 2026-10-01
+
+### Fixed (AUT-4855)
+- ci(release): `scripts/bump-version.sh` printed `docker build` instructions that
+  interpolated `"$CARTO_API_KEY"` even though the commands are only echoed, never
+  run. Under `set -u` — how CI invokes it via `auto-bump.sh` — an unset
+  `CARTO_API_KEY` killed the script at line 64 with `unbound variable`, after the
+  CHANGELOG had been promoted but before the version bump could be committed. That
+  broke the `auto-bump` job in both `Publish images to Docker Hub` and
+  `Build hosted images (multi-arch)`, blocking every release off `main`. This was a
+  regression introduced by AUT-4824 (PR #822). The three lines now print a literal
+  `$CARTO_API_KEY` placeholder for the operator to substitute; the `set -u` guard
+  is untouched. New `scripts/test-bump-version.sh` runs the real script in a
+  sandbox with the key unset and set, asserting exit 0 and that the bump lands.
+
+### Fixed (AUT-4824)
+- docs(docker): the `CARTO_API_KEY` hard-fail introduced by AUT-4690 (PR #822)
+  left three documented/scripted frontend build paths passing no
+  `--build-arg CARTO_API_KEY`, so all of them failed if copied: the manual
+  `docker build -f docker/frontend/Dockerfile` snippet in
+  `docs/Deployment-and-Infrastructure/deployment-guide.md`, the three
+  hosted/default/demo build commands printed by `scripts/bump-version.sh`, and
+  the   stale "Empty -> key-less public basemap" comments in `.env.example`,
+  `docker-compose.yml` and `docker-compose.prod.yml` (the empty default is
+  intentional — it fails the build loud rather than shipping a watermapped map).
+  No behaviour change. New `scripts/check-carto-build-arg-propagation.py`
+  statically asserts that every documented/scripted frontend build passes the key;
+  it now runs as the `carto build-arg propagation` CI job so the paths cannot
+  silently regress. `scripts/publish-images.sh` also sources the key from `.env`
+  and hard-fails early instead of letting `docker build` reject it, and
+  `dockerhub-publish.yml` fails with a readable message when the
+  `CARTO_API_KEY` secret is unset rather than surfacing an opaque error deep
+  inside the build.
+
+## [0.3.290] - 2026-09-30
+
+### Fixed (AUT-2784)
+- fix(ai): the AI gateway now imports its own modules relatively, so it is
+  self-contained as `ai_app` in the shared backend image. `docker/backend/Dockerfile`
+  copies `ai/app` to `ai_app` and runs it as a co-process on `:8001` inside the
+  backend container, but every gateway module used an absolute `from app.…`
+  import. In that image `app` resolves to the **backend** package, which has no
+  `logging`, `modules`, `router_client` or `fallbacks`, so the gateway died at
+  startup with `ModuleNotFoundError: No module named 'app.logging'` and every
+  `/ai/` route 502'd. 48 import statements across 20 files converted; the
+  standalone `ai/` suite is unchanged (109 passed, same 3 pre-existing failures).
+- test(ai): `ai/tests/test_merged_image_layout.py` simulates the image layout
+  (backend `app` + gateway `ai_app` side by side) and asserts the gateway both
+  imports and serves `/health` + auth on `:8001`, plus an AST check that no
+  absolute `app.*` import reappears. The standalone AI suite imports `app.main`
+  and could never catch this class of breakage; the new file fails 3/4 on the
+  pre-fix tree and passes 4/4 after.
+
+## [0.3.289] - 2026-09-30
+
+### Changed (AUT-3944)
+- chore(deploy): the hosted `autobrain-backup` service is renamed to `backup`
+  and is now the **single** backup container. `backup-agent` stays removed
+  (AUT-3827 — its hourly snapshot push is the `offsite-backup-hourly` Celery
+  beat task in `backend`), so the hosted stack runs one backup container
+  instead of a GUI container plus a poller sidecar. GUI endpoint is unchanged
+  (`127.0.0.1:8080` on the host, `/backups` bind mount preserved).
+  `BACKUP_OFFSITE_URL` now defaults to `http://backup:8080`; **any EP5 stack
+  env override of the old `http://autobrain-backup:8080` must be updated or
+  hourly pushes stop on DNS failure.**
+
+### Fixed (AUT-3944)
+- fix(ci): `scripts/check-compose-consolidation.py` and
+  `scripts/check-compose-config.py` no longer crash or pass vacuously on the
+  consolidated stack — both still asserted the `ai` service that AUT-3824
+  removed (`KeyError: 'ai'`), and neither allowed-listed the
+  `backup_offsite_*` secret files added by AUT-3827. Both now assert the exact
+  10-service set and the `backup` DNS name.
+
+## [0.3.288] - 2026-09-30
+
+### Security (AUT-4743)
+- fix(backend): bump `PyJWT[crypto]` 2.13.0 -> 2.15.1. 2.13.0 carries 12 known
+  CVEs (CVE-2026-101917/101918/102265-102274), which made both `pip-audit-gate`
+  and the resolved-tree scan (AUT-1189) fail on every PR and on `main` — it was
+  blocking the hosted deploy pipeline, not just this PR. The API used by
+  `app/core/security.py` and `app/services/iap.py` (`encode`/`decode`/
+  `get_unverified_header`/`PyJWTError`/`InvalidTokenError`) is unchanged.
+### Fixed (AUT-4690)
+- **CI:** `docker/frontend/Dockerfile` now hard-fails when `CARTO_API_KEY` is
+  unset/expired, and asserts the key value is actually present in the built
+  `main.dart.js`. Previously an empty secret produced a *green* build and the
+  Servo Spy map silently fell back to the watermapped public basemap, only
+  caught weeks later by a human QA curl (AUT-4533, AUT-4649). The empty-key
+  check runs before `flutter build web` so it fails fast.
+
+## [0.3.287] - 2026-09-30
+
+- **CI (AUT-1029):** `dockerhub-publish.yml` gains a `dedupe-main-queue` job that cancels superseded `queued`/`pending` publish runs on `main` before the heavy jobs start, so a burst of merges no longer queues N full 5-image builds behind the 3-runner fleet. In-flight runs are never cancelled (AUT-967/AUT-1756 behaviour preserved).
+
+### Changed (AUT-4503)
+- chore(deploy): the EP2 9Router (`10.0.3.17:20128`) is a managed Portainer
+  stack (`9router`, id 128) from `docker-compose.9router.yml` instead of a loose
+  `docker run` container — it was invisible to Portainer's stack view, so it had
+  no consistent update path and no health signal
+- chore(deploy): the EP2 router image is pinned by digest
+  (`decolua/9router:0.5.91@sha256:efc6e88c…`) — the same image the floating
+  `:latest` tag was already resolving to, so no version change
+- feat(deploy): the EP2 router stack carries an `/api/health` healthcheck; the
+  loose container had none
+- docs(deploy): document all three 9Router instances (EP2 stack, EP5 inside
+  `autobrain-hosted`, EP6 has none and uses the EP2 one) and the two ways to
+  break the shared `:20128` route
+
+## [0.3.286] - 2026-09-29
+
+### Added (AUT-3503)
+- feat(backend): WebAuthn passkey sign-in is functional end-to-end (the route
+  skeleton shipped in AUT-3447 but could never complete a ceremony)
+- fix(backend): passkey registration verification now parses the real
+  `AuthenticatorAttestationResponse`; it previously passed `response=None`, so
+  every registration attempt failed
+- fix(backend): `/auth/passkey/authenticate/complete` now returns
+  `access_token` + `refresh_token`; it minted both tokens and then discarded
+  them, so a successful passkey assertion could not sign the user in
+- fix(backend): expected origin and RP ID are derived from `APP_BASE_URL`
+  instead of the client-supplied `Origin` header, which made the origin check a
+  no-op (an attacker could echo any origin)
+- fix(backend): WebAuthn challenges live in Redis with a 5-minute TTL so they
+  survive across workers and restart; the in-process dict was shared by
+  nothing when the API scaled past one worker
+- feat(backend): alembic `f7e8d9c0b1a2` adds a unique constraint on
+  `passkey_credentials (user_id, credential_id)` so one authenticator cannot
+  be registered twice for an account
+
+### Fixed (AUT-3661)
+- fix(backend): `EngineerSortBy` no longer inherits from `list`, which raised
+  `TypeError: multiple bases have instance lay-out conflict` on Python 3.13
+  and broke app import
+- fix(backend): `/api/v1/engineers` imported `EngineerSearchResult` and
+  `EngineerSearchResponse` from the service module, which does not export
+  them; both now import from `app.schemas.engineer` (also fixes
+  `EngineerResponse` being undefined)
+
+## [0.3.285] - 2026-09-28
+
+### Fixed (AUT-4143)
+- fix(backend): disable VIC Servo Saver fuel feed — endpoint `api.servosaver.com.au` returns NXDOMAIN and would raise `FuelFeedError` instead of returning 0 stations; set `FUEL_VIC_ENABLED="false"` in `docker-compose.prod.yml` and commented out unused secret seeds in `scripts/seed-secrets.sh` until a paid VIC aggregator is available
+
+## [0.3.284] - 2026-09-28
+
+### Fixed (AUT-4317)
+- fix(frontend): match both MinIO bucket prefixes (`autobrain-assets` on
+  dev/hosted, `autobrainservice-assets` on demo/default) in nginx so
+  community-hub photos load instead of serving the SPA shell; the regex
+  location forwards the original URI (with its bucket prefix) to MinIO
+
+## [0.3.283] - 2026-09-28
+
+### Fixed (AUT-4327, AUT-4357)
+- fix(frontend): login, signup and server-setup logo is no longer stretched (`BoxFit.cover` → `BoxFit.contain`) and sits in a black circle instead of a white one, on all three auth screens (AUD-427 user report)
+- fix(frontend): `ApiClient.getCachedDecoded` no longer throws when the local cache backend is unavailable (web/sqflite); the vehicle manage screen, timeline, and every other cache-first screen fall through to the network path instead of failing to load
+
+## [0.3.282] - 2026-09-27
+
+### Changed (AUT-4289)
+- fix(frontend): remove the "Petrol Prices" feature tile from the home screen feature grid; `PetrolPriceMapScreen` itself is unchanged and still reachable from `frontend/lib/screens/fuel/petrol_price_map_screen.dart`
+
+## [0.3.281] - 2026-09-27
+
+### Fixed (AUT-4259)
+- fix(backend): merge alembic heads `a3661engineers` (engineer marketplace) and `aut3447_passkey_credentials` (WebAuthn) via new merge revision `m3rge07`; restores single-head guarantee so `alembic upgrade head` works and pytest-smoke gate passes
+
+## [0.3.280] - 2026-09-27
+
+### Added (AUT-4120)
+- feat(backend): Redis cache (TTL 1h) for query embeddings in `vector_search.py`; repeated searches return cached vector without 9Router call
+- fix(backend): cached vectors are re-validated against `EMBEDDING_DIMENSION` on read; a poisoned/wrong-dimension cache entry is rejected and the router path re-derives the vector instead of binding it to SQL (22P02)
+
+## [0.3.279] - 2026-09-26
+
+### Fixed (AUT-3570)
+- fix(frontend): wire CARTO_API_KEY into Servo Spy map tile URLs; embedded `?key=` param now passes the build-time `--dart-define=CARTO_API_KEY` value so CARTO basemaps render without watermark
+
+## [0.3.278] - 2026-09-26
+
+### Fixed (AUT-3979)
+- fix(docker): remove orphaned top-level `volumes:` block left in `docker-compose.hosted.yml` by the AUT-3827 backup-agent removal, so the file has a single valid top-level `volumes:` key (duplicate keys are rejected by the Docker Compose strict YAML parser).
+- fix(docker): drop the now-unused `/data/autobrain-backup/agent-data` bind mount. Merging it into `autobrain-backup` would have duplicated the `/backups` container path already served by `/data/autobrain-backup/data`, and the `backup-agent` service that owned that directory was removed.
+
+## [0.3.277] - 2026-09-25
+### Added (AUT-2631)
+- feat(ios): define Fastlane release pipeline for TestFlight beta uploads and App Store releases. New `beta` and `release` lanes in `frontend/ios/fastlane/Fastfile` with `match` for cert/profile sync via S3, API key authentication, build number increment, and changelog integration.
+
+## [0.3.276] - 2026-09-25
+
+### Fixed (AUT-3049)
+- fix(frontend): replace `withValues(alpha:)` with `withOpacity(alpha:)` in servo_spy_screen.dart for dart2js arm64 compatibility (PR #608)
 
 ## [0.3.275] - 2026-09-21
 
