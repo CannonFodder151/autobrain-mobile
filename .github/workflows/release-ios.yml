@@ -178,7 +178,7 @@ jobs:
             echo "::error::pubspec.yaml version is ${tag} but requested ${{ inputs.version }}. Run bump-version.sh --mobile in the autobrain monorepo first."
             exit 1
           fi
-          echo "Building release ${tag} for iOS (lane: ${{ env.LANE }})"
+          echo "Building release ${tag} for iOS (lane: ${{ inputs.lane }})"
 
       - name: Detect semantic version iteration (Discord changelog gate)
         id: semver-check
@@ -743,7 +743,7 @@ jobs:
           RELEASE_URL: ${{ steps.release.outputs.url }}
           SEMVER: ${{ steps.semver-check.outputs.semver }}
           POST_CHANGELOG: ${{ steps.semver-check.outputs.post_discord }}
-          LANE: ${{ env.LANE }}
+          LANE: ${{ inputs.lane }}
         run: |
           notes="$(awk -v s="## [$SEMVER]" 'index($0,s){f=1;next} f && /^## /{exit} f' CHANGELOG.md \
             | grep -E '^- ' | sed 's/^- //; s/`//g; s/\*\*//g' \
@@ -754,7 +754,8 @@ jobs:
               --arg title "AutoBrain iOS $SEMVER released" \
               --arg desc "$notes" \
               --arg url "$RELEASE_URL" \
-              '{channel:$channel,title:$title,description:$desc,color:"0x2ECC71",author:"Mobile Release Engineer",fields:[{name:"Download",value:$url,inline:true},{name:"Platform",value:"iOS (.ipa)",inline:true},{name:"Lane",value:$LANE,inline:true}]}')"
+              --arg lane "$LANE" \
+              '{channel:$channel,title:$title,description:$desc,color:"0x2ECC71",author:"Mobile Release Engineer",fields:[{name:"Download",value:$url,inline:true},{name:"Platform",value:"iOS (.ipa)",inline:true},{name:"Lane",value:$lane,inline:true}]}')"
             curl -sS -o /dev/null -w "changelog embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
               -H 'Content-Type: application/json' -d "$changelog_payload" || true
           fi
@@ -762,6 +763,7 @@ jobs:
             --arg channel updates \
             --arg title "Mobile iOS ${{ inputs.version }} (${LANE})" \
             --arg url "${{ steps.release.outputs.url || 'TestFlight' }}" \
-            '{channel:$channel,title:$title,description:"Release notes + .ipa built and uploaded.",color:"0x3498DB",author:"Mobile Release Engineer",fields:[{name:"Artifact",value:"Runner.ipa",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true},{name:"Lane",value:$LANE,inline:true}]}')"
+            --arg lane "$LANE" \
+            '{channel:$channel,title:$title,description:"Release notes + .ipa built and uploaded.",color:"0x3498DB",author:"Mobile Release Engineer",fields:[{name:"Artifact",value:"Runner.ipa",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true},{name:"Lane",value:$lane,inline:true}]}')"
           curl -sS -o /dev/null -w "updates embed: %{http_code}\n" -X POST https://n8n.nathanmartina.com/webhook/discord-report \
             -H 'Content-Type: application/json' -d "$updates_payload" || true

@@ -83,7 +83,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
+      # v3.2.2 still asks sdkmanager for the deprecated `tools` package,
+      # which Google no longer serves -> `Failed to find package 'tools'`,
+      # sdkmanager exits 1 and the whole Android release dies at this step.
+      # v4 filters that package out (its cmdline-tools replaces it).
+      - uses: android-actions/setup-android@v4
 
       - name: Fix SDK execute bits (cold runner AUT-2176)
         # android-actions/setup-android installs cmdline-tools and build-tools with
