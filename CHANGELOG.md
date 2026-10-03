@@ -11,6 +11,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed (AUT-5277, AUT-2638)
+- fix(ios): `UISupportedInterfaceOrientations~ipad` in `ios/Runner/Info.plist` declared only Portrait, LandscapeLeft and LandscapeRight. Because the app is universal (`TARGETED_DEVICE_FAMILY = 1,2`) and `UIRequiresFullScreen` is `false`, Apple requires all four orientations for iPad multitasking, and altool rejected every upload with error `90474` (run 37077070873). `UIInterfaceOrientationPortraitUpsideDown` is now declared; the iPhone-side `UISupportedInterfaceOrientations` is unchanged.
+- fix(ios): `CFBundleIconName` was absent, so the bundled icon set was never selected and altool returned `90713`. Now declared as `AppIcon`.
+- fix(ios): every `AppIcon.appiconset` `Contents.json` entry lacked a `filename`, leaving all 24 PNGs as actool "unassigned children" that never reached `Assets.car` (`90022` / `90023`). Entries now name their PNG explicitly, the 10 unreferenced legacy icons are removed, and `scripts/check-appicon-entries.py` fails on a filename-less entry, a pixel-size mismatch, or an on-disk icon no entry claims.
+- Verified: Mobile Release (`.ipa`) run 37087496038 on head `8521281` — "Upload to App Store Connect" succeeded, so `90474`, `90713`, `90022` and `90023` are all cleared.
+
 ### Fixed (AUT-5242)
 - ci(ios): the altool failure branch in `.github/workflows/release-ios.yml` told the operator to "see altool-output.xml in job artifacts", but the workflow had no `actions/upload-artifact` step anywhere, so `$RUNNER_TEMP/altool-output.xml` was discarded when the job ended. A failure-gated `Upload altool output (on failure)` step now retains the XML as the `altool-output` artifact after the upload step.
 
