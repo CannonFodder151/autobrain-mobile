@@ -64,6 +64,27 @@ jobs:
         working-directory: .
         run: python3 scripts/check-appicon-entries.py
 
+      - name: Verify Info.plist declares encryption use (AUT-5317)
+        # App Store Connect refuses the upload (or flags the version for
+        # compliance) when the binary carries no
+        # ITSAppUsesNonExemptEncryption key — the export-compliance
+        # question is then answered per-build, in the portal, by hand
+        # (AUT-5317). The app talks to its API over HTTPS and uses
+        # package:crypto for SHA-256 firmware-blob checks, which is
+        # exempt, so the answer is a hard-coded false.
+        working-directory: .
+        run: |
+          set -euo pipefail
+          python3 -c '
+          import plistlib, sys
+          d = plistlib.load(open("ios/Runner/Info.plist", "rb"))
+          v = d.get("ITSAppUsesNonExemptEncryption")
+          if v is not False:
+              sys.exit("::error::ios/Runner/Info.plist must carry "
+                       "ITSAppUsesNonExemptEncryption=false, got " + repr(v))
+          print("ITSAppUsesNonExemptEncryption=false (exempt: HTTPS + SHA-256 integrity)")
+          '
+
       - name: Resolve release version (dispatch input)
         # Dispatch-only (AUT-4766), so inputs.version is always present.
         run: |

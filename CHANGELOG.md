@@ -11,6 +11,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed (AUT-5317)
+- ios(Info.plist): added `ITSAppUsesNonExemptEncryption` = `false` to `ios/Runner/Info.plist`. App Store Connect flagged every build for export compliance because the binary carried no answer to "does your app use non-exempt encryption". The app only uses HTTPS (ATS) and `package:crypto` SHA-256 firmware-blob integrity checks — both standard/exempt — so the key is a hard-coded `false`, which pre-answers the compliance question and unblocks uploads.
+- ci(release-ios): new "Verify Info.plist declares encryption use" step guards the key before archive (the same pre-flight pattern as the AppIcon guard), so a dropped key fails in seconds instead of burning a ~15 min signed build plus a rejected upload.
+
 ## [0.3.305] - 2026-10-03
 
 ### Fixed (AUT-5268)
