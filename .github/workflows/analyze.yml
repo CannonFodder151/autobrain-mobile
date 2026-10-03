@@ -44,6 +44,15 @@ jobs:
       - name: "Guard self-check: macOS runner provisioning"
         run: bash scripts/macos/provision-runner.test.sh
 
+      # AUT-5084: the fix is invisible to a green build. A `--dart-define`
+      # that never reaches the Dart compile still exits 0 and ships a
+      # watermarked map, so the only thing that proves the CARTO key is
+      # in the .ipa is executing the workflow steps against a synthetic
+      # payload. Needs the Flutter toolchain only for the analyze step
+      # below, so this runs before it.
+      - name: "Guard self-check: CARTO_API_KEY reaches the .ipa"
+        run: bash scripts/ios-carto-key.test.sh
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable

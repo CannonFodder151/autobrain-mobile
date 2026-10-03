@@ -504,16 +504,68 @@ jobs:
           plutil -lint ios/ExportOptions.plist
           echo "ExportOptions.plist method=$METHOD team=$TEAM_ID profile=$PROFILE_NAME"
 
+      - name: Require CARTO_API_KEY and encode DART_DEFINES (AUT-5084)
+        # lib/screens/servo_spy/servo_spy_screen.dart reads
+        # String.fromEnvironment('CARTO_API_KEY'). Unset -> '' ->
+        # cartoKeyParam('') == '' -> key-less tile URL -> CARTO serves the
+        # "API key required" watermark tile in the shipped .ipa. Same failure as
+        # AUT-4533 / AUT-4649 on web and PR #110 on Android, which added the
+        # matching guard to release-mobile.yml. This build does not go through
+        # docker/frontend/Dockerfile, so the web build guard does not cover it.
+        #
+        # This step also emits DART_DEFINES for the archive below, because that
+        # is the only define path that reaches the shipped .ipa -- see the
+        # "Archive + export .ipa" step.
+        #
+        # The encoding is flutter_tools' encodeDartDefines (build_info.dart:
+        # `defines.map(utf8.encoder.fuse(base64.encoder)).join(',')`, decoded by
+        # bin/xcode_backend.dart and handed to `flutter assemble` as
+        # --DartDefines). python3 rather than the base64(1) CLI because BSD
+        # base64 on the macOS runner wraps at 76 columns, which would inject a
+        # newline into a build setting.
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CARTO_API_KEY:-}" ]]; then
+            echo "::error::CARTO_API_KEY secret is unset — release would ship the key-less CARTO basemap (watermark tiles). Set the repo secret and re-dispatch."
+            exit 1
+          fi
+          encoded="$(python3 - "$CARTO_API_KEY" <<'PY'
+          import base64, sys
+
+          key = sys.argv[1]
+          defines = [
+              "API_BASE_URL=https://hosted.autobrainservice.app/api/v1",
+              "WS_BASE_URL=wss://hosted.autobrainservice.app/ws",
+              "MOBILE_STORE_BUILD=true",
+              "CARTO_API_KEY=" + key,
+          ]
+          encoded = ",".join(base64.b64encode(d.encode()).decode() for d in defines)
+          # Fail closed if the encoding does not round-trip. A define that never
+          # reaches the Dart compile IS the AUT-5084 failure mode, and it is
+          # invisible otherwise: the build goes green and ships a watermarked map.
+          decoded = [base64.b64decode(p).decode() for p in encoded.split(",")]
+          if decoded != defines:
+              sys.exit("::error::DART_DEFINES did not round-trip: %r" % (decoded,))
+          sys.stdout.write(encoded)
+          PY
+          )"
+          echo "DART_DEFINES=$encoded" >> "$GITHUB_ENV"
+          echo "CARTO_API_KEY present (${#CARTO_API_KEY} chars); DART_DEFINES encodes 4 defines for the xcodebuild archive"
+
       - name: Build iOS release (export method, code-signed)
         env:
           TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
           PROVISIONING_PROFILE_SPECIFIER: ${{ secrets.IOS_PROVISIONING_PROFILE_SPECIFIER }}
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
           set -euo pipefail
           flutter build ios --release --no-codesign \
             --dart-define=API_BASE_URL=https://hosted.autobrainservice.app/api/v1 \
             --dart-define=WS_BASE_URL=wss://hosted.autobrainservice.app/ws \
             --dart-define=MOBILE_STORE_BUILD=true \
+            --dart-define=CARTO_API_KEY="${CARTO_API_KEY}" \
             --build-number="$(grep -E '^version: ' pubspec.yaml | head -1 | awk -F'[+]' '{print $2}')"
 
       - name: Archive + export .ipa (Xcode, universal device+sim build)
@@ -543,6 +595,17 @@ jobs:
             || { echo "::error::App Store Connect key was not materialized; the provisioning step above must run first"; exit 1; }
           [[ -n "${IOS_PROFILE_NAME:-}" ]] \
             || { echo "::error::no provisioning profile was installed; refusing to archive with automatic signing"; exit 1; }
+          # AUT-5084: the `--dart-define` flags on the `flutter build ios`
+          # step above do NOT reach the .ipa. This archive re-runs the Dart
+          # compile through the Xcode Flutter build phase, which reads the
+          # DART_DEFINES *build setting* (bin/xcode_backend.dart passes it to
+          # `flutter assemble` as --DartDefines). The guard step writes the
+          # base64-encoded define set to $GITHUB_ENV; it holds ALL four
+          # defines — passing only the CARTO define here would silently drop
+          # API_BASE_URL, WS_BASE_URL and MOBILE_STORE_BUILD from the
+          # shipped binary, which is the same silent-no-op class of bug.
+          [[ -n "${DART_DEFINES:-}" ]] \
+            || { echo "::error::DART_DEFINES is empty; the CARTO_API_KEY guard step must run before the archive"; exit 1; }
           BUILD_DIR="build/ios/ipa"
           mkdir -p "$BUILD_DIR"
           xcodebuild -workspace ios/Runner.xcworkspace \
@@ -550,6 +613,7 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$BUILD_DIR/Runner.xcarchive" \
+            DART_DEFINES="$DART_DEFINES" \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$AUTH_KEY_PATH" \
             -authenticationKeyID "$KEY_ID" \
@@ -586,11 +650,34 @@ jobs:
           xcodebuild -exportArchive "${export_args[@]}"
 
       - name: Verify .ipa produced
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
         run: |
           set -euo pipefail
           ipa="$(ls build/ios/ipa/*.ipa 2>/dev/null | head -1)"
           [[ -n "$ipa" ]] || { echo "::error::No .ipa found in build/ios/ipa/"; exit 1; }
           echo "IPA: $ipa ($(du -h "$ipa" | cut -f1))"
+          # An empty needle makes `grep -F -q -- ""` match everything, so the
+          # assertion below would pass vacuously with the secret unset.
+          [[ -n "${CARTO_API_KEY:-}" ]] \
+            || { echo "::error::CARTO_API_KEY is empty at verification time; the guard step must run first"; exit 1; }
+          # AUT-5084: a green build proves nothing about the basemap key —
+          # a `--dart-define` that never reached the Dart compile still exits 0
+          # and ships a watermarked map. Grep the exported payload for the key
+          # itself. -a so the Mach-O / AOT snapshot is scanned as text, -F so the
+          # key is a literal. Only presence is reported; the key is never logged.
+          payload="$RUNNER_TEMP/ipa-payload"
+          rm -rf "$payload"
+          mkdir -p "$payload"
+          unzip -q -o "$ipa" -d "$payload"
+          grep -r -a -F -q -- "$CARTO_API_KEY" "$payload" \
+            || { echo "::error::CARTO_API_KEY is not in the exported .ipa payload — the archive compiled without the basemap key (AUT-5084): DART_DEFINES did not reach the Dart compile"; exit 1; }
+          # Same failure mode, other direction: DART_DEFINES is a single build
+          # setting, so an archive that carries only the CARTO define has
+          # replaced the whole define set and lost the API endpoints.
+          grep -r -a -F -q -- "hosted.autobrainservice.app" "$payload" \
+            || { echo "::error::API_BASE_URL/WS_BASE_URL host missing from the .ipa payload — the archive build dropped the other dart defines"; exit 1; }
+          echo "Verified CARTO_API_KEY and the API/WS host are present in the exported .ipa payload"
 
       - name: Extract changelog entry for this version (release body)
         id: changelog
