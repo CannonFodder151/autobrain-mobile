@@ -11,6 +11,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed (AUT-5322)
+- fix(ios): declare `NSLocationAlwaysAndWhenInUseUsageDescription` in `ios/Runner/Info.plist`. App Store Connect rejected the TestFlight build with **90683 — Missing purpose string in Info.plist**: geolocator's iOS implementation references `CLLocationManager.requestAlwaysAuthorization`, so the uploaded binary contains the selector and the pre-submission check demands the always/when-in-use purpose string even though the app only ever requests `when-in-use` (`lib/services/car/position_source_io.dart`, `lib/services/car/speed_source_io.dart` stream trip positions at 1 s). Adds the key with a trip-recording purpose string, plus `scripts/check-ios-purpose-strings.py` (asserts every protected-resource purpose string this app links is present and non-empty — blank, whitespace and wrong-typed values fail) wired into `release-ios.yml` before the signed build, so the 90683 class of failure is caught in seconds instead of after a ~15 minute archive + upload. Self-check: `scripts/check-ios-purpose-strings.test.sh` (7 cases: 2 pass, 5 injected faults).
 ## [0.3.308] - 2026-10-04
 
 ### Fixed (AUT-5433)

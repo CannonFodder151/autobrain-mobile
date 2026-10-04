@@ -35,6 +35,8 @@
 	<string>AutoBrain uses Bluetooth to provision WiFi credentials to the AutoBrain-Tripper dongle and to connect OBD adapters.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>AutoBrain uses the camera to photograph receipts and vehicle parts.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>AutoBrain uses your location to record trip routes and live trip positions, including while a trip is being recorded.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>AutoBrain uses your location to stamp trip start/end positions on the logbook.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

@@ -64,6 +64,18 @@ jobs:
         working-directory: .
         run: python3 scripts/check-appicon-entries.py
 
+      - name: Verify iOS purpose strings (AUT-5322)
+        # App Store Connect's pre-submission check rejects the
+        # upload with 90683 when the binary references a protected
+        # API — geolocator's iOS code references
+        # requestAlwaysAuthorization, so
+        # NSLocationAlwaysAndWhenInUseUsageDescription must be
+        # present even though the app only requests when-in-use —
+        # and Info.plist carries no purpose string for it. That
+        # surfaces after the signed archive, so catch it here.
+        working-directory: .
+        run: python3 scripts/check-ios-purpose-strings.py
+
       - name: Verify Info.plist declares encryption use (AUT-5317)
         # App Store Connect refuses the upload (or flags the version for
         # compliance) when the binary carries no
