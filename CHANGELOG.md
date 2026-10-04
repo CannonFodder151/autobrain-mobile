@@ -11,6 +11,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.311] - 2026-10-04
+
+### Changed (AUT-5532)
+- fix(frontend): cleared the last 3 deprecated `withOpacity` call sites in `login_screen.dart` — the two background-gradient stops (`scheme.primary.withOpacity(0.75)`, `scheme.secondary.withOpacity(0.6)`) and the form-card `BoxShadow` (`Colors.black.withOpacity(0.18)`). PR #905 fixed only the logo-shadow `BoxShadow` and deliberately deferred these, leaving `dart analyze lib/screens/auth/login_screen.dart` at 3 `deprecated_member_use` infos; the file is now clean. Cosmetic only, no behaviour change: `withValues(alpha:)` keeps alpha as a double where `withOpacity` rounded to 8-bit, so `0.75` and `0.6` render identically and the card shadow shifts by 1/255 of alpha (`0.18` → `0.1804`). The remaining 45 occurrences across 17 files under `frontend/lib` (incl. `signup_screen.dart`) are out of scope.
+
+## [0.3.310] - 2026-10-04
+
+### Changed (AUT-5532)
+- fix(frontend): the login screen's logo-circle drop shadow still used the deprecated `Colors.black.withOpacity(0.30)`, which emits a `deprecated_member_use` analyzer info (`'withOpacity' is deprecated … Use .withValues() to avoid precision loss`) on every `flutter analyze` run. Swapped to `Colors.black.withValues(alpha: 0.30)` — same rendered shadow (the two differ only in 8-bit rounding of the alpha channel), deprecation cleared. Cosmetic only, no behaviour change; raised during QA re-review of PR #787 (AUT-5524).
+
+## [0.3.309] - 2026-10-04
+
 ### Fixed (AUT-5541)
 - fix(valuation): the car Valuation tool compared cars of the wrong model year — a 2009 Toyota Crown was being valued off 2019 Crowns. Two causes: `market-data`'s `carsguide._filter_year` fell back to the **whole unfiltered listing set** whenever the requested year matched fewer than 3 results (which is exactly what a rare-year car hits), and the backend then aggregated that mixed set into the median. Year filtering now widens in tiers (0 → 1 → 3 → 5 years, first tier with 3 listings wins) and returns nothing past ±5, so a thin same-year sample surfaces as an honest "no market data" instead of a confidently wrong number. `market_data._build` applies the same filter server-side so a provider that ignores the requested year can no longer poison the median. `advisor.value.find_comparables` now year-checks each *listing* (a cache row for one model year can hold listings from another — the row-level filter was not enough) and sorts by nearest model year instead of newest-year-first, which is what put a 2019 Crown at the top of a 2009 car's comparison set. Adds `backend/tests/test_aut5541_comparables_year.py` and extends the `market-data` self-check.
 
@@ -189,7 +201,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - New `.github/workflows/compose-checks.yml` runs every `scripts/check-*.py`
   plus `scripts/test_check_compose_config.py` on compose/script changes, so
   the guards can no longer rot unnoticed.
-
 
 ### Fixed (AUT-4327)
 - test(frontend): add a regression test asserting the login logo renders inside a
