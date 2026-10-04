@@ -87,7 +87,17 @@ jobs:
       # which Google no longer serves -> `Failed to find package 'tools'`,
       # sdkmanager exits 1 and the whole Android release dies at this step.
       # v4 filters that package out (its cmdline-tools replaces it).
+      # AUT-5457: pin to cmdline-tools 16.0 (build 12266719), the version
+      # gh-runner-autobrain-mobile ships in cmdline-tools/latest. setup-android
+      # compares its requested version against the preinstalled
+      # source.properties Pkg.Revision; a match reuses the installed tools
+      # and never downloads. Any other pin (the default 15859902 = 22.0)
+      # takes the download-and-unpack path, which requires `unzip` — not
+      # installed on this runner, so the step died at "Unable to locate
+      # executable file: unzip" on every dispatch.
       - uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 12266719
 
       - name: Fix SDK execute bits (cold runner AUT-2176)
         # android-actions/setup-android installs cmdline-tools and build-tools with
