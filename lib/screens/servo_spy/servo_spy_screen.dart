@@ -12,10 +12,8 @@ library;
 
 import 'dart:ui' as ui;
 
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -31,6 +29,7 @@ import 'servo_spy_station_history_screen.dart';
 
 enum _ServoSpyView { map, list }
 
+
 ///
 /// Empty key -> empty string. Non-empty key -> `?key=<key>` (CARTO's
 /// required parameter name for raster basemaps; `api_key` is the old name
@@ -40,43 +39,6 @@ String cartoKeyParam(String key) => key.isEmpty ? '' : '?key=$key';
 
 const String _kCartoApiKey = String.fromEnvironment('CARTO_API_KEY');
 final String _kCartoKeyParam = cartoKeyParam(_kCartoApiKey);
-
-///
-/// Shared in-memory cache for ``GET /fuel/stations/{id}/history`` responses,
-/// keyed by station id. Survives navigations within the same screen lifecycle
-/// (list tap -> map tap, back-and-forth) so a re-open is instant. Expires
-/// after 5 min so a stale day-old chart can't outlive its freshness window.
-/// Expired entries are dropped on access, so the map stays bounded by the
-/// number of distinct stations viewed in the last [Duration.minutes 5].
-class _StationHistoryCache {
-  static const Duration _ttl = Duration(minutes: 5);
-  final Map<String, _Cached> _byStation = {};
-
-  FuelStationHistory? get(String stationId) {
-    _prune();
-    return _byStation[stationId]?.data;
-  }
-
-  void put(String stationId, FuelStationHistory data) {
-    _prune();
-    _byStation[stationId] = _Cached(data, DateTime.now());
-  }
-
-  void _prune() {
-    if (_byStation.isEmpty) return;
-    final now = DateTime.now();
-    _byStation.removeWhere((_, c) => now.difference(c.fetchedAt) > _ttl);
-  }
-
-  static final _StationHistoryCache instance = _StationHistoryCache._();
-  _StationHistoryCache._();
-}
-
-class _Cached {
-  final FuelStationHistory data;
-  final DateTime fetchedAt;
-  const _Cached(this.data, this.fetchedAt);
-}
 
 class ServoSpyScreen extends StatefulWidget {
   const ServoSpyScreen({super.key});
@@ -722,91 +684,16 @@ class _TrianglePainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter old) => false;
 }
 
-class _StationSheet extends StatefulWidget {
+class _StationSheet extends StatelessWidget {
   const _StationSheet({required this.station, this.userLoc});
   final _MapStation station;
   final LatLng? userLoc;
 
-  @override
-  State<_StationSheet> createState() => _StationSheetState();
-}
-
-class _StationSheetState extends State<_StationSheet> {
-  FuelStationHistory? _history;
-  bool _historyLoading = false;
-  String? _historyError;
-  late final ApiClient _api;
-
-  @override
-  void initState() {
-    super.initState();
-    _api = context.read<AuthState>().api;
-    _loadHistory();
-  }
-
-  Future<void> _loadHistory({bool force = false}) async {
-    if (widget.station.id.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _history = null;
-          _historyError = 'No history available for this station.';
-          _historyLoading = false;
-        });
-      }
-      return;
-    }
-    final cache = _StationHistoryCache.instance;
-    if (!force) {
-      final cached = cache.get(widget.station.id);
-      if (cached != null) {
-        setState(() {
-          _history = cached;
-          _historyError = null;
-        });
-        return;
-      }
-    }
-    setState(() {
-      _historyLoading = true;
-      _historyError = null;
-    });
-    try {
-      final data = await _api.get('/fuel/stations/${widget.station.id}/history',
-          query: {'days': '30'}) as Map<String, dynamic>;
-      final parsed = FuelStationHistory.fromJson(data);
-      cache.put(widget.station.id, parsed);
-      if (!mounted) return;
-      setState(() {
-        _history = parsed;
-        _historyLoading = false;
-      });
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        // AUT-4800: never surface a raw status code to the user. A 404 here
-        // means the station id is unknown to the backend, which is a
-        // "no data" condition, not a failure.
-        _historyError = e.statusCode == 404
-            ? 'No history available for this station.'
-            : 'History unavailable.';
-        _historyLoading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _historyError = 'History unavailable.';
-        _historyLoading = false;
-      });
-    }
-  }
-
   Future<void> _navigate(BuildContext context) async {
-    final s = widget.station;
-    if (s.lat == null || s.lon == null) return;
+    if (station.lat == null || station.lon == null) return;
     final uri = Uri.https('www.google.com', '/maps/dir/', {
-      if (widget.userLoc != null)
-        'origin': '${widget.userLoc!.latitude},${widget.userLoc!.longitude}',
-      'destination': '${s.lat},${s.lon}',
+      if (userLoc != null) 'origin': '${userLoc!.latitude},${userLoc!.longitude}',
+      'destination': '${station.lat},${station.lon}',
     });
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       await launchUrl(uri);
@@ -814,7 +701,6 @@ class _StationSheetState extends State<_StationSheet> {
   }
 
   Future<void> _openHistory(BuildContext context) async {
-    final station = widget.station;
     final stationId = station.id;
     if (stationId == null || stationId.isEmpty) return;
     final stationName = station.name ?? 'Station';
@@ -832,359 +718,56 @@ class _StationSheetState extends State<_StationSheet> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final station = widget.station;
     final sortedPrices = [...station.prices]..sort((a, b) =>
         (a.priceCents ?? double.infinity).compareTo(b.priceCents ?? double.infinity));
     return DraggableScrollableSheet(
-      initialChildSize: 0.65,
-      maxChildSize: 0.9,
-      minChildSize: 0.4,
+      initialChildSize: 0.5,
+      maxChildSize: 0.85,
       expand: false,
-      builder: (_, scroll) => RefreshIndicator(
-        onRefresh: () => _loadHistory(force: true),
-        child: ListView(
-          controller: scroll,
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text(station.name ?? 'Station',
-                style: Theme.of(context).textTheme.titleLarge),
-            if (station.address != null) ...[
-              const SizedBox(height: 4),
-              Text(station.address!,
-                  style: Theme.of(context).textTheme.bodyMedium),
-            ],
-            const SizedBox(height: 16),
-            Text('Fuel prices', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 8),
-            for (final p in sortedPrices)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.local_gas_station, color: scheme.primary),
-                title: Text(p.fuelType),
-                subtitle: Text(
-                  p.costPerKm != null
-                      ? '\$${p.costPerKm!.toStringAsFixed(3)}/km'
-                          '${p.avgFillCost != null ? '  ·  fill \$${p.avgFillCost!.toStringAsFixed(2)}' : ''}'
-                      : '—',
-                  style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
-                ),
-                trailing: Text(
-                  p.priceCents == null
-                      ? '—'
-                      : '\$${(p.priceCents! / 100).toStringAsFixed(3)}',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(
-                  child: Text('30-day price history',
-                      style: Theme.of(context).textTheme.titleMedium),
-                ),
-                if (_historyLoading)
-                  const SizedBox(
-                    height: 16,
-                    width: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            _HistoryChart(
-              history: _history,
-              loading: _historyLoading,
-              error: _historyError,
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: () => _navigate(context),
-                icon: const Icon(Icons.navigation),
-                label: const Text('Navigate'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 30-day price chart for the station detail sheet (AUT-2376).
-///
-/// Per-fuel-type line + dots on a shared linear axis. Empty state renders
-/// a small empty-card with a one-line explanation. Loading/error states are
-/// owned by the parent (the sheet) so the chart stays a pure render.
-class _HistoryChart extends StatelessWidget {
-  const _HistoryChart({
-    required this.history,
-    required this.loading,
-    required this.error,
-  });
-  final FuelStationHistory? history;
-  final bool loading;
-  final String? error;
-
-  static const _palette = <Color>[
-    Color(0xFF1E88E5),
-    Color(0xFFE53935),
-    Color(0xFF43A047),
-    Color(0xFFFB8C00),
-    Color(0xFF8E24AA),
-    Color(0xFF00897B),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    if (loading && history == null) {
-      return SizedBox(
-        height: 180,
-        child: Center(
-          child: SizedBox(
-            height: 28,
-            width: 28,
-            child: CircularProgressIndicator(strokeWidth: 2.4, color: scheme.primary),
-          ),
-        ),
-      );
-    }
-    if (error != null) {
-      return Container(
-        height: 120,
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: scheme.errorContainer,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(error!, style: TextStyle(color: scheme.onErrorContainer)),
-      );
-    }
-    if (history == null || history!.isEmpty) {
-      return _EmptyHistory(scheme: scheme);
-    }
-    return _ChartBody(history: history!, palette: _palette, scheme: scheme);
-  }
-}
-
-class _EmptyHistory extends StatelessWidget {
-  const _EmptyHistory({required this.scheme});
-  final ColorScheme scheme;
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 140,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.center,
+      builder: (_, scroll) => ListView(
+        controller: scroll,
+        padding: const EdgeInsets.all(16),
         children: [
-          Icon(Icons.timeline_outlined, size: 32, color: scheme.onSurfaceVariant),
+          Text(station.name ?? 'Station',
+              style: Theme.of(context).textTheme.titleLarge),
+          if (station.address != null) ...[
+            const SizedBox(height: 4),
+            Text(station.address!,
+                style: Theme.of(context).textTheme.bodyMedium),
+          ],
+          const SizedBox(height: 16),
+          Text('Fuel prices', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          Text(
-            'No price history yet',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'First day on file — check back tomorrow for a trend line.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+          for (final p in sortedPrices)
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.local_gas_station, color: scheme.primary),
+              title: Text(p.fuelType),
+              subtitle: Text(
+                p.costPerKm != null
+                    ? '\$${p.costPerKm!.toStringAsFixed(3)}/km'
+                        '${p.avgFillCost != null ? '  ·  fill \$${p.avgFillCost!.toStringAsFixed(2)}' : ''}'
+                    : '—',
+                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+              ),
+              trailing: Text(
+                p.priceCents == null
+                    ? '—'
+                    : '\$${(p.priceCents! / 100).toStringAsFixed(3)}',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: () => _navigate(context),
+              icon: const Icon(Icons.navigation),
+              label: const Text('Navigate'),
+            ),
           ),
         ],
       ),
-    );
-  }
-}
-
-class _ChartBody extends StatelessWidget {
-  const _ChartBody({
-    required this.history,
-    required this.palette,
-    required this.scheme,
-  });
-  final FuelStationHistory history;
-  final List<Color> palette;
-  final ColorScheme scheme;
-
-  Map<String, List<FuelHistoryPoint>> _group() {
-    final out = <String, List<FuelHistoryPoint>>{};
-    for (final p in history.series) {
-      out.putIfAbsent(p.fuelType, () => []).add(p);
-    }
-    return out;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final groups = _group();
-    if (groups.isEmpty) {
-      return _EmptyHistory(scheme: scheme);
-    }
-    final types = groups.keys.toList()..sort();
-    final allPoints = history.series;
-    final minTs = allPoints.map((p) => p.effectiveAt).reduce((a, b) => a.isBefore(b) ? a : b);
-    final maxTs = allPoints.map((p) => p.effectiveAt).reduce((a, b) => a.isAfter(b) ? a : b);
-    final tsSpan = maxTs.difference(minTs).inSeconds == 0
-        ? 1.0
-        : maxTs.difference(minTs).inSeconds.toDouble();
-    // Backend price is cents per litre; plot dollars so the axis, dots and
-    // tooltip match the price list in the same sheet.
-    final prices = allPoints.map((p) => priceCentsToDollars(p.price)).toList();
-    final pMin = prices.reduce((a, b) => a < b ? a : b);
-    final pMax = prices.reduce((a, b) => a > b ? a : b);
-    final pad = (pMax - pMin).abs() < 0.01 ? 0.02 : (pMax - pMin) * 0.1;
-    final yMin = (pMin - pad).clamp(0.0, double.infinity);
-    final yMax = pMax + pad;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          height: 200,
-          child: LineChart(
-            LineChartData(
-              minY: yMin,
-              maxY: yMax,
-              minX: 0,
-              maxX: tsSpan,
-              gridData: FlGridData(
-                show: true,
-                drawVerticalLine: false,
-                getDrawingHorizontalLine: (_) => FlLine(
-                  color: scheme.outlineVariant,
-                  strokeWidth: 0.5,
-                ),
-              ),
-              borderData: FlBorderData(
-                show: true,
-                border: Border(
-                  left: BorderSide(color: scheme.outlineVariant),
-                  bottom: BorderSide(color: scheme.outlineVariant),
-                ),
-              ),
-              titlesData: FlTitlesData(
-                topTitles: const AxisTitles(),
-                rightTitles: const AxisTitles(),
-                leftTitles: AxisTitles(
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    reservedSize: 42,
-                    getTitlesWidget: (v, _) => Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Text(
-                        formatChartPrice(v),
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                bottomTitles: AxisTitles(
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    reservedSize: 22,
-                    interval: tsSpan / 3,
-                    getTitlesWidget: (v, _) {
-                      final ts = minTs.add(Duration(seconds: v.toInt()));
-                      return Text(
-                        DateFormat('d MMM').format(ts),
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-              lineTouchData: LineTouchData(
-                touchTooltipData: LineTouchTooltipData(
-                  getTooltipColor: (_) => scheme.inverseSurface,
-                  getTooltipItems: (spots) => spots
-                      .map((s) => LineTooltipItem(
-                            '${types[s.barIndex]}\n${formatChartPrice(s.y)}',
-                            TextStyle(
-                                color: scheme.onInverseSurface, fontSize: 11),
-                          ))
-                      .toList(),
-                ),
-              ),
-              lineBarsData: [
-                for (var i = 0; i < types.length; i++)
-                  LineChartBarData(
-                    spots: [
-                      for (final p in groups[types[i]]!)
-                        FlSpot(
-                          p.effectiveAt.difference(minTs).inSeconds.toDouble(),
-                          priceCentsToDollars(p.price),
-                        ),
-                    ],
-                    isCurved: true,
-                    curveSmoothness: 0.2,
-                    color: palette[i % palette.length],
-                    barWidth: 2.2,
-                    dotData: FlDotData(
-                      show: groups[types[i]]!.length <= 30,
-                      getDotPainter: (spot, _, __, ___) =>
-                          FlDotCirclePainter(
-                        radius: 2.5,
-                        color: palette[i % palette.length],
-                        strokeColor: scheme.surface,
-                        strokeWidth: 1,
-                      ),
-                    ),
-                    belowBarData: BarAreaData(
-                      show: true,
-                      color: palette[i % palette.length].withValues(alpha: 0.08),
-                    ),
-                  ),
-              ],
-            ),
-            duration: const Duration(milliseconds: 250),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 12,
-          runSpacing: 4,
-          children: [
-            for (var i = 0; i < types.length; i++)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: palette[i % palette.length],
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    types[i],
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-          ],
-        ),
-      ],
     );
   }
 }
@@ -1197,7 +780,7 @@ class _ServoSpyList extends StatefulWidget {
   State<_ServoSpyList> createState() => _ServoSpyListState();
 }
 
-    class _ServoSpyListState extends State<_ServoSpyList> {
+class _ServoSpyListState extends State<_ServoSpyList> {
   bool _loading = true;
   String? _error;
   List<ServoStationRow> _stations = const [];
@@ -1214,27 +797,6 @@ class _ServoSpyList extends StatefulWidget {
     super.initState();
     _api = context.read<AuthState>().api;
     _bootstrap();
-  }
-
-  void _openStation(ServoStationRow s) {
-    final station = _MapStation(
-      id: s.id ?? '',
-      name: s.name,
-      brand: s.brand,
-      logoUrl: s.logoUrl,
-      distanceKm: s.distanceKm,
-      prices: [
-        if (s.priceCents != null && s.fuelType != null)
-          _FuelPriceEntry(fuelType: s.fuelType!, priceCents: s.priceCents),
-      ],
-    );
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _StationSheet(station: station, userLoc: _pos == null
-          ? null
-          : LatLng(_pos!['latitude']!, _pos!['longitude']!)),
-    );
   }
 
   Future<void> _bootstrap() async {
@@ -1486,14 +1048,13 @@ class _ServoSpyList extends StatefulWidget {
                             final distLabel = s.distanceKm != null
                                 ? '${s.distanceKm!.toStringAsFixed(1)} km'
                                 : '';
-final ckmLabel = s.costPerKm != null
+                            final ckmLabel = s.costPerKm != null
                                 ? '\$${s.costPerKm!.toStringAsFixed(3)}/km'
                                 : '—';
                             final afcLabel = s.avgFillCost != null
                                 ? 'fill \$${s.avgFillCost!.toStringAsFixed(2)}'
                                 : '';
                             return ListTile(
-                              onTap: () => _openStation(s),
                               leading: CircleAvatar(
                                 backgroundColor: scheme.surfaceContainerHighest,
                                 child: s.logoUrl != null
