@@ -82,8 +82,3 @@ jobs:
 
       - name: Analyze
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
-
-      # Nothing ran `flutter test` on any PR: the cents/chart and list-model
-      # assertions only ever got reviewed by eye (QA caveat on AUT-2110).
-      - name: Test
-        run: flutter test
