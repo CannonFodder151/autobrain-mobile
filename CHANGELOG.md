@@ -13,6 +13,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed (AUT-5322)
 - fix(ios): declare `NSLocationAlwaysAndWhenInUseUsageDescription` in `ios/Runner/Info.plist`. App Store Connect rejected the TestFlight build with **90683 — Missing purpose string in Info.plist**: geolocator's iOS implementation references `CLLocationManager.requestAlwaysAuthorization`, so the uploaded binary contains the selector and the pre-submission check demands the always/when-in-use purpose string even though the app only ever requests `when-in-use` (`lib/services/car/position_source_io.dart`, `lib/services/car/speed_source_io.dart` stream trip positions at 1 s). Adds the key with a trip-recording purpose string, plus `scripts/check-ios-purpose-strings.py` (asserts every protected-resource purpose string this app links is present and non-empty — blank, whitespace and wrong-typed values fail) wired into `release-ios.yml` before the signed build, so the 90683 class of failure is caught in seconds instead of after a ~15 minute archive + upload. Self-check: `scripts/check-ios-purpose-strings.test.sh` (7 cases: 2 pass, 5 injected faults).
+## [0.3.308] - 2026-10-04
+
+### Fixed (AUT-5433)
+- fix(backend): the hourly off-site backup task `app.workers.tasks.backup_offsite_hourly` crashed on **every** run with `TypeError: Logger._log() got an unexpected keyword argument 'reason'` — `app/services/backup_offsite.py` built a stdlib `logging.getLogger` but every call site passes structlog-style kwargs (`reason=`, `filename=`, `status=`, `error=`, `pushed=` …), so the first `logger.info` of the run raised before any push was attempted. Affecting EP2 Default (backend 0.3.305) and EP5 Hosted (0.3.307), i.e. off-site backups had not been pushing at all. The module now uses the project's `get_logger` structlog logger like every other service. The existing test could not catch it: pytest's logging plugin attaches a root handler, which makes `setup_logging()`'s `logging.basicConfig()` a no-op so the level stayed `WARNING` and `logger.info()` short-circuited before `_log()` ran — the suite now forces `INFO` and asserts the structlog-kwarg call path.
+
+## [0.3.307] - 2026-10-03
 
 ### Fixed (AUT-5318)
 - fix(backend): `_ensure_next_service` lost its function-local `list_completed_services` import in #888, so the AUT-5318 auto-suggest raised `NameError` and returned 500 on every odometer-triggered suggestion — i.e. adding a fuel or logbook entry to a vehicle with auto-suggest on and no scheduled service still created no service item. Restores the import.
