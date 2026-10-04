@@ -82,3 +82,10 @@ jobs:
 
       - name: Analyze
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
+
+      # AUT-2110: analyze only proves it compiles. A whole suite of widget tests
+      # had never been run by any workflow, so the AUT-4772 cents assertions
+      # were never watched green and 4 stale widget tests sat red on main
+      # unnoticed (fixed in AUT-5557). Keep the full suite in the gate.
+      - name: Test
+        run: flutter test
