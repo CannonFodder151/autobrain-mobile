@@ -344,6 +344,40 @@ jobs:
           [[ "$actual_sha1" == "$expected_sha1" ]] || { echo "::error::AAB signer SHA1 ${actual_sha1:-<none> } != expected $expected_sha1 (wrong upload keystore in CI secrets)"; exit 1; }
           echo "AAB signer SHA1 matches Play upload key: $actual_sha1"
 
+      # AUT-5556: a signed bundle proves nothing about the basemap key. The
+      # guard step above only proves the secret was non-empty — a
+      # --dart-define that never reached the Dart compile still yields a
+      # correctly-signed .aab that renders a watermarked CARTO tile. Grep the
+      # shipped payload for the key itself, mirroring the .ipa check from
+      # AUT-5084. Self-check: scripts/android-carto-key.test.sh.
+      - name: Verify CARTO_API_KEY is compiled into the .aab (AUT-5556)
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+        run: |
+          set -euo pipefail
+          aab=build/app/outputs/bundle/release/app-release.aab
+          [[ -f "$aab" ]] || { echo "::error::$aab not found"; exit 1; }
+          # An empty needle makes `grep -F -q -- ""` match every file, so the
+          # assertion below would pass vacuously with the secret unset.
+          [[ -n "${CARTO_API_KEY:-}" ]] \
+            || { echo "::error::CARTO_API_KEY is empty at verification time; the guard step must run first (AUT-5556)"; exit 1; }
+          # This runner has no `unzip` (see the SDK install step), so extract
+          # with Python's zipfile — the same idiom that step already uses.
+          payload="$RUNNER_TEMP/aab-payload"
+          rm -rf "$payload"
+          mkdir -p "$payload"
+          python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$aab" "$payload"
+          # The Dart AOT snapshot ships as base/lib/<abi>/libapp.so. -a so the
+          # ELF/AOT snapshot is scanned as text, -F so the key is a literal.
+          # Only presence is reported; the key is never logged.
+          grep -r -a -F -q -- "$CARTO_API_KEY" "$payload" \
+            || { echo "::error::CARTO_API_KEY is not in the .aab payload — the bundle compiled without the basemap key (AUT-5556): --dart-define=CARTO_API_KEY did not reach the Dart compile"; exit 1; }
+          # Same failure mode, other direction: the key is present but the
+          # endpoints are gone, which ships a working-key, broken app.
+          grep -r -a -F -q -- "hosted.autobrainservice.app" "$payload" \
+            || { echo "::error::API_BASE_URL/WS_BASE_URL host missing from the .aab payload — the build dropped the other dart defines (AUT-5556)"; exit 1; }
+          echo "Verified CARTO_API_KEY and the API/WS host are present in the .aab payload (value not logged)"
+
       - name: Verify APK signing (v2+v3 scheme check) — only when APK was built
         if: steps.apk-decision.outputs.build_apk == 'true'
         run: |
@@ -362,6 +396,34 @@ jobs:
           [[ "$actual_sha1_hex" == "$expected_sha1_hex" ]] || { echo "::error::APK signer SHA-1 ${actual_sha1_hex:-<none>} != expected $expected_sha1_hex (wrong upload keystore in CI secrets)"; exit 1; }
           echo "APK signer SHA-1 matches Play upload key: $actual_sha1_hex"
           echo "signing OK: AAB v1 valid; APK v2+v3 valid with upload certificate"
+
+      # AUT-5556: same assertion as the .aab step, for the APK build.
+      # The APK is throttled (AUT-2619) so it is only checked when it
+      # was actually built. Self-check: scripts/android-carto-key.test.sh.
+      - name: Verify CARTO_API_KEY is compiled into the .apk (AUT-5556)
+        if: steps.apk-decision.outputs.build_apk == 'true'
+        env:
+          CARTO_API_KEY: ${{ secrets.CARTO_API_KEY }}
+        run: |
+          set -euo pipefail
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          [[ -f "$apk" ]] || { echo "::error::$apk not found"; exit 1; }
+          # An empty needle makes `grep -F -q -- ""` match every file, so
+          # the assertion below would pass vacuously with the secret unset.
+          [[ -n "${CARTO_API_KEY:-}" ]] \
+            || { echo "::error::CARTO_API_KEY is empty at verification time; the guard step must run first (AUT-5556)"; exit 1; }
+          # No `unzip` on this runner; Python's zipfile is the
+          # established extraction idiom here.
+          payload="$RUNNER_TEMP/apk-payload"
+          rm -rf "$payload"
+          mkdir -p "$payload"
+          python3 -c "import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$apk" "$payload"
+          # The Dart AOT snapshot ships as lib/<abi>/libapp.so. -a so
+          # the ELF/AOT snapshot is scanned as text, -F so the key is a
+          # literal. Only presence is reported; the key is never logged.
+          grep -r -a -F -q -- "$CARTO_API_KEY" "$payload" \
+            || { echo "::error::CARTO_API_KEY is not in the .apk payload — the APK compiled without the basemap key (AUT-5556): --dart-define=CARTO_API_KEY did not reach the Dart compile"; exit 1; }
+          echo "Verified CARTO_API_KEY is present in the .apk payload (value not logged)"
 
       - name: Extract changelog entry for this version (release body)
         id: changelog
