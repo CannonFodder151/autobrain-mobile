@@ -1,6 +1,12 @@
 // Regression tests for AUT-963 F1: "Push credentials" must be blocked when the
 // saved device id is not present in the current account's device list, so the
 // app can never provision a dongle with a previous account's key.
+//
+// The push button relabels itself to "Sync now" once the config is fully
+// provisionable (SSID + deviceId + apiKey), so these assert on the button's
+// identity (Icons.bluetooth, which the firmware card's bluetooth_searching
+// does not match) rather than on a label string. Asserting the old label made
+// the blocked-case assertion vacuous — it passed for the wrong reason.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/test/test_flutter_secure_storage_platform.dart';
@@ -88,7 +94,7 @@ void main() {
       }
     ]);
 
-    expect(find.text('Push credentials'), findsNothing);
+    expect(find.byIcon(Icons.bluetooth), findsNothing);
     expect(find.text('Link dongle'), findsOneWidget);
   });
 
@@ -103,7 +109,9 @@ void main() {
       }
     ]);
 
-    expect(find.text('Push credentials'), findsOneWidget);
+    expect(find.byIcon(Icons.bluetooth), findsOneWidget);
+    // SSID + deviceId + apiKey are all present, so it reads "Sync now".
+    expect(find.text('Sync now'), findsOneWidget);
   });
 
   testWidgets('device-list fetch failure surfaces server hint, not no-dongle',
