@@ -53,6 +53,15 @@ jobs:
       - name: "Guard self-check: CARTO_API_KEY reaches the .ipa"
         run: bash scripts/ios-carto-key.test.sh
 
+      # AUT-5556: the Android mirror. The same invisibility applies —
+      # a `flutter build appbundle --dart-define=CARTO_API_KEY=...`
+      # exits 0 whether or not the define reached the Dart compile,
+      # and a correctly-signed .aab that lacks the key still ships a
+      # watermarked CARTO basemap. Asserts the workflow steps against
+      # a synthetic payload, so it needs no Flutter either.
+      - name: "Guard self-check: CARTO_API_KEY reaches the .aab/.apk"
+        run: bash scripts/android-carto-key.test.sh
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
