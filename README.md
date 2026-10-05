@@ -72,6 +72,44 @@ the intended extension point for full offline queues.
 flutter test
 ```
 
+## Reading a red check: "failed" vs "never ran"
+
+A red X in the checks tab is ambiguous by default, and on this repo the
+ambiguity has been expensive. **A job with 0 executed steps and no runner
+assigned did not run — it is not a test failure.** Nothing was compiled, nothing
+was asserted, and there is no log to read. The most common cause is the GitHub
+account's billing / spending limit (`The job was not started because recent
+account payments have failed or your spending limit needs to be increased`),
+which blocks metered GitHub-hosted runners only. Self-hosted runners
+(`gh-runner-autobrain-mobile`, `gh-runner-autobrain-arm64`) are unmetered, so a
+release `.aab` can succeed while `Analyze` and `.ipa` sit red in the same
+window — that combination is the tell.
+
+Tells, cheapest first:
+
+| Signal | Meaning |
+| --- | --- |
+| job has **0 steps** | never dispatched — check billing, not the code |
+| `runner_name` is empty | no runner was ever assigned |
+| `Analyze` red but a release workflow green | metered-vs-self-hosted split, i.e. billing |
+| red within seconds of the push, no log output | did not run |
+
+```bash
+# confirm the signature from the API
+gh api repos/CannonFodder151/autobrain-mobile/actions/runs/<run>/jobs \
+  -q '.jobs[] | {name, conclusion, runner_name, steps: (.steps | length)}'
+```
+
+`scripts/dispatch-block-monitor.sh` watches for exactly this signature
+(`conclusion == "failure" && steps.length == 0 && runner_name == ""`) and
+posts to Discord `#ops`. It deliberately runs from the dev box on cron rather
+than from a scheduled workflow: a GitHub-hosted job burns metered minutes, and
+while the account is over its limit its own dispatch would be blocked too — the
+watchdog would stop watching exactly when it is needed. State lives in
+`~/.autobrain-dispatch-block-seen`; a run is reported once and re-asserted every
+`REALERT_HOURS` (default 24) while it stays blocked, so a long block keeps
+nagging instead of going quiet. `DRY_RUN=1` prints instead of posting.
+
 ## Versioning
 
 The mobile app versions independently from the web app. `scripts/bump-version.sh`
