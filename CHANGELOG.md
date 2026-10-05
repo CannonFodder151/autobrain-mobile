@@ -13,6 +13,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed (AUT-5137)
 - fix(backend): `app.db.bootstrap` failed open on a failed `alembic upgrade` — it caught *every* migration error and degraded to `Base.metadata.create_all`, which never alters an existing table. So a migration that only adds a column (or any bad DDL, permission error, truncation, stale revision id, or forked head) silently did nothing while boot proceeded and the deploy reported success — schema drift surfacing hours later as an application error far from the deploy. This is the class behind the hosted `devices.vehicle_type` miss (AUT-5122, a `StringDataRightTruncationError` stamping a 34-char id into `varchar(32)` meant the repair never applied) and the AUT-4925 head fork in AUT-5114; both were swallowed by the one `except`. The fallback is now scoped to a genuinely fresh database (`information_schema` reports zero tables in `public`, i.e. an un-stamped schema with nothing to drift from); every other failure aborts startup. Before aborting, bootstrap emits a structured `migration_failed_startup_aborted` error log line and POSTs the same payload to a new optional `BOOT_ALERT_WEBHOOK_URL` ops webhook (best-effort, 5s timeout, never raises, so alerting can never mask the abort). A database whose state cannot be inspected at all also fails closed rather than guessing. Because the container command is `sh -c '… && python -m app.db.bootstrap && …'`, the raise now exits the container instead of handing a healthy-looking boot to uvicorn — this is a deliberate behaviour change: a broken migration will now crash-loop the backend instead of serving traffic against a drifted schema, which is the point. Regression tests in `backend/tests/test_aut5137_bootstrap_fail_closed.py` drive the alembic CLI seam and the engine seam (no live postgres needed) and **fail on the pre-fix code** with `DID NOT RAISE`; they cover abort-on-non-empty-db (plus the log line, the alert, and both `head`/`heads` attempts), the still-working fresh-database `create_all` fallback, fail-closed on an uninspectable database, and that a clean upgrade never probes the schema at all.
+### Fixed (AUT-5639)
+- fix(backend): `GET /api/v1/advisor/replace` returned HTTP 500 for every caller. The route body calls `compute_replace(db, vehicle, odometer_km=..., horizon_months=...)`, but `app/api/v1/advisor.py` never imported that name — the module import block has listed `compute_advisor_recommendation, compute_dream, compute_finance_plan, compute_market_value, compute_upgrade, find_comparables, trade_in_band` since the module landed in AUT-2446 (`c858155`, #489), so the Replace module has been unreachable since it shipped. `ruff check --select F821` reports exactly this one undefined name in the module and nothing else. Adds `compute_replace` to the `from app.services.advisor import (...)` block. `tests/test_advisor_replace.py` was already asserting the route envelope and had been failing for the same reason, masked by `ci-tests.yml` running the suite as `pytest … || true` — it is green now (12 passed, 2 skipped). Surfaced while verifying the AUT-5137 bootstrap PR, where the newly strict test collection made this pre-existing failure visible.
+
 ### Added (AUT-5611)
 - deploy: the Default tier on Portainer endpoint 2 ran as three hand-made containers with no compose definition anywhere in the repo (`ai` on a floating `:latest-amd64`, `backend` tag-pinned to `0.3.308` but with zero network aliases and no compose labels, `frontend` on a floating `:default`), so nothing stack-driven could redeploy it — `scripts/upgrade-instances.sh` resolved the tier by a Portainer stack named `autobrain`, which did not exist, and the Default step of the promotion chain failed silently, while Watchtower (nightly 04:00 AEST, all containers) recreated them outside any redeploy path. Adds `docker-compose.default.yml` as the tier's only definition (all three images digest-pinned to the digests EP2 was already running, `restart: unless-stopped`, `autobrain_default` joined as an external network with explicit `ai`/`backend`/`frontend` aliases) and adds `scripts/check-default-compose.py` as a structural guard wired into `compose-checks.yml`. Deployed as Portainer stack `autobrain-default` (id 137) with zero image drift; `default.autobrainservice.app/health` returns 200.
 
@@ -39,6 +42,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed (AUT-5541)
 - fix(valuation): the car Valuation tool compared cars of the wrong model year — a 2009 Toyota Crown was being valued off 2019 Crowns. Two causes: `market-data`'s `carsguide._filter_year` fell back to the **whole unfiltered listing set** whenever the requested year matched fewer than 3 results (which is exactly what a rare-year car hits), and the backend then aggregated that mixed set into the median. Year filtering now widens in tiers (0 → 1 → 3 → 5 years, first tier with 3 listings wins) and returns nothing past ±5, so a thin same-year sample surfaces as an honest "no market data" instead of a confidently wrong number. `market_data._build` applies the same filter server-side so a provider that ignores the requested year can no longer poison the median. `advisor.value.find_comparables` now year-checks each *listing* (a cache row for one model year can hold listings from another — the row-level filter was not enough) and sorts by nearest model year instead of newest-year-first, which is what put a 2019 Crown at the top of a 2009 car's comparison set. Adds `backend/tests/test_aut5541_comparables_year.py` and extends the `market-data` self-check.
+
+### Fixed (AUT-5063)
+- fix(security): depublish the compromised `demo@autobrainservice.app` / `demo`
+  credential literal (CWE-798). `DEMO_PASSWORD` defaulted to `"demo"` in
+  `backend/app/core/config.py`, so any `DEMO_MODE=true` run without an explicit
+  `DEMO_PASSWORD` re-seeded the old demo password; the literal also shipped in
+  `README.md`, `.env.example`, `docs/` and the Flutter login screen.
+  `seed_demo()` / `reset_demo()` now fail closed — empty `DEMO_PASSWORD` skips
+  and logs `demo_seed_skipped_no_password` / `demo_reset_skipped_no_password`
+  instead of creating an account with a blank/default password, and
+  `reset_demo()` skips before deleting so a reset can never wipe the demo
+  environment for good. Adds the fail-closed cases to
+  `backend/tests/test_seed_reset_demo.py`. No redeploy: AUT-2409 keeps deploys
+  hosted-only and the demo stack is down (AUT-5057).
+### Fixed (AUT-5529)
+- fix(security): strip `DEMO_PASSWORD` before the fail-closed check in
+  `seed_demo()` / `reset_demo()` (CWE-798 / CWE-521). A whitespace-only value
+  (`DEMO_PASSWORD=" "`, e.g. a secret pasted with stray whitespace) is truthy,
+  so the empty-string guard let it through and seeded a demo account whose
+  password was a single space — guessable for anyone holding the public demo
+  email. Both guards now strip first, and `seed_demo()` hashes the stripped
+  value so a padded secret still matches what the operator types (as
+  `seed_admin()` already did). Whitespace-only regression cases added to
+  `backend/tests/test_seed_reset_demo.py`.
 
 ## [0.3.308] - 2026-10-04
 
