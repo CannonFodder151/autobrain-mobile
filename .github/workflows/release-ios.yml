@@ -9,9 +9,23 @@ name: Mobile Release (.ipa)
 # absent, the archive step provisions from the portal instead (AUT-4355).
 # .ipa is uploaded to TestFlight (beta lane) or App Store Connect (release lane).
 #
-# CI path: GitHub-hosted macos-latest (self-hosted macOS VM blocked on AUT-2725).
-# Once AUT-2725 provisions 10.0.3.40, change `runs-on: macos-latest` to
-# [self-hosted, macOS, vm-macos] for cost control.
+# AUT-5654: CI path is the self-hosted macOS runner. This repo is private on
+# GitHub Free, and the account's hosted-runner spending limit is now blocking
+# hosted jobs outright — every macos-latest job fails in ~5s with "The job was
+# not started because recent account payments have failed or your spending
+# limit needs to be increased", so iOS releases could not run at all.
+# Nathans-iMac-Pro (self-hosted, macOS, X64) is online and is already the
+# target of test-runner.yml / install-fastlane.yml / diagnose-ios-signing.yml.
+# Rule 3 and rule 4 of scripts/check-workflow-runner-isolation.sh both hold:
+# this workflow is workflow_dispatch-only, so the signing secrets are never
+# exposed to auto-fire.
+# Residual risk for Security to weigh: the Apple signing material
+# (IOS_CERT_P12_BASE64, APPLE_STORE_API_KEY) now lands on a persistent host
+# instead of an ephemeral one. That matches the Android lane, where
+# release-mobile.yml already holds the Play keystore on the persistent
+# gh-runner-autobrain-mobile box.
+# Upgrade path: AUT-2725 provisions a dedicated macOS VM at 10.0.3.40. When it
+# lands, label it and narrow this to [self-hosted, macOS, vm-macos].
 
 # AUT-4766: dispatch-only. This repo is private on a GitHub Free plan, so
 # branch protection AND rulesets both return 403 ("Upgrade to GitHub Pro") —
@@ -41,7 +55,7 @@ permissions:
 
 jobs:
   ios-release:
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, X64]
     env:
       IOS_BUNDLE_ID: com.autobrain.autobrain
       # Both lanes use app-store: the team only holds an iPhone Distribution cert
