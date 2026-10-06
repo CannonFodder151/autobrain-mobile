@@ -83,14 +83,17 @@ Future<_FakeAuth> _pump(WidgetTester tester) async {
     child: const MaterialApp(home: PetrolPriceMapScreen(state: 'NSW')),
   ));
   // The screen loads prices + watch list asynchronously, then lays the map out.
-  for (var i = 0; i < 10; i++) {
-    await tester.pump(const Duration(milliseconds: 100));
-  }
+  // pumpAndSettle is safe here: no perpetual animation on this screen; the
+  // map's only spinner is the _loading spinner, gone once prices resolve.
+  await tester.pumpAndSettle();
   return auth;
 }
 
 /// Opens the marker for the single fake station and settles the bottom sheet.
 Future<void> _openStationSheet(WidgetTester tester) async {
+  // Guard the tap target: the marker is only hittable while the map has laid
+  // it out, and a second station or a centroid change would silently miss it.
+  expect(find.byIcon(Icons.location_on), findsOneWidget);
   await tester.tap(find.byIcon(Icons.location_on));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 300));

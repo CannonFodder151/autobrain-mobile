@@ -95,6 +95,8 @@ void main() {
     ]);
 
     expect(find.byIcon(Icons.bluetooth), findsNothing);
+    // Positive signal of the blocked state, not just the icon's absence.
+    expect(find.textContaining('No dongle linked yet'), findsOneWidget);
     expect(find.text('Link dongle'), findsOneWidget);
   });
 
