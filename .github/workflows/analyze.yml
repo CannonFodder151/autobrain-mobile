@@ -21,17 +21,10 @@ jobs:
 
       - name: Install jq
         run: |
-          if command -v brew >/dev/null 2>&1; then
-            brew install jq
-          elif [ -x /opt/homebrew/bin/brew ]; then
-            /opt/homebrew/bin/brew install jq
-          elif [ -x /usr/local/bin/brew ]; then
-            /usr/local/bin/brew install jq
-          else
-            echo "Homebrew not found, trying to download jq directly"
-            curl -L -o /usr/local/bin/jq https://github.com/stedolan/jq/releases/download/jq-1.7.1/jq-macos-amd64
-            chmod +x /usr/local/bin/jq
-          fi
+          mkdir -p "$HOME/.local/bin"
+          curl -L -o "$HOME/.local/bin/jq" https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-macos-amd64
+          chmod +x "$HOME/.local/bin/jq"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - uses: subosito/flutter-action@v2
         with:
