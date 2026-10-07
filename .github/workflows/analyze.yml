@@ -29,6 +29,8 @@ jobs:
           git --version
           echo "=== Checking network ==="
           curl -sI https://github.com 2>&1 | head -5 || echo "curl failed"
+          echo "=== Checking disk space ==="
+          df -h
           echo "=== Checking for Flutter ==="
           if command -v flutter &> /dev/null; then
             echo "Flutter found in PATH: $(which flutter)"
