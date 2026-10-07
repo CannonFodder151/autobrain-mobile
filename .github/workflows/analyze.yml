@@ -75,6 +75,12 @@ jobs:
             exit 1
           fi
 
+      - name: Print PATH for debugging
+        run: |
+          echo "PATH after Verify Flutter: $PATH"
+          echo "GITHUB_PATH file: $GITHUB_PATH"
+          cat $GITHUB_PATH 2>/dev/null || echo "GITHUB_PATH not set"
+
       - name: Fetch dependencies
         run: flutter pub get
 
