@@ -19,9 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Flutter
+      - name: Check Flutter
         run: |
-          set -euo pipefail
           echo "=== System Info ==="
           uname -a
           echo "=== Disk Space ==="
@@ -35,19 +34,8 @@ jobs:
             export PATH="$HOME/flutter/bin:$PATH"
             flutter --version
           else
-            echo "Installing Flutter..."
-            # Download pre-built Flutter SDK
-            FLUTTER_VERSION="3.24.0"
-            FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${FLUTTER_VERSION}-stable.zip"
-            echo "Downloading Flutter $FLUTTER_VERSION from $FLUTTER_URL"
-            curl -v -o /tmp/flutter.zip "$FLUTTER_URL" 2>&1 | head -50
-            echo "Download completed, checking file..."
-            ls -la /tmp/flutter.zip
-            echo "Extracting..."
-            ditto -x -k /tmp/flutter.zip "$HOME/"
-            rm /tmp/flutter.zip
-            export PATH="$HOME/flutter/bin:$PATH"
-            flutter --version
+            echo "Flutter not found"
+            exit 1
           fi
           # Add Flutter to PATH for subsequent steps
           echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
