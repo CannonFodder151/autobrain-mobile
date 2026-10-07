@@ -42,8 +42,11 @@ jobs:
             FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${FLUTTER_VERSION}-stable.zip"
             echo "Downloading Flutter $FLUTTER_VERSION from $FLUTTER_URL"
             curl -fsSL -o /tmp/flutter.zip "$FLUTTER_URL"
-            echo "Download completed, extracting..."
+            echo "Download completed, file size: $(ls -la /tmp/flutter.zip | awk '{print $5}')"
+            echo "Extracting..."
             ditto -x -k /tmp/flutter.zip "$HOME/"
+            echo "Extraction completed, checking contents:"
+            ls -la $HOME/flutter/
             rm /tmp/flutter.zip
             export PATH="$HOME/flutter/bin:$PATH"
             flutter --version || echo "flutter --version failed after install"
