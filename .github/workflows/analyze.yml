@@ -19,10 +19,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: subosito/flutter-action@v2.23.0
-        with:
-          channel: stable
-          cache: true
+      - name: Install Flutter
+        run: |
+          set -euo pipefail
+          # Check if Flutter is already installed
+          if [ -d "$HOME/flutter" ]; then
+            echo "Flutter already installed at $HOME/flutter"
+            export PATH="$HOME/flutter/bin:$PATH"
+            flutter --version
+          else
+            echo "Installing Flutter..."
+            git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$HOME/flutter"
+            export PATH="$HOME/flutter/bin:$PATH"
+            flutter --version
+          fi
+          # Add Flutter to PATH for subsequent steps
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
 
       - name: Fix git safe directory for Flutter cache
         run: git config --global --add safe.directory '*'
