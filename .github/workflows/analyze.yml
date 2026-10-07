@@ -19,10 +19,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: subosito/flutter-action@v2.23.0
-        with:
-          channel: stable
-          cache: true
+      - name: Install Flutter
+        run: |
+          set -euo pipefail
+          echo "=== System Info ==="
+          uname -a
+          echo "=== Checking for Flutter ==="
+          if command -v flutter &> /dev/null; then
+            echo "Flutter found in PATH: $(which flutter)"
+            flutter --version
+          elif [ -d "$HOME/flutter" ]; then
+            echo "Flutter found at $HOME/flutter"
+            export PATH="$HOME/flutter/bin:$PATH"
+            flutter --version
+          else
+            echo "Flutter not found - installing via git clone..."
+            git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$HOME/flutter"
+            export PATH="$HOME/flutter/bin:$PATH"
+            flutter --version
+          fi
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
 
       - name: Fetch dependencies
         run: flutter pub get
