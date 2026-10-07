@@ -24,6 +24,9 @@ jobs:
           set -euo pipefail
           echo "=== System Info ==="
           uname -a
+          echo "=== Checking for git ==="
+          which git || echo "git not found"
+          git --version
           echo "=== Checking for Flutter ==="
           if command -v flutter &> /dev/null; then
             echo "Flutter found in PATH: $(which flutter)"
