@@ -19,67 +19,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check Flutter
-        run: |
-          set +e
-          echo "=== System Info ==="
-          uname -a
-          echo "=== Checking for Flutter ==="
-          if command -v flutter &> /dev/null; then
-            echo "Flutter found in PATH: $(which flutter)"
-            flutter --version || echo "flutter --version failed"
-            echo "FLUTTER_IN_PATH=true" >> "$GITHUB_ENV"
-          elif [ -d "$HOME/flutter" ]; then
-            echo "Flutter found at $HOME/flutter"
-            export PATH="$HOME/flutter/bin:$PATH"
-            flutter --version || echo "flutter --version failed"
-            echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
-            echo "FLUTTER_IN_HOME=true" >> "$GITHUB_ENV"
-          else
-            echo "Flutter not found - installing..."
-            # Download pre-built Flutter SDK
-            FLUTTER_VERSION="3.24.0"
-            FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${FLUTTER_VERSION}-stable.zip"
-            echo "Downloading Flutter $FLUTTER_VERSION from $FLUTTER_URL"
-            curl -fsSL -o /tmp/flutter.zip "$FLUTTER_URL"
-            echo "Download completed, file size: $(ls -la /tmp/flutter.zip | awk '{print $5}')"
-            echo "Extracting..."
-            ditto -x -k /tmp/flutter.zip "$HOME/"
-            echo "Extraction completed, checking contents:"
-            ls -la $HOME/flutter/
-            rm /tmp/flutter.zip
-            export PATH="$HOME/flutter/bin:$PATH"
-            flutter --version || echo "flutter --version failed after install"
-            echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
-            echo "FLUTTER_INSTALLED=true" >> "$GITHUB_ENV"
-          fi
-          echo "Check Flutter completed successfully"
-
-      - name: Fix git safe directory for Flutter cache
-        run: git config --global --add safe.directory '*'
-
-      - name: Print PATH for debugging
-        run: |
-          echo "PATH before Verify Flutter: $PATH"
-          echo "GITHUB_PATH file: $GITHUB_PATH"
-          cat $GITHUB_PATH 2>/dev/null || echo "GITHUB_PATH not set"
-
-      - name: Verify Flutter installation
-        run: |
-          echo "PATH: $PATH"
-          echo "HOME: $HOME"
-          ls -la $HOME/flutter 2>/dev/null || echo "No flutter dir in HOME"
-          if [ -f "$HOME/flutter/bin/flutter" ]; then
-            echo "Flutter binary found at $HOME/flutter/bin/flutter"
-            export PATH="$HOME/flutter/bin:$PATH"
-            flutter --version
-            flutter doctor -v
-          else
-            echo "Flutter binary NOT found at $HOME/flutter/bin/flutter"
-            echo "Checking what's in $HOME/flutter:"
-            ls -la $HOME/flutter/ 2>/dev/null || echo "flutter dir not found"
-            exit 1
-          fi
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          cache: true
 
       - name: Fetch dependencies
         run: flutter pub get
