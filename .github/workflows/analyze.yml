@@ -60,9 +60,17 @@ jobs:
           echo "PATH: $PATH"
           echo "HOME: $HOME"
           ls -la $HOME/flutter 2>/dev/null || echo "No flutter dir in HOME"
-          export PATH="$HOME/flutter/bin:$PATH"
-          flutter --version
-          flutter doctor -v
+          if [ -f "$HOME/flutter/bin/flutter" ]; then
+            echo "Flutter binary found at $HOME/flutter/bin/flutter"
+            export PATH="$HOME/flutter/bin:$PATH"
+            flutter --version
+            flutter doctor -v
+          else
+            echo "Flutter binary NOT found at $HOME/flutter/bin/flutter"
+            echo "Checking what's in $HOME/flutter:"
+            ls -la $HOME/flutter/ 2>/dev/null || echo "flutter dir not found"
+            exit 1
+          fi
 
       - name: Fetch dependencies
         run: flutter pub get
