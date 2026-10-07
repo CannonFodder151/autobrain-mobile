@@ -37,7 +37,8 @@ jobs:
             FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${FLUTTER_VERSION}-stable.zip"
             echo "Downloading Flutter $FLUTTER_VERSION from $FLUTTER_URL"
             curl -fsSL -o /tmp/flutter.zip "$FLUTTER_URL"
-            unzip -q /tmp/flutter.zip -d "$HOME/"
+            # Use ditto instead of unzip (macOS compatible)
+            ditto -x -k /tmp/flutter.zip "$HOME/"
             rm /tmp/flutter.zip
             export PATH="$HOME/flutter/bin:$PATH"
             flutter --version
