@@ -30,7 +30,7 @@ jobs:
         with:
           channel: stable
           cache: false
-          flutter-version: "3.24.5"
+          flutter-version: "3.27.1"
 
       - name: Fix git safe directory for Flutter cache
         run: git config --global --add safe.directory '*'
