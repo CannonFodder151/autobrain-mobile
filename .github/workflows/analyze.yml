@@ -34,8 +34,12 @@ jobs:
             export PATH="$HOME/flutter/bin:$PATH"
             flutter --version
           else
-            echo "Flutter not found"
-            exit 1
+            echo "Flutter not found - checking common locations..."
+            ls -la /usr/local/flutter 2>/dev/null || echo "Not at /usr/local/flutter"
+            ls -la /opt/flutter 2>/dev/null || echo "Not at /opt/flutter"
+            ls -la $HOME/.flutter 2>/dev/null || echo "Not at $HOME/.flutter"
+            echo "PATH: $PATH"
+            echo "HOME: $HOME"
           fi
           # Add Flutter to PATH for subsequent steps
           echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
