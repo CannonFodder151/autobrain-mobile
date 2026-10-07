@@ -58,6 +58,12 @@ jobs:
       - name: Fix git safe directory for Flutter cache
         run: git config --global --add safe.directory '*'
 
+      - name: Print PATH for debugging
+        run: |
+          echo "PATH before Verify Flutter: $PATH"
+          echo "GITHUB_PATH file: $GITHUB_PATH"
+          cat $GITHUB_PATH 2>/dev/null || echo "GITHUB_PATH not set"
+
       - name: Verify Flutter installation
         run: |
           echo "PATH: $PATH"
@@ -74,12 +80,6 @@ jobs:
             ls -la $HOME/flutter/ 2>/dev/null || echo "flutter dir not found"
             exit 1
           fi
-
-      - name: Print PATH for debugging
-        run: |
-          echo "PATH after Verify Flutter: $PATH"
-          echo "GITHUB_PATH file: $GITHUB_PATH"
-          cat $GITHUB_PATH 2>/dev/null || echo "GITHUB_PATH not set"
 
       - name: Fetch dependencies
         run: flutter pub get
