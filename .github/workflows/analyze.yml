@@ -57,6 +57,9 @@ jobs:
 
       - name: Verify Flutter installation
         run: |
+          echo "PATH: $PATH"
+          echo "HOME: $HOME"
+          ls -la $HOME/flutter 2>/dev/null || echo "No flutter dir in HOME"
           flutter --version
           flutter doctor -v
 
