@@ -24,10 +24,21 @@ jobs:
           echo "=== System Info ==="
           uname -a
           echo "=== Checking for Flutter ==="
-          which flutter || echo "flutter not in PATH"
-          ls -la $HOME/flutter 2>/dev/null || echo "No flutter dir in HOME"
-          echo "PATH: $PATH"
-          echo "HOME: $HOME"
+          if command -v flutter &> /dev/null; then
+            echo "Flutter found in PATH: $(which flutter)"
+            flutter --version
+          elif [ -d "$HOME/flutter" ]; then
+            echo "Flutter found at $HOME/flutter"
+            export PATH="$HOME/flutter/bin:$PATH"
+            flutter --version
+            echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+          else
+            echo "Flutter not found"
+            which flutter || echo "flutter not in PATH"
+            ls -la $HOME/flutter 2>/dev/null || echo "No flutter dir in HOME"
+            echo "PATH: $PATH"
+            echo "HOME: $HOME"
+          fi
 
       - name: Fix git safe directory for Flutter cache
         run: git config --global --add safe.directory '*'
