@@ -36,11 +36,19 @@ jobs:
             echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
             echo "FLUTTER_IN_HOME=true" >> "$GITHUB_ENV"
           else
-            echo "Flutter not found"
-            which flutter || echo "flutter not in PATH"
-            ls -la $HOME/flutter 2>/dev/null || echo "No flutter dir in HOME"
-            echo "PATH: $PATH"
-            echo "HOME: $HOME"
+            echo "Flutter not found - installing..."
+            # Download pre-built Flutter SDK
+            FLUTTER_VERSION="3.24.0"
+            FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${FLUTTER_VERSION}-stable.zip"
+            echo "Downloading Flutter $FLUTTER_VERSION from $FLUTTER_URL"
+            curl -fsSL -o /tmp/flutter.zip "$FLUTTER_URL"
+            echo "Download completed, extracting..."
+            ditto -x -k /tmp/flutter.zip "$HOME/"
+            rm /tmp/flutter.zip
+            export PATH="$HOME/flutter/bin:$PATH"
+            flutter --version || echo "flutter --version failed after install"
+            echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+            echo "FLUTTER_INSTALLED=true" >> "$GITHUB_ENV"
           fi
           echo "Check Flutter completed successfully"
 
