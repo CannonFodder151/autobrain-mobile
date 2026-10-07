@@ -23,13 +23,22 @@ jobs:
         run: |
           set -euo pipefail
           # Check if Flutter is already installed
-          if [ -d "$HOME/flutter" ]; then
-            echo "Flutter already installed at $HOME/flutter"
+          if command -v flutter &> /dev/null; then
+            echo "Flutter already installed: $(which flutter)"
+            flutter --version
+          elif [ -d "$HOME/flutter" ]; then
+            echo "Flutter found at $HOME/flutter"
             export PATH="$HOME/flutter/bin:$PATH"
             flutter --version
           else
             echo "Installing Flutter..."
-            git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$HOME/flutter"
+            # Download pre-built Flutter SDK
+            FLUTTER_VERSION="3.24.0"
+            FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_${FLUTTER_VERSION}-stable.zip"
+            echo "Downloading Flutter $FLUTTER_VERSION from $FLUTTER_URL"
+            curl -fsSL -o /tmp/flutter.zip "$FLUTTER_URL"
+            unzip -q /tmp/flutter.zip -d "$HOME/"
+            rm /tmp/flutter.zip
             export PATH="$HOME/flutter/bin:$PATH"
             flutter --version
           fi
