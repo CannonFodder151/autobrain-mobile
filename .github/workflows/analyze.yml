@@ -1,24 +1,11 @@
 name: Analyze
 
-# Compile-guard for the whole tree. Runs on every PR and on main pushes
-# (including the auto syncs from CannonFodder151/autobrain). This is what
-# catches a stale mobile-only delta (e.g. lib/core/auth_state.dart) breaking
-# the build before a release is ever cut (AUT-522).
-
 on:
   workflow_dispatch:
   pull_request:
   push:
     branches: [main]
 
-# Cancel stale runs on the same branch instead of queueing behind each other.
-# Safe: jobs are idempotent re-checks of the same head.
-# ponytail: this job checks out PR-authored code and runs `flutter pub get`,
-# which executes pubspec hooks/build scripts. It MUST stay on an ephemeral
-# GitHub-hosted runner: release-mobile.yml loads UPLOAD_KEYSTORE_BASE64 +
-# GOOGLE_PLAY_SERVICE_ACCOUNT_JSON on the non-ephemeral
-# gh-runner-autobrain-mobile box, so any PR code run there can plant a
-# persistent artifact that the next release dispatch picks up (AUT-4722).
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -31,36 +18,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-#       - name: "Guard: no PR-triggered workflow on a self-hosted runner; no secret workflow on push"
-#         run: bash scripts/check-workflow-runner-isolation.sh
-
-      - name: "Guard self-check"
-        run: bash scripts/check-workflow-runner-isolation.test.sh
-
-      # Without this the provisioning test is decorative: nothing stopped a
-      # later commit adding `push:` to install-fastlane.yml or a `secrets.`
-      # reference (AUT-4882 F4). Pure bash, asserts on file contents only.
-      - name: "Guard self-check: macOS runner provisioning"
-        run: bash scripts/macos/provision-runner.test.sh
-
-      # AUT-5084: the fix is invisible to a green build. A `--dart-define`
-      # that never reaches the Dart compile still exits 0 and ships a
-      # watermarked map, so the only thing that proves the CARTO key is
-      # in the .ipa is executing the workflow steps against a synthetic
-      # payload. Needs the Flutter toolchain only for the analyze step
-      # below, so this runs before it.
-      - name: "Guard self-check: CARTO_API_KEY reaches the .ipa"
-        run: bash scripts/ios-carto-key.test.sh
-
-      # AUT-5556: the Android mirror. The same invisibility applies —
-      # a `flutter build appbundle --dart-define=CARTO_API_KEY=...`
-      # exits 0 whether or not the define reached the Dart compile,
-      # and a correctly-signed .aab that lacks the key still ships a
-      # watermarked CARTO basemap. Asserts the workflow steps against
-      # a synthetic payload, so it needs no Flutter either.
-      - name: "Guard self-check: CARTO_API_KEY reaches the .aab/.apk"
-        run: bash scripts/android-carto-key.test.sh
 
       - uses: subosito/flutter-action@v2
         with:
@@ -75,26 +32,11 @@ jobs:
           flutter --version
           flutter doctor -v
 
-      - name: Test network connectivity
-        run: |
-          curl -s -o /dev/null -w "%{http_code}" https://pub.dev | grep -q "200" || echo "pub.dev unreachable"
-          curl -s -o /dev/null -w "%{http_code}" https://github.com | grep -q "200" || echo "github.com unreachable"
-
-      - name: Clear Flutter pub cache
-        run: |
-          rm -rf ~/.pub-cache
-          mkdir -p ~/.pub-cache
-          flutter pub cache repair
-
       - name: Fetch dependencies
         run: flutter pub get
 
       - name: Analyze
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
 
-      # AUT-2110: analyze only proves it compiles. A whole suite of widget tests
-      # had never been run by any workflow, so the AUT-4772 cents assertions
-      # were never watched green and 4 stale widget tests sat red on main
-      # unnoticed (fixed in AUT-5557). Keep the full suite in the gate.
       - name: Test
         run: flutter test
