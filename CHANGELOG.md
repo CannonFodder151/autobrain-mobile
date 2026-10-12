@@ -10,6 +10,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 ## [Unreleased]
+### Fixed (AUT-5368)
+- fix(ci): `release-ios.yml` `Extract changelog entry` and `Post Discord changelog` steps now declare `set -euo pipefail`, matching the rest of the workflow (PR pending)
+
 ### Added/Changed (AUT-3533)
 - fix: Servo Spy map blank white screen on hosted by resolving undefined _kCartoKeyParam and injecting CARTO API key (PR #715)
 
