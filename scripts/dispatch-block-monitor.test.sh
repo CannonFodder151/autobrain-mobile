@@ -63,4 +63,14 @@ if env -u GITHUB_TOKEN bash "$SCRIPT" >/dev/null 2>&1; then
   fail "monitor exited 0 without GITHUB_TOKEN; must exit 1"
 fi
 
+# AUT-5663: the monitor must NOT forward the GitHub credential to a
+# server-supplied host. The annotations URL must be derived from the job id
+# (TSV field 2) against the known API base, not from check_run_url (field 3).
+if grep -q 'check_run_url.*annotations' "$SCRIPT"; then
+  fail "monitor uses server-supplied check_run_url for authenticated requests (CWE-918/CWE-522)"
+fi
+if ! grep -q 'check-runs/{}/annotations' "$SCRIPT"; then
+  fail "monitor does not construct annotations URL from job id"
+fi
+
 echo "OK: dispatch-block predicate matches only never-dispatched failures; monitor runs off Actions (AC4) and fails closed without a token."
