@@ -94,9 +94,10 @@ while IFS=$'\t' read -r run_id run_name head_branch html_url created_at; do
   [ -n "$blocked" ] || continue
 
   job_names="$(cut -f1 <<<"$blocked" | paste -sd, -)"
-  reason="$(printf '%s\n' "$blocked" | cut -f3 | head -1 | xargs -r -I{} \
+  job_ids="$(cut -f2 <<<"$blocked" | paste -sd, -)"
+  reason="$(printf '%s\n' "$blocked" | cut -f2 | head -1 | xargs -r -I{} \
     curl -sSf --max-time 20 -H "Authorization: Bearer $GITHUB_TOKEN" \
-      -H "Accept: application/vnd.github+json" "{}/annotations" 2>/dev/null \
+      -H "Accept: application/vnd.github+json" "$API/repos/$REPO/check-runs/{}/annotations" 2>/dev/null \
     | jq -r '.[] | select(.message | test("not started|payment|spending limit"; "i")) | .message' \
     | head -1)"
 
@@ -155,7 +156,7 @@ newest = runs[0]  # the runs API returns newest-first
 fields = [
     {"name": "Runs blocked", "value": str(reported), "inline": True},
     {"name": "Jobs", "value": ", ".join(sorted({r[3] for r in runs}))[:1024], "inline": True},
-    {"name": "Newest", "value": f"<{newest[4]}|{newest[0]}> ({newest[1]}, {newest[2]})", "inline": True},
+    {"name": "Newest", "value": f"<{newest[4]}|{newest[0]}> ({newest[1]}, {newest[2]})"[:1024], "inline": True},
     {"name": "Detected",
      "value": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), "inline": True},
 ]
