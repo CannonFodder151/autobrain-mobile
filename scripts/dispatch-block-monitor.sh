@@ -34,6 +34,7 @@ API="https://api.github.com"
 N8N_WEBHOOK="${N8N_WEBHOOK:-https://n8n.nathanmartina.com/webhook/discord-report}"
 DISCORD_CHANNEL="${DISCORD_CHANNEL:-ops}"
 STATE_FILE="${STATE_FILE:-$HOME/.autobrain-dispatch-block-seen}"
+LOCK_FILE="${STATE_FILE}.lock"
 PAGE_SIZE="${PAGE_SIZE:-50}"
 REALERT_SECONDS=$(( ${REALERT_HOURS:-24} * 3600 ))
 
@@ -43,6 +44,10 @@ if [ -z "${GITHUB_TOKEN:-}" ]; then
   log "GITHUB_TOKEN not set; cannot query the Actions API"
   exit 1
 fi
+
+# Prevent overlapping cron runs from racing on STATE_FILE / CARRY_FILE.
+exec 9>"$LOCK_FILE"
+flock -n 9 || { log "another instance running; exiting"; exit 0; }
 
 api() {
   curl -sSf --max-time 30 \
@@ -59,7 +64,7 @@ BLOCKED_JOBS_JQ='.jobs[]
   | select(.conclusion == "failure")
   | select(((.steps // []) | length) == 0)
   | select((.runner_name // "") == "")
-  | [.name, (.id|tostring), .check_run_url] | @tsv'
+  | [.name, (.id|tostring)] | @tsv'
 
 runs_json="$(api "$API/repos/$REPO/actions/runs?per_page=$PAGE_SIZE")" || {
   log "Actions runs query failed; skipping this cycle"
@@ -102,7 +107,7 @@ while IFS=$'\t' read -r run_id run_name head_branch html_url created_at; do
     | head -1)"
 
   log "dispatch-block: run $run_id ($run_name) jobs=$job_names"
-  report_rows+=("$run_id|$run_name|$head_branch|$job_names|$html_url|$reason")
+  report_rows+=("$run_id"$'\t'"$run_name"$'\t'"$head_branch"$'\t'"$job_names"$'\t'"$html_url"$'\t'"$reason")
   reported=$(( reported + 1 ))
 done < <(jq -r --argjson n "$PAGE_SIZE" '
   .workflow_runs
@@ -118,7 +123,7 @@ commit_state() {
   cp -f "$CARRY_FILE" "$STATE_FILE.tmp" 2>/dev/null || : > "$STATE_FILE.tmp"
   if [ "${1:-}" = "include_reported" ]; then
     for row in ${report_rows+"${report_rows[@]}"}; do
-      echo "${row%%|*} $now" >> "$STATE_FILE.tmp"
+      echo "${row%%$'\t'*} $now" >> "$STATE_FILE.tmp"
     done
   fi
   mv -f "$STATE_FILE.tmp" "$STATE_FILE"
@@ -146,30 +151,32 @@ import json, sys, urllib.request, datetime
 
 webhook, channel, repo, reported, now, *rows = sys.argv[1:]
 reported = int(reported)
-runs = [r.split("|", 5) for r in rows]
+runs = [r.split("\t", 5) for r in rows]
 reason = next((r[5] for r in runs if r[5]), "")
 newest = runs[0]  # the runs API returns newest-first
 
 # The n8n reporter's contract is <=4 inline fields (company Discord format).
 # Long-running blocks produce far more runs than that, so summarise and keep
 # the most recent one fully linked.
+# Discord limits: title 256, description 4096, field value 1024.
+def trunc(s, n): return s if len(s) <= n else s[:n]
 fields = [
     {"name": "Runs blocked", "value": str(reported), "inline": True},
-    {"name": "Jobs", "value": ", ".join(sorted({r[3] for r in runs}))[:1024], "inline": True},
-    {"name": "Newest", "value": f"<{newest[4]}|{newest[0]}> ({newest[1]}, {newest[2]})"[:1024], "inline": True},
+    {"name": "Jobs", "value": trunc(", ".join(sorted({r[3] for r in runs})), 1024), "inline": True},
+    {"name": "Newest", "value": trunc(f"<{newest[4]}|{newest[0]}> ({newest[1]}, {newest[2]})", 1024), "inline": True},
     {"name": "Detected",
      "value": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), "inline": True},
 ]
-description = ("0 executed steps and no runner assigned — the job was never "
+description = trunc(("0 executed steps and no runner assigned — the job was never "
                "dispatched, so these are **not** test failures. Usually the "
                "account billing/spending limit (an org-owner action); "
-               "self-hosted runners and hosted deploys are unaffected.")
+               "self-hosted runners and hosted deploys are unaffected."), 4096)
 if reason:
-    description += f"\nGitHub says: {reason}"
+    description = trunc(description + f"\nGitHub says: {reason}", 4096)
 
 payload = {
     "channel": channel,
-    "title": f"{repo}: {reported} Actions run(s) failed without running",
+    "title": trunc(f"{repo}: {reported} Actions run(s) failed without running", 256),
     "description": description,
     "color": "0xED4245",
     "author": "Deployment Lead",
