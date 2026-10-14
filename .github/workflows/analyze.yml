@@ -19,10 +19,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install jq
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -L -o "$HOME/.local/bin/jq" https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-macos-amd64
+          chmod +x "$HOME/.local/bin/jq"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: false
+          flutter-version: "3.27.1"
 
       - name: Fix git safe directory for Flutter cache
         run: git config --global --add safe.directory '*'
