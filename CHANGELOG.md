@@ -10,6 +10,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 ## [Unreleased]
+### Fixed (AUT-5663)
+- fix(scripts): harden `dispatch-block-monitor.sh` per the AUT-5649 security review (PR #151). (1) Annotations URL now derives from the job id (`$API/repos/$REPO/check-runs/{}/annotations`) instead of the server-supplied `check_run_url`, closing the credential-forwarding path (CWE-918/CWE-522). (2) `.test.sh` fails closed when the monitor script is absent and treats `grep` exit 2 as failure. (3) All Discord embed values capped (title 256, description 4096, fields 1024) to prevent unbounded-field alert-suppression. (4) State file access wrapped in `flock -n` to prevent overlapping cron runs from racing. (5) Dead `MAX_REPORTED` removed; report rows use tab separator (not `|`) to avoid branch-name injection. No change to the AUT-5634 AC1 detection predicate or AC4 (no metered workflow).
+
 ### Fixed (AUT-6431)
 - fix(build): add archive dependency override to fix Dart compile failure (AUT-6431)
 
