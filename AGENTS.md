@@ -67,6 +67,15 @@ flutter build apk --release --dart-define=API_BASE_URL=https://host/api/v1 \
 flutter test
 ```
 
+A red check with **0 executed steps and no runner** did not run — it is not a
+test failure. Usually the account billing/spending limit, which blocks metered
+GitHub-hosted runners only; self-hosted runners keep going, so `.aab` green
+alongside `Analyze` red is the tell. `scripts/dispatch-block-monitor.sh` (dev
+box cron, posts to `#ops`) reports this signature — see README
+"Reading a red check" for the API one-liner. Never add a scheduled workflow as
+the detector: it burns metered minutes and would be blocked by the same limit
+it reports.
+
 ## Versioning
 
 Mobile versions independently from web. `scripts/bump-version.sh --mobile` in
