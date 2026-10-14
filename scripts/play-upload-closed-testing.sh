@@ -38,11 +38,12 @@
 #   before the main edit opens, so it never trips the AUT-952 failure.
 # - Closed testing tracks have custom names. The default target is the
 #   existing `alpha` track which already has a tester audience.
-# - Play rejects a "completed" release on a closed testing track when the track
-#   has no tester audience ("Release in track targeting no countries"). With
-#   PLAY_ALLOW_DRAFT_FALLBACK=true the script then commits the release as a
-#   draft (still versionCode-visible on the track, ready to roll out from the
-#   Play Console once testers are configured).
+# - The `alpha` track is a rollout track. A bare "completed" (implicit 100%)
+#   release is refused with 403 "You cannot rollout this release because it does
+#   not allow any existing users to upgrade to the newly added APKs" unless the
+#   staged rollout already covers every existing tester. Play accepts
+#   status="inProgress" with userFraction=0.999 to serve the build to the full
+#   tester list. Set PLAY_ROLLOUT_PERCENT=100 (default) to enable this fallback.
 # - Committing the edit is what "submits for review" to Google Play.
 # - Every HTTP failure prints its status code + response body to stderr and
 #   fails with a ::error:: line so GitHub shows the cause directly.
@@ -57,8 +58,15 @@ TRACK="${2:-${PLAY_TRACK:-alpha}}"
 PACKAGE="${PLAY_PACKAGE_NAME:-com.autobrainservice.app}"
 NOTES="${PLAY_RELEASE_NOTES:-}"
 STATUS="${PLAY_RELEASE_STATUS:-completed}"
+# PLAY_ROLLOUT_PERCENT=100 (default) fallback. `alpha` is a rollout track, so a
+# bare "completed" release is refused with 403 ("does not allow any existing users
+# to upgrade") unless the rollout already covers every existing tester. Play accepts
+# status="inProgress" with userFraction=0.999 to serve the build to the full tester
+# list. Disabled only by explicitly setting PLAY_ROLLOUT_PERCENT=0.
 ALLOW_FALLBACK="${PLAY_ALLOW_DRAFT_FALLBACK:-true}"
-[[ "$STATUS" == "completed" || "$STATUS" == "draft" ]] || { echo "::error::PLAY_RELEASE_STATUS must be completed or draft"; exit 1; }
+ROLLOUT_PERCENT="${PLAY_ROLLOUT_PERCENT:-100}"
+[[ "$ROLLOUT_PERCENT" =~ ^[0-9]+$ && "$ROLLOUT_PERCENT" -ge 0 && "$ROLLOUT_PERCENT" -le 100 ]] || { echo "::error::PLAY_ROLLOUT_PERCENT must be 0-100"; exit 1; }
+[[ "$STATUS" == "completed" || "$STATUS" == "draft" || "$STATUS" == "inProgress" ]] || { echo "::error::PLAY_RELEASE_STATUS must be completed, draft, or inProgress"; exit 1; }
 
 # Every step is mirrored to PLAY_LOG_FILE (CI keeps the runner-local log so a
 # collapse-free copy of this transcript survives on disk for debugging).
@@ -163,6 +171,12 @@ echo "uploaded $AAB -> versionCode $version_code"
 #    Track body — Track.releases is a JSON array of TrackRelease, so do not
 #    wrap it again ({releases:$release} would double-nest and Play 400s).
 release="{\"releases\":[{\"name\":\"$TRACK-$version_code\",\"versionCodes\":[\"$version_code\"],\"status\":\"$STATUS\""
+# userFraction only applies to a staged (inProgress) rollout; completed/draft have no fraction.
+if [[ "$STATUS" == "inProgress" && "$ROLLOUT_PERCENT" -ge 1 ]]; then
+  # Play rejects userFraction == 1.0, so cap at 0.999 to serve every tester.
+  frac=$(awk -v p="$ROLLOUT_PERCENT" 'BEGIN { if (p >= 100) p=99.9; printf "%.3f", p/100 }')
+  release="$release,\"userFraction\":$frac"
+fi
 if [[ -n "$NOTES" ]]; then
   notes_json="$(jq -n --arg t "$NOTES" '[{"language":"en-US","text":$t}]')"
   release="$release,\"releaseNotes\":$notes_json"
@@ -183,6 +197,26 @@ commit_body="$(sed '$d' <<<"$commit_out")"
 echo "   commit HTTP: $commit_code" >&2
 if [[ "$commit_code" == "200" ]]; then
   commit_success=true
+elif [[ "$commit_code" == "403" && "$STATUS" == "completed" && "$ROLLOUT_PERCENT" -ge 1 ]] \
+  && grep -q "does not allow any existing users to upgrade" <<<"$commit_body"; then
+  # `alpha` is a rollout track: Play refuses a bare "completed" (100%) release
+  # unless the staged rollout already reaches every existing tester. Retry as a
+  # staged rollout capped at 0.999, which serves the build to the full list.
+  echo "::warning::Play refused 'completed' on rollout track '$TRACK' ('does not allow any existing users to upgrade'); retrying as status=inProgress userFraction=0.999."
+  frac=$(awk -v p="$ROLLOUT_PERCENT" 'BEGIN { if (p >= 100) p=99.9; printf "%.3f", p/100 }')
+  release="{\"releases\":[{\"name\":\"$TRACK-$version_code\",\"versionCodes\":[\"$version_code\"],\"status\":\"inProgress\",\"userFraction\":$frac"
+  if [[ -n "$NOTES" ]]; then
+    release="$release,\"releaseNotes\":$notes_json"
+  fi
+  release="$release}]}"
+  req -m 60 -X PUT "$EDIT/tracks/$TRACK" "${AUTH[@]}" \
+    -H "Content-Type: application/json" -d "$release"
+  [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.update ($TRACK) as inProgress" 200
+  commit_out="$("${CURL_NF[@]}" -m 300 -w $'\n%{http_code}' -X POST "$EDIT:commit" "${AUTH[@]}")"
+  commit_code="$(tail -1 <<<"$commit_out")"
+  [[ "$commit_code" == "200" ]] || { echo "::error::edit commit (inProgress fallback) failed (HTTP $commit_code): $(head -c 500 <<<"$commit_out" | tr '\n' ' ')"; exit 1; }
+  STATUS="inProgress"
+  commit_success=true
 elif [[ "$commit_code" == "403" && "$STATUS" == "completed" && "$ALLOW_FALLBACK" == "true" ]] \
   && grep -q "targeting no countries" <<<"$commit_body"; then
   echo "::warning::Play refuses 'completed' (submit-for-review) on closed testing track '$TRACK' without a tester audience ('targeting no countries'); committing as draft. Once a tester group + country availability are configured on the track in Play Console, the same pipeline auto-submits for review with no code change."
@@ -192,9 +226,8 @@ elif [[ "$commit_code" == "403" && "$STATUS" == "completed" && "$ALLOW_FALLBACK"
   fi
   STATUS="draft"
   release="${release/\"completed\"/\"draft\"}"
-  track_body="$release"
   req -m 60 -X PUT "$EDIT/tracks/$TRACK" "${AUTH[@]}" \
-    -H "Content-Type: application/json" -d "$track_body"
+    -H "Content-Type: application/json" -d "$release"
   [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.update ($TRACK) as draft" 200
   "${CURL_NF[@]}" -m 300 -X POST "$EDIT:commit" "${AUTH[@]}" >/dev/null
   commit_success=true
