@@ -497,7 +497,7 @@ jobs:
             --arg title "Play closed-testing upload needs tester audience" \
             --arg desc "Auto-upload to the closed testing track (alpha) worked, but Play blocks submit-for-review until the track has testers. One-time setup in Play Console (Testing > Closed testing > alpha): add testers + country availability (restOfWorld on). After that every release auto-submits for review." \
             --arg version "$VERSION" \
-            '{embeds:[{title:$title,description:$desc,color:3665438,timestamp:$now,fields:[{name:"Version",value:$version,inline:true},{name:"Ask",value:"Configure testers once",inline:true}]}]}')"
+            '{embeds:[{title:$title,description:$desc,color:3665438,timestamp:now,fields:[{name:"Version",value:$version,inline:true},{name:"Ask",value:"Configure testers once",inline:true}]}]}')"
           curl -sS -o /dev/null -w "approvals embed: %{http_code}\n" -X POST "$DISCORD_WEBHOOK_APPROVALS" \
             -H 'Content-Type: application/json' -d "$payload" || true
 
@@ -521,7 +521,7 @@ jobs:
               --arg title "AutoBrain app $SEMVER released" \
               --arg desc "$notes" \
               --arg url "$RELEASE_URL" \
-              '{embeds:[{title:$title,description:$desc,color:2952025,timestamp:$now,fields:[{name:"Download",value:$url,inline:true},{name:"Platform",value:"Android (.aab)",inline:true}]}]}')"
+              '{embeds:[{title:$title,description:$desc,color:2952025,timestamp:now,fields:[{name:"Download",value:$url,inline:true},{name:"Platform",value:"Android (.aab)",inline:true}]}]}')"
             curl -sS -o /dev/null -w "changelog embed: %{http_code}\n" -X POST "$DISCORD_WEBHOOK_CHANGELOG" \
               -H 'Content-Type: application/json' -d "$changelog_payload" || true
           else
@@ -531,7 +531,7 @@ jobs:
           updates_payload="$(jq -n \
             --arg title "Mobile .aab ${{ env.RELEASE_VERSION }} released" \
             --arg url "$RELEASE_URL" \
-            '{embeds:[{title:$title,description:"Release notes + .aab live.",color:3489663,timestamp:$now,fields:[{name:"Artifact",value:"app-release.aab",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true},{name:"Download",value:$url,inline:true}]}]}')"
+            '{embeds:[{title:$title,description:"Release notes + .aab live.",color:3489663,timestamp:now,fields:[{name:"Artifact",value:"app-release.aab",inline:true},{name:"Notes",value:"#changelog + GitHub Releases",inline:true},{name:"Download",value:$url,inline:true}]}]}')"
           # Discord embeds are best-effort: a transient webhook outage must not fail the
           # release run (it only creates failure-notification spam).
           curl -sS -o /dev/null -w "updates embed: %{http_code}\n" -X POST "$DISCORD_WEBHOOK_UPDATES" \
