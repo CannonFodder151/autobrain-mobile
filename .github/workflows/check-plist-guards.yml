@@ -1,0 +1,47 @@
+name: iOS Pre-Submission Guards (PR)
+
+# Runs the two iOS pre-submission guards (Info.plist purpose strings + AppIcon manifest)
+# on every PR that touches the guarded files. Prevents regressions that would only
+# surface at TestFlight upload (altool 90022/90023/90683) after a ~15 min signed build.
+# Mirrors the checks in release-ios.yml steps 1-2 + their self-tests.
+# AUT-5283, AUT-5322
+
+on:
+  pull_request:
+    paths:
+      - 'ios/Runner/Info.plist'
+      - 'ios/Runner/Assets.xcassets/AppIcon.appiconset/**'
+      - 'scripts/check-ios-purpose-strings.py'
+      - 'scripts/check-appicon-entries.py'
+      - 'scripts/check-ios-purpose-strings.test.sh'
+      - 'scripts/check-appicon-entries.test.sh'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  plist-guards:
+    name: iOS Plist & Icon Guards
+    runs-on: [self-hosted, macOS]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify AppIcon manifest entries (AUT-5283)
+        working-directory: .
+        run: python3 scripts/check-appicon-entries.py
+
+      - name: Verify iOS purpose strings (AUT-5322)
+        working-directory: .
+        run: python3 scripts/check-ios-purpose-strings.py
+
+      - name: Self-check AppIcon guard
+        working-directory: .
+        run: bash scripts/check-appicon-entries.test.sh
+
+      - name: Self-check purpose strings guard
+        working-directory: .
+        run: bash scripts/check-ios-purpose-strings.test.sh

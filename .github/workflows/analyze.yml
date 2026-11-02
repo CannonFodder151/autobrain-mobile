@@ -19,18 +19,33 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: false
-
-      - name: Fix git safe directory for Flutter cache
-        run: git config --global --add safe.directory '*'
-
-      - name: Verify Flutter installation
+      - name: Install Flutter
         run: |
-          flutter --version
-          flutter doctor -v
+          set -euo pipefail
+          echo "=== System Info ==="
+          uname -a
+          echo "=== Checking for git ==="
+          which git || echo "git not found"
+          git --version
+          echo "=== Checking network ==="
+          curl -sI https://github.com 2>&1 | head -5 || echo "curl failed"
+          echo "=== Checking disk space ==="
+          df -h
+          echo "=== Checking for Flutter ==="
+          if command -v flutter &> /dev/null; then
+            echo "Flutter found in PATH: $(which flutter)"
+            flutter --version
+          elif [ -d "$HOME/flutter" ]; then
+            echo "Flutter found at $HOME/flutter"
+            export PATH="$HOME/flutter/bin:$PATH"
+            flutter --version
+          else
+            echo "Flutter not found - installing via git clone..."
+            git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$HOME/flutter"
+            export PATH="$HOME/flutter/bin:$PATH"
+            flutter --version
+          fi
+          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
 
       - name: Fetch dependencies
         run: flutter pub get
