@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   analyze-pr:
-    runs-on: [self-hosted, macOS]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
