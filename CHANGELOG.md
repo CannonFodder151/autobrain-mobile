@@ -9,6 +9,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 > `CONTRIBUTING.md` for the frontend-parity + changelog rules.
 
 ## [Unreleased]
+### Fixed (AUT-322)
+- fix(mobile): `release-mobile.yml` `promote_to_production` now performs a **staged production rollout** (default 10%, `userFraction`/`inProgress`) via `scripts/play-promote-to-production.sh`; advance to 50%/100% by re-dispatching with `PLAY_ROLLOUT_FRACTION` or Play Console. Previously the step committed a full production rollout (`status=completed`).
+
 ### Added (AUT-6519)
 - docs: add secret-file-pattern.md documenting AUT-1533 *_FILE secret injection pattern for docker-compose (AUT-6519)
 
