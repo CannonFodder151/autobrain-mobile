@@ -27,10 +27,7 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-	</dict>
+	<dict/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>AutoBrain uses Bluetooth to provision WiFi credentials to the AutoBrain-Tripper dongle and to connect OBD adapters.</string>
 	<key>NSCameraUsageDescription</key>
