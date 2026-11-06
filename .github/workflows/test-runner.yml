@@ -1,16 +1,57 @@
 name: Test iOS Runner
+
+# AUT-4840: this workflow is a runner liveness + toolchain probe, not a
+# fastlane installer. It cannot be one on this host: the iMac is x86_64
+# with no Homebrew at /usr/local or /opt/homebrew (run 36814006469), and
+# `gem install fastlane` cannot build native extensions against the
+# CommandLineTools Ruby 2.6 SDK, which ships no ruby/config.h
+# (run 36825183321). Fastlane provisioning and its hard `fastlane --version`
+# + psych gate live in install-fastlane.yml (AUT-4845, AUT-4857), so this
+# probe reports toolchain state instead of installing anything.
+#
+# The report step keeps errexit ON (AUT-4864): every probe is guarded
+# explicitly rather than disabling -e, so an unexpected failure still turns
+# the job red while host-state reporting stays non-fatal.
 on:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: [self-hosted, macOS, X64]
     steps:
+      - uses: actions/checkout@v4
+
       - name: Check runner
-        run: echo "Runner is alive"; uname -a
-      - name: Check Xcode
-        run: xcodebuild -showsdks 2>&1 || echo "Xcode not installed"
-      - name: Install fastlane via Homebrew
         run: |
           set -euo pipefail
-          brew install fastlane
-          fastlane --version
+          echo "Runner is alive"
+          uname -a
+      - name: Check Xcode
+        run: |
+          set -euo pipefail
+          xcodebuild -showsdks 2>&1 || echo "xcodebuild not installed"
+      - name: Report toolchain availability
+        run: |
+          set -euo pipefail
+          echo "user: $(whoami)  home: $HOME"
+          for prefix in /usr/local/bin /opt/homebrew/bin; do
+            if [ -x "$prefix/brew" ]; then
+              echo "brew: $prefix/brew"
+            else
+              echo "brew: NOT INSTALLED (checked $prefix/brew)"
+            fi
+          done
+          echo "system ruby: $(ruby --version 2>&1 || true)"
+          # Report the provisioned toolchain too, so a green probe after
+          # AUT-4845 shows the exact Ruby/fastlane the release jobs use.
+          if [ -f "$HOME/.autobrain-toolchain.env" ]; then
+            # shellcheck disable=SC1091
+            . scripts/macos/toolchain-env.sh
+            echo "provisioned ruby: $(ruby --version)"
+            fastlane --version 2>&1 | tail -n 1 || echo "fastlane: --version failed"
+          else
+            echo "fastlane: NOT PROVISIONED — dispatch 'Provision macOS runner toolchain (fastlane)' (AUT-4845)"
+          fi
