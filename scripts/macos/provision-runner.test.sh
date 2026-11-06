@@ -44,6 +44,52 @@ grep -q 'rubyarchhdrdir' "$DIR/provision-runner.sh" && ok "provision checks ruby
 grep -q 'ruby/ruby.h' "$DIR/provision-runner.sh" && ok "provision checks for ruby/ruby.h" \
   || fail "provision does not check for ruby/ruby.h"
 
+# AUT-4875: the greps above cannot tell a correct gate from a wrong one — the
+# broken version also mentioned rubyarchhdrdir in a comment. Ruby installs
+# config.h ONLY under rubyarchhdrdir (mkmf: `$config_h = '$(arch_hdrdir)/ruby/
+# config.h'`), never under rubyhdrdir, so the wrong gate hard-failed a healthy
+# Ruby 3.3.6 on Nathans-iMac-Pro and fastlane was never installed (runs
+# 36838965457 / 36832635006). So run the *real* header-gate block against a
+# fake rbenv tree shaped like the runner's, with config.h in the arch dir only.
+prov0="$DIR/provision-runner.sh"
+hdr_block="$(awk '/^HDRDIR=/{f=1} f{print} /^say "ruby headers OK/{exit}' "$prov0")"
+[ -n "$hdr_block" ] && ok "header gate block is extractable" \
+  || fail "could not extract the header gate from provision-runner.sh"
+fake_ruby="$tmp/fakebin"
+mkdir -p "$fake_ruby"
+cat > "$fake_ruby/ruby" <<'RUBYEOF'
+#!/bin/sh
+# Stands in for the built Ruby: answers only the RbConfig probes the gate makes.
+# Order matters: "rubyarchhdrdir" contains "rubyhdrdir".
+case "$*" in
+  *rubyarchhdrdir*) printf '%s' "$FAKE_ARCHHDRDIR" ;;
+  *rubyhdrdir*)     printf '%s' "$FAKE_HDRDIR" ;;
+  *--version*)      echo "ruby 3.3.6 (2024-11-05 revision 75015d4c1f) [x86_64-darwin21]" ;;
+esac
+RUBYEOF
+chmod +x "$fake_ruby/ruby"
+run_hdr_gate() { # $1 = include dir, $2 = arch subdir name
+  local inc="$tmp/inc" arch="$tmp/inc/$2"
+  rm -rf "$inc"; mkdir -p "$inc/ruby" "$arch/ruby"
+  : > "$inc/ruby/ruby.h"
+  [ "${3:-}" = with_config_h ] && : > "$arch/ruby/config.h"
+  FAKE_HDRDIR="$inc" FAKE_ARCHHDRDIR="$arch" RUBY_BIN="$fake_ruby" \
+    bash -c "say() { echo \"==> \$*\"; }; die() { echo \"::error::\$*\" >&2; exit 1; }
+$hdr_block" 2>&1
+}
+# The exact runner layout: ruby.h in the include dir, config.h only under the
+# arch dir. This is the case the wrong gate rejected.
+out="$(run_hdr_gate "$tmp/inc" x86_64-darwin with_config_h)"
+case "$out" in
+  *'ruby headers OK'*) ok "header gate accepts config.h under rubyarchhdrdir only" ;;
+  *) fail "header gate rejected a healthy Ruby 3.x (config.h is arch-dir only): $out" ;;
+esac
+# And a genuinely header-less SDK must still die, or the fix is a rubber stamp.
+out="$(run_hdr_gate "$tmp/inc" x86_64-darwin)"; rc=$?
+[ "$rc" -ne 0 ] && [[ "$out" == *"config.h missing"* ]] \
+  && ok "header gate still rejects an SDK with no config.h" \
+  || fail "header gate accepted an SDK with no config.h (rc=$rc): $out"
+
 # ruby-build vendors OpenSSL but not libyaml, and forces `--with-ext=psych`,
 # so the build dies on macOS CommandLineTools unless libyaml is supplied. The
 # script must both build it and pin its checksum.

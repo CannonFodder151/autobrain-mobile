@@ -61,3 +61,11 @@ app.*.map.json
 !/ios/Flutter/AppFrameworkInfo.plist
 /ios/Runner/GeneratedPluginRegistrant.h
 /ios/Runner/GeneratedPluginRegistrant.m
+
+# Editor backup artifacts (AUT-4919): a stray CHANGELOG.md.bak was committed
+# by the sync workflow (git add -A on the persistent runner checkout). Never
+# track these.
+*.bak
+*.orig
+*.rej
+*~

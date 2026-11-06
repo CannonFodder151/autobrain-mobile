@@ -37,6 +37,7 @@ app = {
     "n": 0,
     "last_status": {},      # edit id -> "completed" | "draft"
     "block_completed_once": True,  # draft-fallback scenario
+    "rollout_block": False,        # True => 403 "does not allow any existing users to upgrade"
 }
 with open(calls, "w") as f:
     f.write("start\n")
@@ -103,8 +104,14 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, {"mode": "ok"})
         if p.path == "/__mock__/draft-once":
             app["block_completed_once"] = True
+            app["rollout_block"] = False
             rec("mock mode draft-once")
             return self._json(200, {"mode": "draft-once"})
+        if p.path == "/__mock__/rollout-once":
+            app["block_completed_once"] = True
+            app["rollout_block"] = True
+            rec("mock mode rollout-once")
+            return self._json(200, {"mode": "rollout-once"})
         m = re.match(r"^/androidpublisher/v3/applications/[^/]+/edits$", p.path)
         if m:
             # AUT-952 semantics: a second insert while one edit is open
@@ -131,6 +138,9 @@ class H(BaseHTTPRequestHandler):
                 return self._json(400, {"error": {"code": 400, "message": "This Edit has been deleted.", "status": "FAILED_PRECONDITION"}})
             if app["last_status"].get(eid) == "completed" and app["block_completed_once"]:
                 app["block_completed_once"] = False
+                if app.get("rollout_block"):
+                    rec("commit %s -> 403 does not allow any existing users to upgrade" % eid)
+                    return self._json(403, {"error": {"code": 403, "message": "You cannot rollout this release because it does not allow any existing users to upgrade to the newly added APKs", "status": "PERMISSION_DENIED"}})
                 rec("commit %s -> 403 targeting no countries" % eid)
                 return self._json(403, {"error": {"code": 403, "message": "Release in track targeting no countries", "status": "PERMISSION_DENIED"}})
             del app["edits"][eid]
@@ -160,6 +170,7 @@ class H(BaseHTTPRequestHandler):
                 return self._json(400, {"error": {"code": 400, "message": "releases must be a non-empty array", "status": "INVALID_ARGUMENT"}})
             status = rel[0].get("status", "completed")
             app["last_status"][eid] = status
+            rec("track-put-body %s %s %s" % (eid, track, json.dumps(rel)))
             vc = rel[0].get("versionCodes", [])
             app["tracks"].setdefault(track, []).append({"versionCodes": vc, "status": status})
             rec("track-put %s %s status=%s" % (eid, track, status))
@@ -170,7 +181,7 @@ srv = HTTPServer(("127.0.0.1", port), H)
 srv.serve_forever()
 PY
 MOCK_PID=$!
-sleep 0.5
+for i in $(seq 1 40); do curl -s -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null && break; sleep 0.25; done
 
 export PLAY_API_BASE="http://127.0.0.1:$PORT"
 export GOOGLE_PLAY_SERVICE_ACCOUNT_JSON="$(jq -n --arg email mock@example.com --arg uri "http://127.0.0.1:$PORT/token" --arg key "$RSA_KEY" '{client_email:$email,token_uri:$uri,private_key:$key}')"
@@ -214,6 +225,17 @@ grep -q "targeting no countries" <<<"$out3" || fail "draft-fallback warning miss
 grep -q "ASK-NATHAN" <<<"$out3" || fail "tester-audience ask missing"
 grep -q "needs_tester_audience=true" "$GOUT" || fail "GITHUB_OUTPUT needs_tester_audience not set"
 grep -q "status draft" <<<"$out3" || fail "final status not draft"
+echo "OK"
+
+echo "== scenario 4: rollout-track 403 -> inProgress userFraction fallback (AUT-4987) =="
+mock_mode rollout-once
+: > "$LOG"
+out4="$(bash "$SCRIPT" "$AAB" 2>&1)" || fail "scenario 4 failed: $out4"
+grep -q "does not allow any existing users to upgrade" <<<"$out4" || fail "rollout-403 warning missing"
+grep -q "status=inProgress userFraction=0.999" <<<"$out4" || fail "inProgress retry not attempted (dead fallback regression)"
+grep -qE "track-put(-body)? [a-z0-9-]+ alpha (status=inProgress|.*\"status\":\"inProgress\")" "$LOG" || fail "mock never received an inProgress track PUT"
+grep -q "userFraction.: *0.999" "$LOG" || fail "userFraction=0.999 not sent to the track PUT"
+grep -q "closed testing (alpha) release OK" <<<"$out4" || fail "final success line missing"
 echo "OK"
 
 echo "ALL SCENARIOS PASSED"
