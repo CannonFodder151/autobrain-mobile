@@ -91,6 +91,7 @@ token="$(jq -r '.access_token' <<<"$HTTP_BODY")"
 [[ -n "$token" && "$token" != "null" ]] || { echo "::error::no access_token"; exit 1; }
 AUTH=(-H "Authorization: Bearer $token")
 
+<<<<<<< HEAD
 # 2. Resolve versionCode / 3. Pre-flight: source track (AUT-365: retry/poll for upload race)
 POLL_ATTEMPTS="${PLAY_SOURCE_POLL_ATTEMPTS:-12}"
 POLL_DELAY="${PLAY_SOURCE_POLL_DELAY:-10}"
@@ -168,6 +169,25 @@ else
 fi
 resolve_or_verify_source
 [[ -n "${VERSION_CODE:-}" ]] || { echo "::error::failed to resolve versionCode"; exit 1; }
+=======
+# 2. Resolve versionCode
+if [[ -z "$VERSION_CODE_ARG" ]]; then
+  echo "== resolving latest versionCode on source track '$SOURCE_TRACK' =="
+  req -m 60 "$BASE/tracks/$SOURCE_TRACK/releases" "${AUTH[@]}"
+  [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get ($SOURCE_TRACK)" 200
+  VERSION_CODE_ARG="$(jq -r '.releases | map(.versionCodes[]?) | last // empty' <<<"$HTTP_BODY")"
+  [[ -n "$VERSION_CODE_ARG" ]] || { echo "::error::no releases found on source track '$SOURCE_TRACK'"; exit 1; }
+  echo "resolved versionCode $VERSION_CODE_ARG from '$SOURCE_TRACK'"
+fi
+VERSION_CODE="$VERSION_CODE_ARG"
+
+# 3. Pre-flight: source track must contain it
+req -m 60 "$BASE/tracks/$SOURCE_TRACK/releases" "${AUTH[@]}"
+[[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get ($SOURCE_TRACK)" 200
+src_has="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
+[[ "$src_has" == "true" ]] || { echo "::error::versionCode $VERSION_CODE not found on source track '$SOURCE_TRACK'"; exit 1; }
+echo "pre-flight OK: versionCode $VERSION_CODE present on '$SOURCE_TRACK'"
+>>>>>>> 4e61dc8 (fix(AUT-322): staged production rollout (10%) when promote_to_production=true)
 
 # 4. Pre-flight: production track state
 prod_probe="$(curl -sS --connect-timeout 30 -o /dev/null -w '%{http_code}' "$BASE/tracks/$TARGET_TRACK/releases" "${AUTH[@]}")"
@@ -187,12 +207,20 @@ fi
 
 req -m 60 "$BASE/tracks/$TARGET_TRACK/releases" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get ($TARGET_TRACK)" 200
+<<<<<<< HEAD
 all_vcs="$(extract_all_version_codes <<<"$HTTP_BODY")"
 live_vc="$(jq -r '[.releases[]? | select(.status=="completed" or .status=="inProgress")] | .[].versionCodes[]? // .[].activeArtifacts[]?.versionCode // .[].releaseCodes[]? | select(. != null) | last' <<<"$HTTP_BODY" 2>/dev/null || echo "")"
 if [[ -n "$live_vc" && "$live_vc" != "$VERSION_CODE" ]]; then
   echo "::warning::production currently has versionCode $live_vc live; promoting $VERSION_CODE will replace it"
 fi
 already="$(grep -qx "$VERSION_CODE" <<<"$all_vcs" && echo true || echo false)"
+=======
+live_vc="$(jq -r '[.releases[]? | select(.status=="completed" or .status=="inProgress") | .versionCodes[]?] | last // empty' <<<"$HTTP_BODY")"
+if [[ -n "$live_vc" && "$live_vc" != "$VERSION_CODE" ]]; then
+  echo "::warning::production currently has versionCode $live_vc live; promoting $VERSION_CODE will replace it"
+fi
+already="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
+>>>>>>> 4e61dc8 (fix(AUT-322): staged production rollout (10%) when promote_to_production=true)
 echo "production already contains $VERSION_CODE: $already"
 
 # 5. Open main edit
@@ -246,7 +274,11 @@ req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json"
 verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
 req -m 60 "$BASE/edits/$verify_edit/tracks/$TARGET_TRACK" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify" 200
+<<<<<<< HEAD
 vc_on_track="$(extract_all_version_codes <<<"$HTTP_BODY" | grep -qx "$VERSION_CODE" && echo true || echo false)"
+=======
+vc_on_track="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
+>>>>>>> 4e61dc8 (fix(AUT-322): staged production rollout (10%) when promote_to_production=true)
 [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $VERSION_CODE not visible on production after commit"; exit 1; }
 "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
 if [[ "$STATUS" == "completed" ]]; then

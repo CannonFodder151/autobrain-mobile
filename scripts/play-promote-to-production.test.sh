@@ -7,7 +7,10 @@ AAB="$(mktemp)"
 LOG="$(mktemp)"
 GOUT="$(mktemp)"
 RSA_KEY="$(openssl genrsa 2048 2>/dev/null)"
+<<<<<<< HEAD
 fail() { echo "FAIL: $*" >&2; exit 1; }
+=======
+>>>>>>> 4e61dc8 (fix(AUT-322): staged production rollout (10%) when promote_to_production=true)
 trap 'rm -f "$AAB" "$LOG" "$GOUT"; [[ -n "${MOCK_PID:-}" ]] && kill "$MOCK_PID" 2>/dev/null || true' EXIT
 head -c 4096 /dev/zero > "$AAB"
 
@@ -96,6 +99,7 @@ grep -q 'track-put .* status=inProgress uf=0.1' "$LOG" || fail "expected inProgr
 grep -q "commit" "$LOG" || fail "no commit recorded"
 grep -q "insert killed previous open edit" "$LOG" && fail "two edits open (AUT-952 regression)"
 echo "OK promote-to-production staged"
+<<<<<<< HEAD
 
 echo "== scenario 2: AUT-415 caller-supplied versionCode + activeArtifacts shape =="
 # Mock returns activeArtifacts shape instead of versionCodes; caller
@@ -186,3 +190,5 @@ grep -q 'track-put .* status=inProgress uf=0.1' "$LOG" || fail "expected inProgr
 echo "OK promote-to-production caller-supplied + activeArtifacts"
 
 echo "ALL SCENARIOS PASSED"
+=======
+>>>>>>> 4e61dc8 (fix(AUT-322): staged production rollout (10%) when promote_to_production=true)
