@@ -96,7 +96,7 @@ if [[ -z "$VERSION_CODE_ARG" ]]; then
   echo "== resolving latest versionCode on source track '$SOURCE_TRACK' =="
   req -m 60 "$BASE/tracks/$SOURCE_TRACK/releases" "${AUTH[@]}"
   [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get ($SOURCE_TRACK)" 200
-  VERSION_CODE_ARG="$(jq -r '.releases | map(.versionCodes[]?) | last // empty' <<<"$HTTP_BODY")"
+  VERSION_CODE_ARG="$(jq -r '.releases | map(.activeArtifacts[].versionCode?) | last // empty' <<<"$HTTP_BODY")"
   [[ -n "$VERSION_CODE_ARG" ]] || { echo "::error::no releases found on source track '$SOURCE_TRACK'"; exit 1; }
   echo "resolved versionCode $VERSION_CODE_ARG from '$SOURCE_TRACK'"
 fi
@@ -105,7 +105,7 @@ VERSION_CODE="$VERSION_CODE_ARG"
 # 3. Pre-flight: source track must contain it
 req -m 60 "$BASE/tracks/$SOURCE_TRACK/releases" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get ($SOURCE_TRACK)" 200
-src_has="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
+src_has="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].activeArtifacts[].versionCode?] | index($vc|tonumber) != null' <<<"$HTTP_BODY")"
 [[ "$src_has" == "true" ]] || { echo "::error::versionCode $VERSION_CODE not found on source track '$SOURCE_TRACK'"; exit 1; }
 echo "pre-flight OK: versionCode $VERSION_CODE present on '$SOURCE_TRACK'"
 
@@ -127,11 +127,11 @@ fi
 
 req -m 60 "$BASE/tracks/$TARGET_TRACK/releases" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get ($TARGET_TRACK)" 200
-live_vc="$(jq -r '[.releases[]? | select(.status=="completed" or .status=="inProgress") | .versionCodes[]?] | last // empty' <<<"$HTTP_BODY")"
+live_vc="$(jq -r '[.releases[]? | select(.releaseLifecycleState=="COMPLETED" or .releaseLifecycleState=="IN_PROGRESS") | .activeArtifacts[].versionCode?] | last // empty' <<<"$HTTP_BODY")"
 if [[ -n "$live_vc" && "$live_vc" != "$VERSION_CODE" ]]; then
   echo "::warning::production currently has versionCode $live_vc live; promoting $VERSION_CODE will replace it"
 fi
-already="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
+already="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].activeArtifacts[].versionCode?] | index($vc|tonumber) != null' <<<"$HTTP_BODY")"
 echo "production already contains $VERSION_CODE: $already"
 
 # 5. Open main edit
@@ -185,7 +185,7 @@ req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json"
 verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
 req -m 60 "$BASE/edits/$verify_edit/tracks/$TARGET_TRACK" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify" 200
-vc_on_track="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
+vc_on_track="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].activeArtifacts[].versionCode?] | index($vc|tonumber) != null' <<<"$HTTP_BODY")"
 [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $VERSION_CODE not visible on production after commit"; exit 1; }
 "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
 if [[ "$STATUS" == "completed" ]]; then

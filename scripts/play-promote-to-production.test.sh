@@ -16,7 +16,7 @@ import json, re, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 port = int(sys.argv[1]); calls = sys.argv[2]
-app = {"package":"com.autobrainservice.app","tracks":{"alpha":[{"versionCodes":["999"],"status":"completed"}],"production":[]},"edits":{},"n":0}
+app = {"package":"com.autobrainservice.app","tracks":{"alpha":[{"activeArtifacts":[{"versionCode":999}],"releaseLifecycleState":"COMPLETED"}],"production":[]},"edits":{},"n":0}
 with open(calls,"w") as f: f.write("start\n")
 def rec(m):
     with open(calls,"a") as f: f.write(m+"\n")
@@ -74,7 +74,11 @@ class H(BaseHTTPRequestHandler):
             if not isinstance(rel,list) or not rel: return self._json(400,{"error":{"code":400,"message":"releases must be a non-empty array","status":"INVALID_ARGUMENT"}})
             vc=rel[0].get("versionCodes",[]); st=rel[0].get("status","completed"); uf=rel[0].get("userFraction")
             rec("track-put %s %s status=%s uf=%s"%(eid,track,st,uf))
-            app["tracks"].setdefault(track,[]).append({"versionCodes":vc,"status":st,"userFraction":uf})
+            # Convert to new API response format: activeArtifacts + releaseLifecycleState
+            active_artifacts = [{"versionCode": int(v)} for v in vc]
+            lifecycle_map = {"completed": "COMPLETED", "inProgress": "IN_PROGRESS", "draft": "DRAFT"}
+            new_rel = {"activeArtifacts": active_artifacts, "releaseLifecycleState": lifecycle_map.get(st, st.upper()), "userFraction": uf}
+            app["tracks"].setdefault(track,[]).append(new_rel)
             return self._json(200,{"track":track,"releases":rel})
         self._json(404,{"error":{"code":404}})
 srv=HTTPServer(("127.0.0.1",port),H); srv.serve_forever()
