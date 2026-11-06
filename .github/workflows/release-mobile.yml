@@ -49,7 +49,7 @@ on:
         type: string
         default: 'false'
       promote_to_production:
-        description: 'Promote the just-uploaded closed-testing release to production (true/false). Default false; production promotion is human-gated.'
+        description: 'Promote the just-uploaded closed-testing release to production as a staged rollout starting at 10% (true/false). Advance to 50%/100% via re-dispatch or Play Console.'
         required: false
         type: string
         default: 'false'
@@ -480,11 +480,12 @@ jobs:
           export PLAY_LOG_FILE="$RUNNER_TEMP/play-upload.log"
           bash scripts/play-upload-closed-testing.sh build/app/outputs/bundle/release/app-release.aab
 
-      - name: Promote closed-testing release to production (opt-in)
+      - name: Promote closed-testing release to production (opt-in, staged 10%, AUT-322)
         if: ${{ inputs.promote_to_production == 'true' }}
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+          PLAY_ROLLOUT_FRACTION: "0.1"
         run: |
           set -euo pipefail
           export PLAY_RELEASE_NOTES="${{ steps.semver-check.outputs.semver }} — autoBrain ${{ env.RELEASE_VERSION }}"
