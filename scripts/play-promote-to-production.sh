@@ -91,23 +91,65 @@ token="$(jq -r '.access_token' <<<"$HTTP_BODY")"
 [[ -n "$token" && "$token" != "null" ]] || { echo "::error::no access_token"; exit 1; }
 AUTH=(-H "Authorization: Bearer $token")
 
-# 2. Resolve versionCode
+# 2. Resolve versionCode / 3. Pre-flight: source track (AUT-365: retry/poll for upload race)
+POLL_ATTEMPTS="${PLAY_SOURCE_POLL_ATTEMPTS:-12}"
+POLL_DELAY="${PLAY_SOURCE_POLL_DELAY:-10}"
+[[ "$POLL_ATTEMPTS" =~ ^[0-9]+$ && "$POLL_ATTEMPTS" -ge 1 ]] || POLL_ATTEMPTS=12
+[[ "$POLL_DELAY" =~ ^[0-9]+$ && "$POLL_DELAY" -ge 0 ]] || POLL_DELAY=10
+
+fetch_source_releases() {
+  req -m 60 "$BASE/tracks/$SOURCE_TRACK/releases" "${AUTH[@]}"
+  if [[ "$HTTP_CODE" != "200" ]]; then
+    echo "::warning::tracks.get ($SOURCE_TRACK) HTTP $HTTP_CODE; retrying"
+    return 1
+  fi
+  return 0
+}
+
+resolve_or_verify_source() {
+  local attempt=1 vc="" has="false" last_releases=""
+  while (( attempt <= POLL_ATTEMPTS )); do
+    if fetch_source_releases; then
+      last_releases="$(jq -r '.releases // [] | length' <<<"$HTTP_BODY" 2>/dev/null || echo 0)"
+      if [[ -z "$VERSION_CODE_ARG" ]]; then
+        vc="$(jq -r '.releases | map(.versionCodes[]?) | last // empty' <<<"$HTTP_BODY")"
+        if [[ -n "$vc" ]]; then
+          VERSION_CODE="$vc"
+          echo "resolved versionCode $VERSION_CODE from '$SOURCE_TRACK' (attempt $attempt/$POLL_ATTEMPTS)"
+          echo "pre-flight OK: versionCode $VERSION_CODE present on '$SOURCE_TRACK' (attempt $attempt/$POLL_ATTEMPTS)"
+          return 0
+        fi
+        echo "no releases on source track '$SOURCE_TRACK' yet (attempt $attempt/$POLL_ATTEMPTS, releases=$last_releases); polling"
+      else
+        has="$(jq -r --arg vc "$VERSION_CODE_ARG" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
+        if [[ "$has" == "true" ]]; then
+          VERSION_CODE="$VERSION_CODE_ARG"
+          echo "pre-flight OK: versionCode $VERSION_CODE present on '$SOURCE_TRACK' (attempt $attempt/$POLL_ATTEMPTS)"
+          return 0
+        fi
+        echo "versionCode $VERSION_CODE_ARG not yet on source track '$SOURCE_TRACK' (attempt $attempt/$POLL_ATTEMPTS, releases=$last_releases); polling"
+      fi
+    fi
+    if (( attempt < POLL_ATTEMPTS )); then
+      sleep "$POLL_DELAY"
+    fi
+    ((attempt++))
+  done
+  if [[ -z "$VERSION_CODE_ARG" ]]; then
+    echo "::error::no releases found on source track '$SOURCE_TRACK' after $POLL_ATTEMPTS attempts (PLAY_SOURCE_POLL_ATTEMPTS/PLAY_SOURCE_POLL_DELAY control retry)"
+  else
+    echo "::error::versionCode $VERSION_CODE_ARG not found on source track '$SOURCE_TRACK' after $POLL_ATTEMPTS attempts (PLAY_SOURCE_POLL_ATTEMPTS/PLAY_SOURCE_POLL_DELAY control retry)"
+  fi
+  exit 1
+}
+
 if [[ -z "$VERSION_CODE_ARG" ]]; then
   echo "== resolving latest versionCode on source track '$SOURCE_TRACK' =="
-  req -m 60 "$BASE/tracks/$SOURCE_TRACK/releases" "${AUTH[@]}"
-  [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get ($SOURCE_TRACK)" 200
-  VERSION_CODE_ARG="$(jq -r '.releases | map(.versionCodes[]?) | last // empty' <<<"$HTTP_BODY")"
-  [[ -n "$VERSION_CODE_ARG" ]] || { echo "::error::no releases found on source track '$SOURCE_TRACK'"; exit 1; }
-  echo "resolved versionCode $VERSION_CODE_ARG from '$SOURCE_TRACK'"
+else
+  VERSION_CODE="$VERSION_CODE_ARG"
 fi
-VERSION_CODE="$VERSION_CODE_ARG"
-
-# 3. Pre-flight: source track must contain it
-req -m 60 "$BASE/tracks/$SOURCE_TRACK/releases" "${AUTH[@]}"
-[[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get ($SOURCE_TRACK)" 200
-src_has="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
-[[ "$src_has" == "true" ]] || { echo "::error::versionCode $VERSION_CODE not found on source track '$SOURCE_TRACK'"; exit 1; }
-echo "pre-flight OK: versionCode $VERSION_CODE present on '$SOURCE_TRACK'"
+resolve_or_verify_source
+[[ -n "${VERSION_CODE:-}" ]] || { echo "::error::failed to resolve versionCode"; exit 1; }
 
 # 4. Pre-flight: production track state
 prod_probe="$(curl -sS --connect-timeout 30 -o /dev/null -w '%{http_code}' "$BASE/tracks/$TARGET_TRACK/releases" "${AUTH[@]}")"
