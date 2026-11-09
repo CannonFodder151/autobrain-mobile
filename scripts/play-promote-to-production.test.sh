@@ -7,6 +7,7 @@ AAB="$(mktemp)"
 LOG="$(mktemp)"
 GOUT="$(mktemp)"
 RSA_KEY="$(openssl genrsa 2048 2>/dev/null)"
+fail() { echo "FAIL: $*" >&2; exit 1; }
 trap 'rm -f "$AAB" "$LOG" "$GOUT"; [[ -n "${MOCK_PID:-}" ]] && kill "$MOCK_PID" 2>/dev/null || true' EXIT
 head -c 4096 /dev/zero > "$AAB"
 
