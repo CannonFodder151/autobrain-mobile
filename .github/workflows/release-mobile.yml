@@ -70,6 +70,7 @@ jobs:
 
       - name: Resolve release version (dispatch input)
         # Dispatch-only (AUT-4766), so inputs.version is always present.
+        id: resolve-version
         run: |
           set -euo pipefail
           tag="${{ inputs.version }}"
@@ -77,6 +78,11 @@ jobs:
           tag="v${tag}"
           echo "Resolved release tag: $tag"
           echo "RELEASE_VERSION=$tag" >> "$GITHUB_ENV"
+          # Build number after '+', e.g. v0.3.311+255 -> 255. Used by the Play
+          # upload step to continue idempotently when Play rejects a
+          # re-upload of an already-present versionCode (AUT-393).
+          version_code="${tag##*+}"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
 
       - uses: subosito/flutter-action@v2
         with:
@@ -471,6 +477,11 @@ jobs:
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+          # Build number after '+', e.g. v0.3.311+255 -> 255. Needed when Play
+          # rejects a re-upload of an already-present versionCode
+          # ("Version code N has already been used.") so the pipeline can
+          # continue idempotently instead of failing the run.
+          PLAY_VERSION_CODE: ${{ steps.resolve-version.outputs.version_code }}
         run: |
           set -euo pipefail
           semver="${{ steps.semver-check.outputs.semver }}"
