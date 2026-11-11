@@ -490,7 +490,18 @@ jobs:
           set -euo pipefail
           export PLAY_RELEASE_NOTES="${{ steps.semver-check.outputs.semver }} — autoBrain ${{ env.RELEASE_VERSION }}"
           export PLAY_LOG_FILE="$RUNNER_TEMP/play-promote.log"
-          bash scripts/play-promote-to-production.sh
+          # AUT-415: pass the versionCode the upload step already confirmed
+          # landed on the closed-testing track. The promote script used to
+          # re-resolve it from the track, and Play's tracks/<track>/releases
+          # endpoint is inconsistent across release states (some releases
+          # expose versionCodes[], others activeArtifacts[].versionCode), so
+          # the re-resolution returned empty and the promote died with
+          # "no releases found on source track 'alpha'" even though the
+          # upload had just succeeded. Passing the versionCode skips the
+          # re-resolution entirely; the commit below is the authoritative
+          # gate (Play rejects a promote referencing a bundle not in the
+          # app's artifact inventory).
+          bash scripts/play-promote-to-production.sh "${{ steps.play_upload.outputs.version_code }}"
 
       - name: Ask Nathan for one-time closed-testing tester audience (approvals)
         if: steps.play_upload.outputs.needs_tester_audience == 'true'

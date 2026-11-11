@@ -36,9 +36,15 @@ app = {
     "edits": {},            # edit id -> last PUT release body (present = open)
     "n": 0,
     "last_status": {},      # edit id -> "completed" | "draft"
-    "block_completed_once": True,  # draft-fallback scenario
+"block_completed_once": True,  # draft-fallback scenario
     "rollout_block": False,        # True => 403 "does not allow any existing users to upgrade"
-}
+    # AUT-415: idempotent re-upload scenarios. When set, the bundle upload
+    # returns 403 "Version code X has already been used" and the track read
+    # returns the release at the configured state.
+    "noop_upload": False,
+    "noop_version_code": 254,
+    "noop_track_state": "completed",
+  }
 with open(calls, "w") as f:
     f.write("start\n")
 
@@ -100,18 +106,47 @@ class H(BaseHTTPRequestHandler):
             return self._json(200, {"access_token": "fake-token"})
         if p.path == "/__mock__/ok":
             app["block_completed_once"] = False
+            app["rollout_block"] = False
+            app["noop_upload"] = False
+            app["tracks"]["alpha"] = []
             rec("mock mode ok")
             return self._json(200, {"mode": "ok"})
         if p.path == "/__mock__/draft-once":
             app["block_completed_once"] = True
             app["rollout_block"] = False
+            app["noop_upload"] = False
+            app["tracks"]["alpha"] = []
             rec("mock mode draft-once")
             return self._json(200, {"mode": "draft-once"})
         if p.path == "/__mock__/rollout-once":
             app["block_completed_once"] = True
             app["rollout_block"] = True
+            app["noop_upload"] = False
+            app["tracks"]["alpha"] = []
             rec("mock mode rollout-once")
             return self._json(200, {"mode": "rollout-once"})
+        if p.path == "/__mock__/noop-upload":
+            # AUT-415: bundle upload returns 403 "already used", track already
+            # has the versionCode committed as completed.
+            app["block_completed_once"] = False
+            app["rollout_block"] = False
+            app["noop_upload"] = True
+            app["noop_version_code"] = 254
+            app["noop_track_state"] = "completed"
+            app["tracks"]["alpha"] = [{"versionCodes": ["254"], "status": "completed", "name": "alpha-254"}]
+            rec("mock mode noop-upload")
+            return self._json(200, {"mode": "noop-upload"})
+        if p.path == "/__mock__/noop-upload-draft":
+            # AUT-415: bundle upload returns 403 "already used", track has the
+            # versionCode but only as draft (needs commit to complete).
+            app["block_completed_once"] = False
+            app["rollout_block"] = False
+            app["noop_upload"] = True
+            app["noop_version_code"] = 254
+            app["noop_track_state"] = "draft"
+            app["tracks"]["alpha"] = [{"versionCodes": ["254"], "status": "draft", "name": "alpha-254"}]
+            rec("mock mode noop-upload-draft")
+            return self._json(200, {"mode": "noop-upload-draft"})
         m = re.match(r"^/androidpublisher/v3/applications/[^/]+/edits$", p.path)
         if m:
             # AUT-952 semantics: a second insert while one edit is open
@@ -152,6 +187,10 @@ class H(BaseHTTPRequestHandler):
             if eid not in app["edits"]:
                 rec("bundle upload %s -> 400 deleted" % eid)
                 return self._json(400, {"error": {"code": 400, "message": "This Edit has been deleted.", "status": "FAILED_PRECONDITION"}})
+            if app.get("noop_upload"):
+                vc = app.get("noop_version_code", 254)
+                rec("bundle upload %s -> 403 version code %s already used" % (eid, vc))
+                return self._json(403, {"error": {"code": 403, "message": "Version code %d has already been used." % vc, "status": "PERMISSION_DENIED"}})
             rec("bundle upload %s -> 200" % eid)
             return self._json(200, {"versionCode": 999, "sha256": "x"})
         self._json(404, {"error": {"code": 404}})
@@ -236,6 +275,39 @@ grep -q "status=inProgress userFraction=0.999" <<<"$out4" || fail "inProgress re
 grep -qE "track-put(-body)? [a-z0-9-]+ alpha (status=inProgress|.*\"status\":\"inProgress\")" "$LOG" || fail "mock never received an inProgress track PUT"
 grep -q "userFraction.: *0.999" "$LOG" || fail "userFraction=0.999 not sent to the track PUT"
 grep -q "closed testing (alpha) release OK" <<<"$out4" || fail "final success line missing"
+echo "OK"
+
+echo "== scenario 5: AUT-415 idempotent re-upload — versionCode already committed =="
+# Simulate a re-dispatch of the same version: the bundle upload returns 403
+# "Version code 254 has already been used", the track read shows that
+# versionCode committed as 'completed', so the script must skip track
+# assignment + commit and still report success.
+mock_mode noop-upload
+: > "$LOG"
+out5="$(bash "$SCRIPT" "$AAB" 2>&1)" || fail "scenario 5 failed: $out5"
+grep -q "bundle upload 403: versionCode 254 already present on Play" <<<"$out5" || fail "403-already-used not detected"
+grep -q "verified versionCode 254 present on track 'alpha' — status completed" <<<"$out5" || fail "track state not verified"
+grep -q "versionCode 254 already committed on track 'alpha' (completed) — skipping track assignment + commit" <<<"$out5" || fail "no-op path not taken"
+grep -q "skipped track assignment/commit (upload_noop=true)" <<<"$out5" || fail "no-op skip line missing"
+grep -q "closed testing (alpha) release OK: versionCode 254" <<<"$out5" || fail "final success line missing"
+grep -q "version_code=254" "$GOUT" || fail "GITHUB_OUTPUT version_code not set"
+# No track PUT / commit must have happened for the no-op path.
+grep -qE "track-put.*alpha" "$LOG" && fail "track PUT happened on the no-op path (should be skipped)"
+grep -qE "commit edit-" "$LOG" && fail "commit happened on the no-op path (should be skipped)"
+echo "OK"
+
+echo "== scenario 6: AUT-415 idempotent re-upload — versionCode present but NOT committed =="
+# Same 403, but the track read shows the release is still 'draft' (e.g. a
+# previous run fell back to draft for missing tester audience). The script
+# must proceed with track assignment + commit to land it as completed.
+mock_mode noop-upload-draft
+: > "$LOG"
+out6="$(bash "$SCRIPT" "$AAB" 2>&1)" || fail "scenario 6 failed: $out6"
+grep -q "bundle upload 403: versionCode 254 already present on Play" <<<"$out6" || fail "403-already-used not detected"
+grep -q "versionCode 254 on track 'alpha' but status is 'draft' — proceeding with track assignment + commit" <<<"$out6" || fail "non-committed no-op path not taken"
+grep -q "closed testing (alpha) release OK: versionCode 254" <<<"$out6" || fail "final success line missing"
+grep -qE "track-put.*alpha" "$LOG" || fail "track PUT did not happen on the non-committed path"
+grep -qE "commit edit-" "$LOG" || fail "commit did not happen on the non-committed path"
 echo "OK"
 
 echo "ALL SCENARIOS PASSED"
