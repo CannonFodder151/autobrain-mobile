@@ -292,7 +292,7 @@ req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json"
 verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
 req -m 60 "$BASE/edits/$verify_edit/tracks/$TRACK" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify ($TRACK)" 200
-vc_on_track="$(jq -r --arg vc "$version_code" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
+vc_on_track="$(jq -r --arg vc "$version_code" '[.releases[]? | (.versionCodes[]? // (.activeArtifacts[]?.versionCode|tostring))] | index($vc) != null' <<<"$HTTP_BODY")"
 [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $version_code not visible on track '$TRACK' after commit"; exit 1; }
 # Drop the read-only verify edit so no open edit is ever left behind.
 "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true

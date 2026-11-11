@@ -20,7 +20,8 @@ import json, re, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 port = int(sys.argv[1]); calls = sys.argv[2]
-app = {"package":"com.autobrainservice.app","tracks":{"alpha":[{"versionCodes":["999"],"status":"completed"}],"production":[]},"edits":{},"n":0}
+# Serve v3-shaped releases (activeArtifacts/releaseLifecycleState) to validate AUT-393 parser compatibility.
+app = {"package":"com.autobrainservice.app","tracks":{"alpha":[{"activeArtifacts":[{"versionCode":999}],"releaseLifecycleState":"completed"}],"production":[]},"edits":{},"n":0}
 with open(calls,"w") as f: f.write("start\n")
 def rec(m):
     with open(calls,"a") as f: f.write(m+"\n")
