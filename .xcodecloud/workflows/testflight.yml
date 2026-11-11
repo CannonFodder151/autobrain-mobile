@@ -1,0 +1,62 @@
+# Xcode Cloud workflow: TestFlight (internal testing)
+# Triggers on tag v* (e.g., v0.3.311+256)
+# Scheme: Runner, bundle: com.autobrain.autobrain
+# Archive + TestFlight post-action via App Store Connect API key (ASC_API_KEY_ID,
+# ASC_ISSUER_ID, ASC_PRIVATE_KEY injected by Xcode Cloud / App Store Connect binding)
+
+name: TestFlight Beta
+environment:
+  xcode: latest
+  macos: latest
+  ios: latest
+
+actions:
+  - name: Install Flutter
+    script: |
+      set -euo pipefail
+      git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$HOME/flutter"
+      export PATH="$PATH:$HOME/flutter/bin"
+      flutter --version
+      flutter pub get
+
+  - name: Verify AppIcon entries
+    script: python3 scripts/check-appicon-entries.py
+
+  - name: Verify iOS purpose strings
+    script: python3 scripts/check-ios-purpose-strings.py
+
+  - name: Verify Info.plist encryption declaration
+    script: |
+      set -euo pipefail
+      python3 -c '
+      import plistlib, sys
+      d = plistlib.load(open("ios/Runner/Info.plist", "rb"))
+      v = d.get("ITSAppUsesNonExemptEncryption")
+      if v is not False:
+          sys.exit("::error::ios/Runner/Info.plist must carry ITSAppUsesNonExemptEncryption=false, got " + repr(v))
+      print("ITSAppUsesNonExemptEncryption=false (exempt: HTTPS + SHA-256 integrity)")
+      '
+
+  - name: Archive for TestFlight
+    action: archive
+    scheme: Runner
+    export_options:
+      method: development
+      destination: export
+
+  - name: Upload to TestFlight
+    action: test_flight
+    beta_groups:
+      - Internal Testers
+    skip_waiting_for_build_processing: false
+
+triggers:
+  - type: tag
+    pattern: "v*"
+    branch: main
+
+post_actions:
+  - name: Notify Discord
+    script: |
+      # Discord notification handled by Xcode Cloud webhook or external
+      echo "TestFlight upload complete"

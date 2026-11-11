@@ -1,0 +1,60 @@
+# Xcode Cloud workflow: App Store release
+# Triggers on tag v* (e.g., v0.3.311+256)
+# Scheme: Runner, bundle: com.autobrain.autobrain
+# Archive + App Store Connect post-action via App Store Connect API key (ASC_API_KEY_ID,
+# ASC_ISSUER_ID, ASC_PRIVATE_KEY injected by Xcode Cloud / App Store Connect binding)
+
+name: App Store Release
+environment:
+  xcode: latest
+  macos: latest
+  ios: latest
+
+actions:
+  - name: Install Flutter
+    script: |
+      set -euo pipefail
+      git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$HOME/flutter"
+      export PATH="$PATH:$HOME/flutter/bin"
+      flutter --version
+      flutter pub get
+
+  - name: Verify AppIcon entries
+    script: python3 scripts/check-appicon-entries.py
+
+  - name: Verify iOS purpose strings
+    script: python3 scripts/check-ios-purpose-strings.py
+
+  - name: Verify Info.plist encryption declaration
+    script: |
+      set -euo pipefail
+      python3 -c '
+      import plistlib, sys
+      d = plistlib.load(open("ios/Runner/Info.plist", "rb"))
+      v = d.get("ITSAppUsesNonExemptEncryption")
+      if v is not False:
+          sys.exit("::error::ios/Runner/Info.plist must carry ITSAppUsesNonExemptEncryption=false, got " + repr(v))
+      print("ITSAppUsesNonExemptEncryption=false (exempt: HTTPS + SHA-256 integrity)")
+      '
+
+  - name: Archive for App Store
+    action: archive
+    scheme: Runner
+    export_options:
+      method: app-store
+      destination: export
+
+  - name: Upload to App Store Connect
+    action: app_store
+    submit_for_review: false
+
+triggers:
+  - type: tag
+    pattern: "v*"
+    branch: main
+
+post_actions:
+  - name: Notify Discord
+    script: |
+      # Discord notification handled by Xcode Cloud webhook or external
+      echo "App Store upload complete"
