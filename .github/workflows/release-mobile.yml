@@ -110,6 +110,31 @@ jobs:
         with:
           cmdline-tools-version: 12266719
 
+      - name: Auto-increment Android versionCode if needed (prevent 255 conflicts)
+        id: bump-version-code
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          PLAY_PACKAGE_NAME: com.autobrainservice.app
+        run: |
+          set -euo pipefail
+          # Requires curl/jq/openssl (present on runner). Fails fast on missing
+          # Play config/secrets via check-release-preflight.sh.
+          bash scripts/check-release-preflight.sh --secrets-only
+          result="$(bash scripts/bump-android-version-code.sh --apply)"
+          echo "$result"
+          new_tag="$(echo "$result" | sed -n 's/^RELEASE_VERSION=//p' | tail -1)"
+          new_vc="$(echo "$result" | sed -n 's/^version_code=//p' | tail -1)"
+          new_semver="$(echo "$result" | sed -n 's/^semver=//p' | tail -1)"
+          if [[ -n "$new_tag" ]]; then
+            echo "RELEASE_VERSION=$new_tag" >> "$GITHUB_ENV"
+            echo "version_code=$new_vc" >> "$GITHUB_OUTPUT"
+            echo "semver=$new_semver" >> "$GITHUB_OUTPUT"
+          else
+            # no bump; ensure semver output for downstream
+            semver="$(echo "${{ env.RELEASE_VERSION }}" | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+            echo "semver=$semver" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Fix SDK execute bits (cold runner AUT-2176)
         # android-actions/setup-android installs cmdline-tools and build-tools with
         # non-executable bits on cold gh-runner-autobrain-mobile runners. Two
@@ -190,13 +215,13 @@ jobs:
           done
           echo "Android SDK ready: platforms=$(ls "$ANDROID_SDK_ROOT/platforms" | tr '\n' ' ') build-tools=$(ls "$ANDROID_SDK_ROOT/build-tools" | tr '\n' ' ') platform-tools=$(ls "$ANDROID_SDK_ROOT/platform-tools" | head -3 | tr '\n' ' ')"
 
-      - name: Verify requested version matches pubspec
+      - name: Verify resolved release version matches pubspec
         run: |
           set -euo pipefail
           version="$(grep -E '^version: ' pubspec.yaml | head -1 | awk '{print $2}')"
           tag="v${version}"
           if [[ "$tag" != "${{ env.RELEASE_VERSION }}" ]]; then
-            echo "::error::pubspec.yaml version is ${tag} but requested ${{ env.RELEASE_VERSION }}. Run bump-version.sh --mobile in the autobrain monorepo first."
+            echo "::error::pubspec.yaml version is ${tag} but resolved release is ${{ env.RELEASE_VERSION }} (auto-bump/version resolution mismatch)"
             exit 1
           fi
           echo "Building release ${tag}"
@@ -207,8 +232,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # Semantic version (X.Y.Z) of the requested release, e.g. v0.3.7+30 -> 0.3.7.
-          req_semver="$(echo "$RELEASE_VERSION" | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+          # Semantic version (X.Y.Z) of the resolved release (may be auto-bumped), e.g. v0.3.7+30 -> 0.3.7.
+          req_semver="${{ steps.bump-version-code.outputs.semver }}"
+          if [[ -z "$req_semver" ]]; then
+            req_semver="$(echo "$RELEASE_VERSION" | sed -E 's/^v?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')"
+          fi
           echo "semver=$req_semver" >> "$GITHUB_OUTPUT"
           # Has any release (draft or published, build series included) already
           # announced this semantic version? One announcement per version.
@@ -481,7 +509,7 @@ jobs:
           # rejects a re-upload of an already-present versionCode
           # ("Version code N has already been used.") so the pipeline can
           # continue idempotently instead of failing the run.
-          PLAY_VERSION_CODE: ${{ steps.resolve-version.outputs.version_code }}
+          PLAY_VERSION_CODE: ${{ steps.bump-version-code.outputs.version_code || steps.resolve-version.outputs.version_code }}
         run: |
           set -euo pipefail
           semver="${{ steps.semver-check.outputs.semver }}"
@@ -490,7 +518,7 @@ jobs:
           export PLAY_RELEASE_NOTES="${PLAY_RELEASE_NOTES% } — autoBrain $RELEASE_VERSION"
           export PLAY_LOG_FILE="$RUNNER_TEMP/play-upload.log"
           bash scripts/play-upload-closed-testing.sh build/app/outputs/bundle/release/app-release.aab
-          echo "version_code=${{ steps.resolve-version.outputs.version_code }}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${{ steps.bump-version-code.outputs.version_code || steps.resolve-version.outputs.version_code }}" >> "$GITHUB_OUTPUT"
 
       - name: Promote closed-testing release to production (opt-in, staged 10%, AUT-322)
         if: ${{ inputs.promote_to_production == 'true' }}
