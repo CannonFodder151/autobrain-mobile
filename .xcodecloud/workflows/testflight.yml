@@ -1,0 +1,91 @@
+# Xcode Cloud workflow: TestFlight beta build.
+# AUT-463: archive + upload to App Store Connect (internal TestFlight testing).
+# Triggers on v* tags (see triggers below). Runner: com.autobrain.autobrain.
+name: TestFlight
+
+workflow:
+  name: TestFlight
+  description: Build and upload to TestFlight (internal testing) on v* tags.
+
+  # Build environment
+  environment:
+    # Use a stable Xcode Cloud image with Flutter pre-installed.
+    # Flutter is not pre-bundled on Xcode Cloud; install it in the post-checkout step.
+    type: macos
+    os: 15.0
+    xcode: latest
+
+  # Trigger: any v* tag pushed to the repo.
+  triggers:
+    - push:
+        patterns:
+          - "v*"
+
+  actions:
+    - post-checkout:
+        name: Install Flutter SDK
+        # Flutter is not pre-installed on Xcode Cloud runners. Install the
+        # stable channel and cache it for the duration of the build.
+        script: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/flutter/flutter.git "$FLUTTER_HOME"
+          export PATH="$FLUTTER_HOME/bin:$PATH"
+          flutter --version
+          flutter doctor
+
+    - build:
+        name: Flutter pub get
+        script: |
+          set -euo pipefail
+          export PATH="$FLUTTER_HOME/bin:$PATH"
+          flutter pub get
+
+    - build:
+        name: Archive + export (TestFlight)
+        # AUT-463: archive the Runner scheme with the app-store export
+        # method. The team holds an iPhone Distribution cert only, so
+        # TestFlight submission uses the app-store export method (verified
+        # on run 36280199047 — 'development' fails the compile step with
+        # "No development certificates available to code sign app for
+        # device deployment").
+        action:
+          - xcodebuild
+          - -workspace
+          - Runner.xcworkspace
+          - -scheme
+          - Runner
+          - -configuration
+          - Release
+          - -destination
+          - generic/platform=iOS
+          - -archivePath
+          - $CI_ARCHIVE_PATH
+          - archive
+          - -allowProvisioningUpdates
+        environment:
+          # App Store Connect API key material is provided by Xcode Cloud
+          # through the ASC connection (AUT-433). Xcode Cloud injects the
+          # distribution identity and App Store Connect key automatically
+          # when the repo is linked to App Store Connect.
+          export_method: app-store
+          export_options:
+            method: app-store
+            upload_bitcode: false
+            compile_bitcode: false
+            strip_swift_symbols: true
+            destination: export
+
+  metadata:
+    # Xcode Cloud reads the App ID from the connected App Store Connect
+    # account. The bundle ID is pinned to com.autobrain.autobrain
+    # (AUT-5113: PR #109 rewrites the bundle ID to the App ID Apple
+    # actually registered).
+    app_id: com.autobrain.autobrain
+    bundle_version: 1.0.0
+
+  signing:
+    # Xcode Cloud manages signing automatically when the repo is linked
+    # to App Store Connect (AUT-433). The distribution certificate and
+    # App Store Connect API key are aligned through the ASC connection.
+    certificate_type: distribution
+    provisioning: automatic
