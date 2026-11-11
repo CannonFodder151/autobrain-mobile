@@ -167,18 +167,60 @@ if [[ "$HTTP_CODE" == "200" ]]; then
   [[ -n "$version_code" && "$version_code" != "null" ]] || { echo "::error::bundle upload returned no versionCode"; exit 1; }
   echo "uploaded $AAB -> versionCode $version_code"
 elif grep -q "has already been used" <<<"$HTTP_BODY"; then
-  # Idempotent re-run: the same versionCode was already uploaded to Play
-  # Console (e.g. a release pipeline re-dispatch for an unchanged version).
-  # The bundle is already present, so treat this as success and continue to
-  # track assignment. We need the versionCode locally — derive it from the
-  # release tag (the build number after '+', e.g. v0.3.311+255 -> 255).
-  version_code="${PLAY_VERSION_CODE:-}"
-  if [[ -z "$version_code" || "$version_code" == "null" ]]; then
-    echo "::error::bundle upload rejected (version code already in use) and PLAY_VERSION_CODE not set — cannot continue. Set PLAY_VERSION_CODE=<N> (the build number after '+', e.g. 255) or bump the version." >&2
-    "${CURL_NF[@]}" -m 30 -X DELETE "$BASE/edits/$edit_id" "${AUTH[@]}" >/dev/null 2>&1 || true
-    exit 1
-  fi
-  echo "::warning::bundle upload skipped: versionCode $version_code already present in Play Console (idempotent re-run)"
+    # Idempotent re-run: the same versionCode was already uploaded to Play
+    # Console (e.g. a release pipeline re-dispatch for an unchanged version).
+    # The bundle is already present, so treat this as success and continue to
+    # track assignment. We need the versionCode locally — prefer the
+    # caller-supplied PLAY_VERSION_CODE, but Play's error message itself
+    # carries the versionCode ("Version code 254 has already been used."),
+    # so parse it as a fallback when PLAY_VERSION_CODE is unset.
+    version_code="${PLAY_VERSION_CODE:-}"
+    if [[ -z "$version_code" || "$version_code" == "null" ]]; then
+      version_code="$(grep -oE 'Version code [0-9]+ has already been used' <<<"$HTTP_BODY" | grep -oE '[0-9]+' | head -1 || true)"
+    fi
+    if [[ -z "$version_code" || "$version_code" == "null" ]]; then
+      echo "::error::bundle upload rejected (version code already in use) and PLAY_VERSION_CODE not set and could not parse versionCode from Play's error body — cannot continue. Set PLAY_VERSION_CODE=<N> (the build number after '+', e.g. 255) or bump the version." >&2
+      "${CURL_NF[@]}" -m 30 -X DELETE "$BASE/edits/$edit_id" "${AUTH[@]}" >/dev/null 2>&1 || true
+      exit 1
+    fi
+    echo "::warning::bundle upload skipped: versionCode $version_code already present in Play Console (idempotent re-run)"
+    echo "bundle upload 403: versionCode $version_code already present on Play"
+
+    # Verify track state to decide whether to skip assignment/commit (AUT-415 no-op path)
+    req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
+    [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (verify-noop)" 200
+    verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
+    req -m 60 "$BASE/edits/$verify_edit/tracks/$TRACK" "${AUTH[@]}"
+    [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify-noop ($TRACK)" 200
+    track_state="$(jq -r --arg vc "$version_code" '
+      .releases[]? |
+      select(
+        (.versionCodes[]? | tostring == $vc) or
+        (.activeArtifacts[]?.versionCode | tostring == $vc) or
+        (.releaseCodes[]? | tostring == $vc)
+      ) |
+      .status
+    ' <<<"$HTTP_BODY" 2>/dev/null | head -1)"
+    "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
+
+    if [[ "$track_state" == "completed" ]]; then
+      echo "verified versionCode $version_code present on track '$TRACK' — status completed"
+      echo "versionCode $version_code already committed on track '$TRACK' (completed) — skipping track assignment + commit"
+      echo "skipped track assignment/commit (upload_noop=true)"
+      echo "closed testing ($TRACK) release OK: versionCode $version_code — status completed, skipped"
+      echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+      exit 0
+    fi
+
+    # Not committed (draft or unknown): the verify edit we just opened/closed
+    # may have killed the original edit (Play semantics), so open a fresh edit
+    # for the track assignment + commit below.
+    echo "versionCode $version_code on track '$TRACK' but status is '${track_state:-<unknown>}' — proceeding with track assignment + commit"
+    req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
+    [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (noop-track)" 200
+    edit_id="$(jq -r '.id' <<<"$HTTP_BODY")"
+    [[ -n "$edit_id" && "$edit_id" != "null" ]] || { echo "::error::edits.insert (noop-track) returned no id"; exit 1; }
+    EDIT="$BASE/edits/$edit_id"
 else
   die_http "bundle upload" 200
 fi

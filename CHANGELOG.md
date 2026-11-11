@@ -9,6 +9,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 > `CONTRIBUTING.md` for the frontend-parity + changelog rules.
 
 ## [Unreleased]
+### Changed (AUT-IMP-003)
+- ci(mobile): auto-increment Android `versionCode` in `release-mobile.yml` when requested build number <= max versionCode on Play (prevents 255/"already used" conflicts). Adds `scripts/get-play-max-version-code.sh`, `scripts/bump-android-version-code.sh`, and `scripts/check-release-preflight.sh`.
+- docs(mobile): checked-in Android release runbook + secrets/config checklist codifying alpha (closed testing) upload flow and alpha→production staged promotion steps (`docs/releases/ANDROID_RELEASE_RUNBOOK.md`, `docs/releases/RELEASE_SECRETS_AND_CONFIG.md`).
+
 ### Fixed (AUT-322)
 - fix(mobile): `release-mobile.yml` `promote_to_production` now performs a **staged production rollout** (default 10%, `userFraction`/`inProgress`) via `scripts/play-promote-to-production.sh`; advance to 50%/100% by re-dispatching with `PLAY_ROLLOUT_FRACTION` or Play Console. Previously the step committed a full production rollout (`status=completed`).
 
