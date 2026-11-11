@@ -97,6 +97,18 @@ POLL_DELAY="${PLAY_SOURCE_POLL_DELAY:-10}"
 [[ "$POLL_ATTEMPTS" =~ ^[0-9]+$ && "$POLL_ATTEMPTS" -ge 1 ]] || POLL_ATTEMPTS=12
 [[ "$POLL_DELAY" =~ ^[0-9]+$ && "$POLL_DELAY" -ge 0 ]] || POLL_DELAY=10
 
+# AUT-415: Play's tracks/<track>/releases endpoint is inconsistent across
+# states. Some releases expose versionCodes[]; others (e.g. in-review, staged)
+# expose activeArtifacts[].versionCode or releaseCodes[]. Accept all shapes.
+extract_all_version_codes() {
+  jq -r '
+    .releases // [] | map(
+      ([.versionCodes[]?] + [.activeArtifacts[]?.versionCode] + [.releaseCodes[]?])
+      | map(tostring)
+    ) | flatten | unique[]
+  ' 2>/dev/null || true
+}
+
 fetch_source_releases() {
   req -m 60 "$BASE/tracks/$SOURCE_TRACK/releases" "${AUTH[@]}"
   if [[ "$HTTP_CODE" != "200" ]]; then
@@ -107,12 +119,13 @@ fetch_source_releases() {
 }
 
 resolve_or_verify_source() {
-  local attempt=1 vc="" has="false" last_releases=""
+  local attempt=1 vc="" has="false" last_releases="" all_vcs=""
   while (( attempt <= POLL_ATTEMPTS )); do
     if fetch_source_releases; then
       last_releases="$(jq -r '.releases // [] | length' <<<"$HTTP_BODY" 2>/dev/null || echo 0)"
+      all_vcs="$(extract_all_version_codes <<<"$HTTP_BODY")"
       if [[ -z "$VERSION_CODE_ARG" ]]; then
-        vc="$(jq -r '.releases | map(.versionCodes[]?) | last // empty' <<<"$HTTP_BODY")"
+        vc="$(tail -n1 <<<"$all_vcs")"
         if [[ -n "$vc" ]]; then
           VERSION_CODE="$vc"
           echo "resolved versionCode $VERSION_CODE from '$SOURCE_TRACK' (attempt $attempt/$POLL_ATTEMPTS)"
@@ -121,8 +134,7 @@ resolve_or_verify_source() {
         fi
         echo "no releases on source track '$SOURCE_TRACK' yet (attempt $attempt/$POLL_ATTEMPTS, releases=$last_releases); polling"
       else
-        has="$(jq -r --arg vc "$VERSION_CODE_ARG" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
-        if [[ "$has" == "true" ]]; then
+        if grep -qx "$VERSION_CODE_ARG" <<<"$all_vcs"; then
           VERSION_CODE="$VERSION_CODE_ARG"
           echo "pre-flight OK: versionCode $VERSION_CODE present on '$SOURCE_TRACK' (attempt $attempt/$POLL_ATTEMPTS)"
           return 0
@@ -135,11 +147,17 @@ resolve_or_verify_source() {
     fi
     ((attempt++))
   done
-  if [[ -z "$VERSION_CODE_ARG" ]]; then
-    echo "::error::no releases found on source track '$SOURCE_TRACK' after $POLL_ATTEMPTS attempts (PLAY_SOURCE_POLL_ATTEMPTS/PLAY_SOURCE_POLL_DELAY control retry)"
-  else
-    echo "::error::versionCode $VERSION_CODE_ARG not found on source track '$SOURCE_TRACK' after $POLL_ATTEMPTS attempts (PLAY_SOURCE_POLL_ATTEMPTS/PLAY_SOURCE_POLL_DELAY control retry)"
+  # AUT-415: if the caller explicitly provided a versionCode (e.g. from the
+  # upload step's GITHUB_OUTPUT), do not fail the promote when the source-track
+  # read API is temporarily inconsistent — proceed with that versionCode. The
+  # target-track commit below is the authoritative gate: Play will reject a
+  # promote that references a bundle not yet in the app's artifact inventory.
+  if [[ -n "$VERSION_CODE_ARG" ]]; then
+    VERSION_CODE="$VERSION_CODE_ARG"
+    echo "::warning::versionCode $VERSION_CODE_ARG not visible on '$SOURCE_TRACK' after $POLL_ATTEMPTS attempts (releases=$last_releases) — proceeding with caller-supplied versionCode; commit will fail if the bundle is not actually available"
+    return 0
   fi
+  echo "::error::no releases found on source track '$SOURCE_TRACK' after $POLL_ATTEMPTS attempts (PLAY_SOURCE_POLL_ATTEMPTS/PLAY_SOURCE_POLL_DELAY control retry)"
   exit 1
 }
 
@@ -169,11 +187,12 @@ fi
 
 req -m 60 "$BASE/tracks/$TARGET_TRACK/releases" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get ($TARGET_TRACK)" 200
-live_vc="$(jq -r '[.releases[]? | select(.status=="completed" or .status=="inProgress") | .versionCodes[]?] | last // empty' <<<"$HTTP_BODY")"
+all_vcs="$(extract_all_version_codes <<<"$HTTP_BODY")"
+live_vc="$(jq -r '[.releases[]? | select(.status=="completed" or .status=="inProgress")] | .[].versionCodes[]? // .[].activeArtifacts[]?.versionCode // .[].releaseCodes[]? | select(. != null) | last' <<<"$HTTP_BODY" 2>/dev/null || echo "")"
 if [[ -n "$live_vc" && "$live_vc" != "$VERSION_CODE" ]]; then
   echo "::warning::production currently has versionCode $live_vc live; promoting $VERSION_CODE will replace it"
 fi
-already="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
+already="$(grep -qx "$VERSION_CODE" <<<"$all_vcs" && echo true || echo false)"
 echo "production already contains $VERSION_CODE: $already"
 
 # 5. Open main edit
@@ -227,7 +246,7 @@ req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json"
 verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
 req -m 60 "$BASE/edits/$verify_edit/tracks/$TARGET_TRACK" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify" 200
-vc_on_track="$(jq -r --arg vc "$VERSION_CODE" '[.releases[].versionCodes[]?] | index($vc) != null' <<<"$HTTP_BODY")"
+vc_on_track="$(extract_all_version_codes <<<"$HTTP_BODY" | grep -qx "$VERSION_CODE" && echo true || echo false)"
 [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $VERSION_CODE not visible on production after commit"; exit 1; }
 "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
 if [[ "$STATUS" == "completed" ]]; then
