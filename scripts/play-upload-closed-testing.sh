@@ -174,9 +174,14 @@ elif grep -q "has already been used" <<<"$HTTP_BODY"; then
   # release tag (the build number after '+', e.g. v0.3.311+255 -> 255).
   version_code="${PLAY_VERSION_CODE:-}"
   if [[ -z "$version_code" || "$version_code" == "null" ]]; then
-    echo "::error::bundle upload rejected (version code already in use) and PLAY_VERSION_CODE not set — cannot continue. Set PLAY_VERSION_CODE=<N> (the build number after '+', e.g. 255) or bump the version." >&2
-    "${CURL_NF[@]}" -m 30 -X DELETE "$BASE/edits/$edit_id" "${AUTH[@]}" >/dev/null 2>&1 || true
-    exit 1
+    if [[ -n "${RELEASE_VERSION:-}" ]]; then
+      version_code="${RELEASE_VERSION##*+}"
+      echo "::notice::PLAY_VERSION_CODE not set; derived version_code=$version_code from RELEASE_VERSION=$RELEASE_VERSION"
+    else
+      echo "::error::bundle upload rejected (version code already in use) and neither PLAY_VERSION_CODE nor RELEASE_VERSION set — cannot continue. Set PLAY_VERSION_CODE=<N> or ensure RELEASE_VERSION is set (e.g. v0.3.311+255)." >&2
+      "${CURL_NF[@]}" -m 30 -X DELETE "$BASE/edits/$edit_id" "${AUTH[@]}" >/dev/null 2>&1 || true
+      exit 1
+    fi
   fi
   echo "::warning::bundle upload skipped: versionCode $version_code already present in Play Console (idempotent re-run)"
 
