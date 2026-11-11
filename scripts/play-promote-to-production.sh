@@ -92,8 +92,8 @@ token="$(jq -r '.access_token' <<<"$HTTP_BODY")"
 AUTH=(-H "Authorization: Bearer $token")
 
 # 2. Resolve versionCode / 3. Pre-flight: source track (AUT-365: retry/poll for upload race)
-POLL_ATTEMPTS="${PLAY_SOURCE_POLL_ATTEMPTS:-12}"
-POLL_DELAY="${PLAY_SOURCE_POLL_DELAY:-10}"
+POLL_ATTEMPTS="${PLAY_SOURCE_POLL_ATTEMPTS:-24}"
+POLL_DELAY="${PLAY_SOURCE_POLL_DELAY:-15}"
 [[ "$POLL_ATTEMPTS" =~ ^[0-9]+$ && "$POLL_ATTEMPTS" -ge 1 ]] || POLL_ATTEMPTS=12
 [[ "$POLL_DELAY" =~ ^[0-9]+$ && "$POLL_DELAY" -ge 0 ]] || POLL_DELAY=10
 
