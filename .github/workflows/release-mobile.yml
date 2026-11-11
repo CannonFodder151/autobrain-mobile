@@ -490,6 +490,7 @@ jobs:
           export PLAY_RELEASE_NOTES="${PLAY_RELEASE_NOTES% } — autoBrain $RELEASE_VERSION"
           export PLAY_LOG_FILE="$RUNNER_TEMP/play-upload.log"
           bash scripts/play-upload-closed-testing.sh build/app/outputs/bundle/release/app-release.aab
+          echo "version_code=${{ steps.resolve-version.outputs.version_code }}" >> "$GITHUB_OUTPUT"
 
       - name: Promote closed-testing release to production (opt-in, staged 10%, AUT-322)
         if: ${{ inputs.promote_to_production == 'true' }}
