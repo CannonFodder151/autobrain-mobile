@@ -179,8 +179,35 @@ elif grep -q "has already been used" <<<"$HTTP_BODY"; then
     exit 1
   fi
   echo "::warning::bundle upload skipped: versionCode $version_code already present in Play Console (idempotent re-run)"
-else
-  die_http "bundle upload" 200
+
+# 4b. Idempotent track check: if versionCode is already committed/inProgress
+#     on the closed testing track, skip track update + commit and just verify.
+#     Re-committing the same versionCode on a rollout track is refused with
+#     403 "does not allow any existing users to upgrade" (AUT-440).
+req -m 60 "$BASE/tracks/$TRACK/releases" "${AUTH[@]}"
+if [[ "$HTTP_CODE" == "200" ]]; then
+  track_state="$(jq -r --arg vc "$version_code" '
+    .releases[]? | select(
+      .versionCodes[]? == ($vc|tonumber) or
+      .versionCodes[]? == $vc or
+      .activeArtifacts[]?.versionCode == ($vc|tonumber) or
+      .activeArtifacts[]?.versionCode == $vc or
+      .releaseCodes[]? == ($vc|tonumber) or
+      .releaseCodes[]? == $vc
+    ) | .status // "unknown" | first' <<<"$HTTP_BODY" 2>/dev/null || true)"
+  if [[ "$track_state" == "completed" || "$track_state" == "inProgress" ]]; then
+    echo "versionCode $version_code already committed on track '$TRACK' ($track_state) — skipping track assignment + commit (idempotent re-run)"
+    req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
+    [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (verify)" 200
+    verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
+    req -m 60 "$BASE/edits/$verify_edit/tracks/$TRACK" "${AUTH[@]}"
+    [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify ($TRACK)" 200
+    vc_on_track="$(jq -r --arg vc "$version_code" '[.releases[]? | (.versionCodes[]? // (.activeArtifacts[]?.versionCode|tostring))] | index($vc) != null' <<<"$HTTP_BODY")"
+    [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $version_code not visible on track '$TRACK' after idempotent check"; exit 1; }
+    "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
+    echo "closed testing ($TRACK) release OK: versionCode $version_code — status $track_state (idempotent re-run)"
+    exit 0
+  fi
 fi
 
 # 5. Assign it to the closed testing track. $release is already the complete
