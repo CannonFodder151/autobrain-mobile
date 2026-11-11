@@ -485,7 +485,7 @@ jobs:
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
-          PLAY_ROLLOUT_FRACTION: "0.1"
+          PLAY_ROLLOUT_FRACTION: "1"
         run: |
           set -euo pipefail
           export PLAY_RELEASE_NOTES="${{ steps.semver-check.outputs.semver }} — autoBrain ${{ env.RELEASE_VERSION }}"
