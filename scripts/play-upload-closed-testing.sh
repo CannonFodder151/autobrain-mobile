@@ -52,6 +52,12 @@
 
 set -euo pipefail
 
+# AUT-415: when the bundle upload is a no-op (versionCode already on Play),
+# steps 5 (track assignment) and 6 (commit) are skipped — the release is
+# already committed. Set false by default; flipped true only by the 403
+# "already used" path after it confirms the release is committed.
+upload_noop=false
+
 AAB="${1:?usage: play-upload-closed-testing.sh <app-release.aab> [track-id]}"
 [[ -f "$AAB" ]] || { echo "::error::AAB not found: $AAB"; exit 1; }
 TRACK="${2:-${PLAY_TRACK:-alpha}}"
@@ -160,6 +166,13 @@ edit_id="$(jq -r '.id' <<<"$HTTP_BODY")"
 EDIT="$BASE/edits/$edit_id"
 
 # 4. Upload the AAB (media upload goes to the /upload/ host)
+# AUT-415: a re-dispatch of the same version (e.g. a promote run that re-ran
+# the whole release after fixing the promote script) hits Play's
+# "Version code X has already been used" 403 on the bundle upload. That is a
+# *success state* for the track — the bundle is already there — not a failure.
+# Detect it, verify the versionCode really is on the track, and treat the
+# upload as a no-op so the rest of the release flow (track assignment, commit)
+# proceeds against the existing bundle.
 req -m 600 -X POST "$UPLOAD_BASE/edits/$edit_id/bundles?uploadType=media" "${AUTH[@]}" \
   -H "Content-Type: application/octet-stream" --data-binary "@$AAB"
 if [[ "$HTTP_CODE" == "200" ]]; then
@@ -296,6 +309,15 @@ if [[ "$upload_noop" == "false" ]]; then
     echo "::error::edit commit failed (HTTP $commit_code): $(head -c 500 <<<"$commit_body" | tr '\n' ' ')"
     exit 1
   fi
+<<<<<<< HEAD
+=======
+else
+  # AUT-415: upload was a no-op (bundle already on Play and committed).
+  # Drop the open edit — we made no changes, and leaving it open risks
+  # the AUT-952 "This Edit has been deleted" behavior on the next edit.
+  "${CURL_NF[@]}" -m 60 -X DELETE "$EDIT" "${AUTH[@]}" >/dev/null 2>&1 || true
+  echo "skipped track assignment/commit (upload_noop=true)"
+>>>>>>> de76976 (chore: add temporary workflow to promote first release to production with 100% rollout)
 fi
 
 # 7. Verify the release landed on the track (fresh edit, read POST-commit state)
@@ -309,3 +331,9 @@ vc_on_track="$(jq -r --arg vc "$version_code" '[.releases[]? | (.versionCodes[]?
 # Drop the read-only verify edit so no open edit is ever left behind.
 "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
 echo "closed testing ($TRACK) release OK: versionCode $version_code — status $STATUS, committed for review"
+
+# AUT-415: expose versionCode to downstream steps (promote) so they don't
+# need to re-resolve it from the track, avoiding eventual-consistency races.
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+fi
