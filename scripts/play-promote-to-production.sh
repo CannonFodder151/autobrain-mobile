@@ -187,22 +187,24 @@ fi
 
 req -m 60 "$BASE/tracks/$TARGET_TRACK/releases" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get ($TARGET_TRACK)" 200
-<<<<<<< HEAD
 all_vcs="$(extract_all_version_codes <<<"$HTTP_BODY")"
 live_vc="$(jq -r '[.releases[]? | select(.status=="completed" or .status=="inProgress")] | .[].versionCodes[]? // .[].activeArtifacts[]?.versionCode // .[].releaseCodes[]? | select(. != null) | last' <<<"$HTTP_BODY" 2>/dev/null || echo "")"
 if [[ -n "$live_vc" && "$live_vc" != "$VERSION_CODE" ]]; then
   echo "::warning::production currently has versionCode $live_vc live; promoting $VERSION_CODE will replace it"
 fi
 already="$(grep -qx "$VERSION_CODE" <<<"$all_vcs" && echo true || echo false)": staged production rollout (10%) when promote_to_production=true)
-=======
-all_vcs="$(extract_all_version_codes <<<"$HTTP_BODY")"
-live_vc="$(jq -r '[.releases[]? | select(.status=="completed" or .status=="inProgress")] | .[].versionCodes[]? // .[].activeArtifacts[]?.versionCode // .[].releaseCodes[]? | select(. != null) | last' <<<"$HTTP_BODY" 2>/dev/null || echo "")"
-if [[ -n "$live_vc" && "$live_vc" != "$VERSION_CODE" ]]; then
-  echo "::warning::production currently has versionCode $live_vc live; promoting $VERSION_CODE will replace it"
-fi
-already="$(grep -qx "$VERSION_CODE" <<<"$all_vcs" && echo true || echo false)"
->>>>>>> de76976 (chore: add temporary workflow to promote first release to production with 100% rollout)
 echo "production already contains $VERSION_CODE: $already"
+
+# AUT-450: Play rejects the FIRST release on a track as a staged rollout
+# (HTTP 400 "The first release on a track cannot be staged"). If production
+# has no releases yet, force a full rollout (completed/100%) regardless of
+# PLAY_ROLLOUT_FRACTION. After the first release lands, subsequent promotes
+# resume the configured staged fraction.
+if [[ -z "$all_vcs" && "$STATUS" == "inProgress" ]]; then
+  echo "::warning::production track has no releases yet — first release cannot be staged; forcing completed (100%) rollout"
+  STATUS="completed"
+  UF=""
+fi
 
 # 5. Open main edit
 req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
@@ -255,11 +257,7 @@ req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json"
 verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
 req -m 60 "$BASE/edits/$verify_edit/tracks/$TARGET_TRACK" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify" 200
-<<<<<<< HEAD
 vc_on_track="$(extract_all_version_codes <<<"$HTTP_BODY" | grep -qx "$VERSION_CODE" && echo true || echo false)": staged production rollout (10%) when promote_to_production=true)
-=======
-vc_on_track="$(extract_all_version_codes <<<"$HTTP_BODY" | grep -qx "$VERSION_CODE" && echo true || echo false)"
->>>>>>> de76976 (chore: add temporary workflow to promote first release to production with 100% rollout)
 [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $VERSION_CODE not visible on production after commit"; exit 1; }
 "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
 if [[ "$STATUS" == "completed" ]]; then

@@ -1,7 +1,11 @@
 name: autobrain
 description: AI-powered car enthusiast companion.
 publish_to: 'none'
+<<<<<<< HEAD
 version: 0.3.324+269
+=======
+version: 0.3.324+269
+>>>>>>> 5c9b024 (fix(AUT-450): force completed rollout for first production release, bump to 258)
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
