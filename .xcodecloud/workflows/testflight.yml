@@ -1,0 +1,18 @@
+# Xcode Cloud Workflow: TestFlight (beta lane)
+# Triggers on version tags (v*), builds and uploads to TestFlight
+# Requires: Xcode Cloud project configured, ASC API key with App Manager role
+workflows:
+  - name: "TestFlight"
+    environment:
+      ios: latest
+      xcode: latest
+    triggers:
+      - type: tag
+        pattern: "v*"
+    steps:
+      - type: build
+        scheme: Runner
+        configuration: Release
+        clean: true
+      - type: upload
+        destination: testflight
