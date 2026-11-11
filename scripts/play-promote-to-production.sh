@@ -195,17 +195,6 @@ fi
 already="$(grep -qx "$VERSION_CODE" <<<"$all_vcs" && echo true || echo false)"
 echo "production already contains $VERSION_CODE: $already"
 
-# AUT-450: Play rejects the FIRST release on a track as a staged rollout
-# (HTTP 400 "The first release on a track cannot be staged"). If production
-# has no releases yet, force a full rollout (completed/100%) regardless of
-# PLAY_ROLLOUT_FRACTION. After the first release lands, subsequent promotes
-# resume the configured staged fraction.
-if [[ -z "$all_vcs" && "$STATUS" == "inProgress" ]]; then
-  echo "::warning::production track has no releases yet — first release cannot be staged; forcing completed (100%) rollout"
-  STATUS="completed"
-  UF=""
-fi
-
 # 5. Open main edit
 req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
 [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (main)" 200
@@ -225,6 +214,17 @@ then
   STATUS="completed"
 else
   UF="$ROLLOUT_FRACTION"
+fi
+
+# AUT-450: Play rejects the FIRST release on a track as a staged rollout
+# (HTTP 400 "The first release on a track cannot be staged"). If production
+# has no releases yet, force a full rollout (completed/100%) regardless of
+# PLAY_ROLLOUT_FRACTION. After the first release lands, subsequent promotes
+# resume the configured staged fraction.
+if [[ -z "$all_vcs" && "$STATUS" == "inProgress" ]]; then
+  echo "::warning::production track has no releases yet — first release cannot be staged; forcing completed (100%) rollout"
+  STATUS="completed"
+  UF=""
 fi
 
 release="{\"releases\":[{\"name\":\"production-$VERSION_CODE\",\"versionCodes\":[\"$VERSION_CODE\"],\"status\":\"$STATUS\""
