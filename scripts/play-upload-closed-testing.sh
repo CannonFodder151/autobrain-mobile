@@ -185,6 +185,7 @@ elif grep -q "has already been used" <<<"$HTTP_BODY"; then
   fi
   echo "::warning::bundle upload skipped: versionCode $version_code already present in Play Console (idempotent re-run)"
 
+fi
 # 4b. Idempotent track check: if versionCode is already committed/inProgress
 #     on the closed testing track, skip track update + commit and just verify.
 #     Re-committing the same versionCode on a rollout track is refused with
