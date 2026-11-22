@@ -8,7 +8,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 > user-facing change ships with an entry here under `[Unreleased]` — see
 > `CONTRIBUTING.md` for the frontend-parity + changelog rules.
 
+
 ## [Unreleased]
+
+## [0.3.323] - 2026-11-22
+
+### Added (AUT-670)
+- PR/CI Watchdog: failed GitHub Actions workflows now auto-create GitHub issues with failure logs, postmortem template, MTTR labels, and Paperclip execution issues to wake the assigned agent (.github/workflows/pr-ci-watchdog.yml, scripts/pr-ci-watchdog.sh, scripts/pr-ci-watchdog-notify.sh)
+
+## [0.3.322] - 2026-11-22
+
+### Fixed (AUT-504)
+- fix(frontend): add "Petrol Prices" tile to the home screen feature grid so the petrol price map (AUT-1813) is discoverable, matching the marketing claim (PR #1145)
 
 ## [0.3.321] - 2026-11-19
 
@@ -24,23 +35,3 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   Docker Hub :demo exists)
 - update-compose-pins.py now supports Docker Hub (prefixless) registry and
   tier-specific frontend tags (:demo/:default)
-
-### Fixed (AUT-514)
-- fix(backend): add webauthn dependency + fix attestation enum for passkey tests; resolve test_auth_begin_unknown_user_returns_empty_allow failing due to missing webauthn module and incorrect AttestationConveyancePreference enum value (PR #1124)
-
-## [0.3.320] - 2026-11-19
-
-### Fixed (AUT-587)
-- fix(frontend): add `formatDollarsPerLitre` helper to Servo Spy history screen so chart labels and tooltip share the cents-per-litre conversion; this helper was a mobile-only delta that `sync-mobile.sh` overwrote, breaking `sync-mobile.yml` (PR #1132)
-
-## [0.3.319] - 2026-11-14
-
-### Added (AUT-240)
-- automated 2-day upgrade cycle: Docker rebuild + deploy demo→default→hosted, mobile rebuild + push to stores
-
-### Fixed (AUT-296)
-- stack_id param expansion in upgrade-instances.sh
-
-### Fixed (AUT-2459)
-- fix duplicated P<id> fallback in _parse_qld_direct_prices
-
