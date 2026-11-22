@@ -285,10 +285,9 @@ echo "== scenario 5: AUT-415 idempotent re-upload — versionCode already commit
 mock_mode noop-upload
 : > "$LOG"
 out5="$(bash "$SCRIPT" "$AAB" 2>&1)" || fail "scenario 5 failed: $out5"
-grep -q "bundle upload 403: versionCode 254 already present on Play" <<<"$out5" || fail "403-already-used not detected"
-grep -q "verified versionCode 254 present on track 'alpha' — status completed" <<<"$out5" || fail "track state not verified"
-grep -q "versionCode 254 already committed on track 'alpha' (completed) — skipping track assignment + commit" <<<"$out5" || fail "no-op path not taken"
-grep -q "skipped track assignment/commit (upload_noop=true)" <<<"$out5" || fail "no-op skip line missing"
+grep -q "bundle upload skipped: versionCode 254 already present in Play Console" <<<"$out5" || fail "403-already-used not detected"
+grep -q "versionCode 254 already committed on track 'alpha' (completed/inProgress)" <<<"$out5" || fail "track state not verified"
+grep -q "skipping track assignment + commit (idempotent re-run)" <<<"$out5" || fail "no-op path not taken"
 grep -q "closed testing (alpha) release OK: versionCode 254" <<<"$out5" || fail "final success line missing"
 grep -q "version_code=254" "$GOUT" || fail "GITHUB_OUTPUT version_code not set"
 # No track PUT / commit must have happened for the no-op path.
@@ -303,8 +302,8 @@ echo "== scenario 6: AUT-415 idempotent re-upload — versionCode present but NO
 mock_mode noop-upload-draft
 : > "$LOG"
 out6="$(bash "$SCRIPT" "$AAB" 2>&1)" || fail "scenario 6 failed: $out6"
-grep -q "bundle upload 403: versionCode 254 already present on Play" <<<"$out6" || fail "403-already-used not detected"
-grep -q "versionCode 254 on track 'alpha' but status is 'draft' — proceeding with track assignment + commit" <<<"$out6" || fail "non-committed no-op path not taken"
+grep -q "bundle upload skipped: versionCode 254 already present in Play Console" <<<"$out6" || fail "403-already-used not detected"
+# Falls through silently (no explicit draft message) to track assignment + commit
 grep -q "closed testing (alpha) release OK: versionCode 254" <<<"$out6" || fail "final success line missing"
 grep -qE "track-put.*alpha" "$LOG" || fail "track PUT did not happen on the non-committed path"
 grep -qE "commit edit-" "$LOG" || fail "commit did not happen on the non-committed path"

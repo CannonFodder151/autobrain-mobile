@@ -169,32 +169,60 @@ if [[ "$HTTP_CODE" == "200" ]]; then
   upload_noop=false
 elif grep -q "has already been used" <<<"$HTTP_BODY"; then
   # Idempotent re-run: the same versionCode was already uploaded to Play
-  # Console. Read the current track state to decide whether we can skip
-  # track assignment + commit entirely.
+  # Console. Derive versionCode from RELEASE_VERSION if not passed explicitly.
+  upload_noop=false
   version_code="${PLAY_VERSION_CODE:-}"
   if [[ -z "$version_code" || "$version_code" == "null" ]]; then
-    # Try to extract versionCode from the error message: "Version code 254 has already been used."
-    version_code="$(jq -r '.error.message // ""' <<<"$HTTP_BODY" | grep -oE 'Version code [0-9]+' | cut -d' ' -f3)"
+    if [[ -n "${RELEASE_VERSION:-}" ]]; then
+      version_code="${RELEASE_VERSION##*+}"
+      echo "::notice::PLAY_VERSION_CODE not set; derived version_code=$version_code from RELEASE_VERSION=$RELEASE_VERSION"
+    else
+      # Fall back to extracting versionCode from the error message:
+      # "Version code 254 has already been used."
+      version_code="$(jq -r '.error.message // ""' <<<"$HTTP_BODY" | grep -oE 'Version code [0-9]+' | cut -d' ' -f3)"
+    fi
   fi
   if [[ -z "$version_code" || "$version_code" == "null" ]]; then
-    echo "::error::bundle upload rejected (version code already in use) and could not extract versionCode from error. Set PLAY_VERSION_CODE=<N> (the build number after '+', e.g. 255) or bump the version." >&2
+    echo "::error::bundle upload rejected (version code already in use) and neither PLAY_VERSION_CODE nor RELEASE_VERSION set — cannot continue. Set PLAY_VERSION_CODE=<N> or ensure RELEASE_VERSION is set (e.g. v0.3.311+255)." >&2
     "${CURL_NF[@]}" -m 30 -X DELETE "$BASE/edits/$edit_id" "${AUTH[@]}" >/dev/null 2>&1 || true
     exit 1
   fi
-  track_state="$(curl -sS --connect-timeout 30 "$BASE/tracks/$TRACK/releases" "${AUTH[@]}")"
-  echo "::warning::bundle upload 403: versionCode $version_code already present on Play"
-  if echo "$track_state" | jq -e --arg vc "$version_code" '[.releases[]? | select(.versionCodes[]? == $vc) | .status] | any(. == "completed")' >/dev/null 2>&1; then
-    echo "verified versionCode $version_code present on track '$TRACK' — status completed"
-    echo "versionCode $version_code already committed on track '$TRACK' (completed) — skipping track assignment + commit"
-    echo "skipped track assignment/commit (upload_noop=true)"
-    upload_noop=true
-  else
-    echo "versionCode $version_code on track '$TRACK' but status is 'draft' — proceeding with track assignment + commit"
-    upload_noop=false
-  fi
+  echo "::warning::bundle upload skipped: versionCode $version_code already present in Play Console (idempotent re-run)"
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
   fi
+
+  # 4b. Idempotent track check: if versionCode is already committed/inProgress
+  #     on the closed testing track, skip track update + commit and just verify.
+  #     Re-committing the same versionCode on a rollout track is refused with
+  #     403 "does not allow any existing users to upgrade" (AUT-440).
+  req -m 60 "$BASE/tracks/$TRACK/releases" "${AUTH[@]}"
+  if [[ "$HTTP_CODE" == "200" ]]; then
+    track_state="$(jq -r --arg vc "$version_code" '
+      [.releases[]? | select(
+        .versionCodes[]? == ($vc|tonumber) or
+        .versionCodes[]? == $vc or
+        .activeArtifacts[]?.versionCode == ($vc|tonumber) or
+        .activeArtifacts[]?.versionCode == $vc or
+        .releaseCodes[]? == ($vc|tonumber) or
+        .releaseCodes[]? == $vc
+      ) | .status] | any(. == "completed" or . == "inProgress")' <<<"$HTTP_BODY" 2>/dev/null || echo "false")"
+    if [[ "$track_state" == "true" ]]; then
+      echo "versionCode $version_code already committed on track '$TRACK' (completed/inProgress) — skipping track assignment + commit (idempotent re-run)"
+      req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
+      [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (verify)" 200
+      verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
+      req -m 60 "$BASE/edits/$verify_edit/tracks/$TRACK" "${AUTH[@]}"
+      [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify ($TRACK)" 200
+      vc_on_track="$(jq -r --arg vc "$version_code" '[.releases[]? | (.versionCodes[]? // (.activeArtifacts[]?.versionCode|tostring))] | index($vc) != null' <<<"$HTTP_BODY")"
+      [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $version_code not visible on track '$TRACK' after idempotent check"; exit 1; }
+      "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
+      echo "closed testing ($TRACK) release OK: versionCode $version_code — status committed (idempotent re-run)"
+      exit 0
+    fi
+    # track_state is false (not committed) → fall through to track assignment + commit
+  fi
+  # track check non-200 → fall through to track assignment + commit
 else
   die_http "bundle upload" 200
 fi
