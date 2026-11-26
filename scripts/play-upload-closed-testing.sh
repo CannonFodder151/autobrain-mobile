@@ -166,123 +166,136 @@ if [[ "$HTTP_CODE" == "200" ]]; then
   version_code="$(jq -r '.versionCode' <<<"$HTTP_BODY")"
   [[ -n "$version_code" && "$version_code" != "null" ]] || { echo "::error::bundle upload returned no versionCode"; exit 1; }
   echo "uploaded $AAB -> versionCode $version_code"
+  upload_noop=false
 elif grep -q "has already been used" <<<"$HTTP_BODY"; then
   # Idempotent re-run: the same versionCode was already uploaded to Play
-  # Console (e.g. a release pipeline re-dispatch for an unchanged version).
-  # The bundle is already present, so treat this as success and continue to
-  # track assignment. We need the versionCode locally — derive it from the
-  # release tag (the build number after '+', e.g. v0.3.311+255 -> 255).
+  # Console. Derive versionCode from RELEASE_VERSION if not passed explicitly.
+  upload_noop=false
   version_code="${PLAY_VERSION_CODE:-}"
   if [[ -z "$version_code" || "$version_code" == "null" ]]; then
     if [[ -n "${RELEASE_VERSION:-}" ]]; then
       version_code="${RELEASE_VERSION##*+}"
       echo "::notice::PLAY_VERSION_CODE not set; derived version_code=$version_code from RELEASE_VERSION=$RELEASE_VERSION"
     else
-      echo "::error::bundle upload rejected (version code already in use) and neither PLAY_VERSION_CODE nor RELEASE_VERSION set — cannot continue. Set PLAY_VERSION_CODE=<N> or ensure RELEASE_VERSION is set (e.g. v0.3.311+255)." >&2
-      "${CURL_NF[@]}" -m 30 -X DELETE "$BASE/edits/$edit_id" "${AUTH[@]}" >/dev/null 2>&1 || true
-      exit 1
+      # Fall back to extracting versionCode from the error message:
+      # "Version code 254 has already been used."
+      version_code="$(jq -r '.error.message // ""' <<<"$HTTP_BODY" | grep -oE 'Version code [0-9]+' | cut -d' ' -f3)"
     fi
   fi
-  echo "::warning::bundle upload skipped: versionCode $version_code already present in Play Console (idempotent re-run)"
-
-fi
-# 4b. Idempotent track check: if versionCode is already committed/inProgress
-#     on the closed testing track, skip track update + commit and just verify.
-#     Re-committing the same versionCode on a rollout track is refused with
-#     403 "does not allow any existing users to upgrade" (AUT-440).
-req -m 60 "$BASE/tracks/$TRACK/releases" "${AUTH[@]}"
-if [[ "$HTTP_CODE" == "200" ]]; then
-  track_state="$(jq -r --arg vc "$version_code" '
-    .releases[]? | select(
-      .versionCodes[]? == ($vc|tonumber) or
-      .versionCodes[]? == $vc or
-      .activeArtifacts[]?.versionCode == ($vc|tonumber) or
-      .activeArtifacts[]?.versionCode == $vc or
-      .releaseCodes[]? == ($vc|tonumber) or
-      .releaseCodes[]? == $vc
-    ) | .status // "unknown" | first' <<<"$HTTP_BODY" 2>/dev/null || true)"
-  if [[ "$track_state" == "completed" || "$track_state" == "inProgress" ]]; then
-    echo "versionCode $version_code already committed on track '$TRACK' ($track_state) — skipping track assignment + commit (idempotent re-run)"
-    req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
-    [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (verify)" 200
-    verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
-    req -m 60 "$BASE/edits/$verify_edit/tracks/$TRACK" "${AUTH[@]}"
-    [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify ($TRACK)" 200
-    vc_on_track="$(jq -r --arg vc "$version_code" '[.releases[]? | (.versionCodes[]? // (.activeArtifacts[]?.versionCode|tostring))] | index($vc) != null' <<<"$HTTP_BODY")"
-    [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $version_code not visible on track '$TRACK' after idempotent check"; exit 1; }
-    "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
-    echo "closed testing ($TRACK) release OK: versionCode $version_code — status $track_state (idempotent re-run)"
-    exit 0
+  if [[ -z "$version_code" || "$version_code" == "null" ]]; then
+    echo "::error::bundle upload rejected (version code already in use) and neither PLAY_VERSION_CODE nor RELEASE_VERSION set — cannot continue. Set PLAY_VERSION_CODE=<N> or ensure RELEASE_VERSION is set (e.g. v0.3.311+255)." >&2
+    "${CURL_NF[@]}" -m 30 -X DELETE "$BASE/edits/$edit_id" "${AUTH[@]}" >/dev/null 2>&1 || true
+    exit 1
   fi
+  echo "::warning::bundle upload skipped: versionCode $version_code already present in Play Console (idempotent re-run)"
+  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+    echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+  fi
+
+  # 4b. Idempotent track check: if versionCode is already committed/inProgress
+  #     on the closed testing track, skip track update + commit and just verify.
+  #     Re-committing the same versionCode on a rollout track is refused with
+  #     403 "does not allow any existing users to upgrade" (AUT-440).
+  req -m 60 "$BASE/tracks/$TRACK/releases" "${AUTH[@]}"
+  if [[ "$HTTP_CODE" == "200" ]]; then
+    track_state="$(jq -r --arg vc "$version_code" '
+      [.releases[]? | select(
+        .versionCodes[]? == ($vc|tonumber) or
+        .versionCodes[]? == $vc or
+        .activeArtifacts[]?.versionCode == ($vc|tonumber) or
+        .activeArtifacts[]?.versionCode == $vc or
+        .releaseCodes[]? == ($vc|tonumber) or
+        .releaseCodes[]? == $vc
+      ) | .status] | any(. == "completed" or . == "inProgress")' <<<"$HTTP_BODY" 2>/dev/null || echo "false")"
+    if [[ "$track_state" == "true" ]]; then
+      echo "versionCode $version_code already committed on track '$TRACK' (completed/inProgress) — skipping track assignment + commit (idempotent re-run)"
+      req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
+      [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (verify)" 200
+      verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
+      req -m 60 "$BASE/edits/$verify_edit/tracks/$TRACK" "${AUTH[@]}"
+      [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify ($TRACK)" 200
+      vc_on_track="$(jq -r --arg vc "$version_code" '[.releases[]? | (.versionCodes[]? // (.activeArtifacts[]?.versionCode|tostring))] | index($vc) != null' <<<"$HTTP_BODY")"
+      [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $version_code not visible on track '$TRACK' after idempotent check"; exit 1; }
+      "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
+      echo "closed testing ($TRACK) release OK: versionCode $version_code — status committed (idempotent re-run)"
+      exit 0
+    fi
+    # track_state is false (not committed) → fall through to track assignment + commit
+  fi
+  # track check non-200 → fall through to track assignment + commit
+else
+  die_http "bundle upload" 200
 fi
 
-# 5. Assign it to the closed testing track. $release is already the complete
-#    Track body — Track.releases is a JSON array of TrackRelease, so do not
-#    wrap it again ({releases:$release} would double-nest and Play 400s).
-release="{\"releases\":[{\"name\":\"$TRACK-$version_code\",\"versionCodes\":[\"$version_code\"],\"status\":\"$STATUS\""
-# userFraction only applies to a staged (inProgress) rollout; completed/draft have no fraction.
-if [[ "$STATUS" == "inProgress" && "$ROLLOUT_PERCENT" -ge 1 ]]; then
-  # Play rejects userFraction == 1.0, so cap at 0.999 to serve every tester.
-  frac=$(awk -v p="$ROLLOUT_PERCENT" 'BEGIN { if (p >= 100) p=99.9; printf "%.3f", p/100 }')
-  release="$release,\"userFraction\":$frac"
-fi
-if [[ -n "$NOTES" ]]; then
-  notes_json="$(jq -n --arg t "$NOTES" '[{"language":"en-US","text":$t}]')"
-  release="$release,\"releaseNotes\":$notes_json"
-fi
-release="$release}]}"
-track_body="$release"
-req -m 60 -X PUT "$EDIT/tracks/$TRACK" "${AUTH[@]}" \
-  -H "Content-Type: application/json" -d "$track_body"
-[[ "$HTTP_CODE" == "200" ]] || die_http "tracks.update ($TRACK)" 200
-
-# 6. Commit the edit — this is "submitting the changes for review" to Google.
-#    The commit call intentionally has no --retry/-f so its 403/400 bodies can
-#    be inspected before deciding on the draft fallback.
-commit_success=false
-commit_out="$("${CURL_NF[@]}" -m 300 -w $'\n%{http_code}' -X POST "$EDIT:commit" "${AUTH[@]}")"
-commit_code="$(tail -1 <<<"$commit_out")"
-commit_body="$(sed '$d' <<<"$commit_out")"
-echo "   commit HTTP: $commit_code" >&2
-if [[ "$commit_code" == "200" ]]; then
-  commit_success=true
-elif [[ "$commit_code" == "403" && "$STATUS" == "completed" && "$ROLLOUT_PERCENT" -ge 1 ]] \
-  && grep -q "does not allow any existing users to upgrade" <<<"$commit_body"; then
-  # `alpha` is a rollout track: Play refuses a bare "completed" (100%) release
-  # unless the staged rollout already reaches every existing tester. Retry as a
-  # staged rollout capped at 0.999, which serves the build to the full list.
-  echo "::warning::Play refused 'completed' on rollout track '$TRACK' ('does not allow any existing users to upgrade'); retrying as status=inProgress userFraction=0.999."
-  frac=$(awk -v p="$ROLLOUT_PERCENT" 'BEGIN { if (p >= 100) p=99.9; printf "%.3f", p/100 }')
-  release="{\"releases\":[{\"name\":\"$TRACK-$version_code\",\"versionCodes\":[\"$version_code\"],\"status\":\"inProgress\",\"userFraction\":$frac"
+if [[ "$upload_noop" == "false" ]]; then
+  # 5. Assign it to the closed testing track. $release is already the complete
+  #    Track body — Track.releases is a JSON array of TrackRelease, so do not
+  #    wrap it again ({releases:$release} would double-nest and Play 400s).
+  release="{\"releases\":[{\"name\":\"$TRACK-$version_code\",\"versionCodes\":[\"$version_code\"],\"status\":\"$STATUS\""
+  # userFraction only applies to a staged (inProgress) rollout; completed/draft have no fraction.
+  if [[ "$STATUS" == "inProgress" && "$ROLLOUT_PERCENT" -ge 1 ]]; then
+    # Play rejects userFraction == 1.0, so cap at 0.999 to serve every tester.
+    frac=$(awk -v p="$ROLLOUT_PERCENT" 'BEGIN { if (p >= 100) p=99.9; printf "%.3f", p/100 }')
+    release="$release,\"userFraction\":$frac"
+  fi
   if [[ -n "$NOTES" ]]; then
+    notes_json="$(jq -n --arg t "$NOTES" '[{"language":"en-US","text":$t}]')"
     release="$release,\"releaseNotes\":$notes_json"
   fi
   release="$release}]}"
+  track_body="$release"
   req -m 60 -X PUT "$EDIT/tracks/$TRACK" "${AUTH[@]}" \
-    -H "Content-Type: application/json" -d "$release"
-  [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.update ($TRACK) as inProgress" 200
+    -H "Content-Type: application/json" -d "$track_body"
+  [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.update ($TRACK)" 200
+
+  # 6. Commit the edit — this is "submitting the changes for review" to Google.
+  #    The commit call intentionally has no --retry/-f so its 403/400 bodies can
+  #    be inspected before deciding on the draft fallback.
+  commit_success=false
   commit_out="$("${CURL_NF[@]}" -m 300 -w $'\n%{http_code}' -X POST "$EDIT:commit" "${AUTH[@]}")"
   commit_code="$(tail -1 <<<"$commit_out")"
-  [[ "$commit_code" == "200" ]] || { echo "::error::edit commit (inProgress fallback) failed (HTTP $commit_code): $(head -c 500 <<<"$commit_out" | tr '\n' ' ')"; exit 1; }
-  STATUS="inProgress"
-  commit_success=true
-elif [[ "$commit_code" == "403" && "$STATUS" == "completed" && "$ALLOW_FALLBACK" == "true" ]] \
-  && grep -q "targeting no countries" <<<"$commit_body"; then
-  echo "::warning::Play refuses 'completed' (submit-for-review) on closed testing track '$TRACK' without a tester audience ('targeting no countries'); committing as draft. Once a tester group + country availability are configured on the track in Play Console, the same pipeline auto-submits for review with no code change."
-  echo "::warning::ASK-NATHAN: Play Console -> Testing -> Closed testing -> $TRACK -> add testers (emails or a Google Group) and set country availability (restOfWorld on). One-time setup; after that every release lands as 'completed' (submitted for review)."
-  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-    echo "needs_tester_audience=true" >> "$GITHUB_OUTPUT"
+  commit_body="$(sed '$d' <<<"$commit_out")"
+  echo "   commit HTTP: $commit_code" >&2
+  if [[ "$commit_code" == "200" ]]; then
+    commit_success=true
+  elif [[ "$commit_code" == "403" && "$STATUS" == "completed" && "$ROLLOUT_PERCENT" -ge 1 ]] \
+    && grep -q "does not allow any existing users to upgrade" <<<"$commit_body"; then
+    # `alpha` is a rollout track: Play refuses a bare "completed" (100%) release
+    # unless the staged rollout already reaches every existing tester. Retry as a
+    # staged rollout capped at 0.999, which serves the build to the full list.
+    echo "::warning::Play refused 'completed' on rollout track '$TRACK' ('does not allow any existing users to upgrade'); retrying as status=inProgress userFraction=0.999."
+    frac=$(awk -v p="$ROLLOUT_PERCENT" 'BEGIN { if (p >= 100) p=99.9; printf "%.3f", p/100 }')
+    release="{\"releases\":[{\"name\":\"$TRACK-$version_code\",\"versionCodes\":[\"$version_code\"],\"status\":\"inProgress\",\"userFraction\":$frac"
+    if [[ -n "$NOTES" ]]; then
+      release="$release,\"releaseNotes\":$notes_json"
+    fi
+    release="$release}]}"
+    req -m 60 -X PUT "$EDIT/tracks/$TRACK" "${AUTH[@]}" \
+      -H "Content-Type: application/json" -d "$release"
+    [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.update ($TRACK) as inProgress" 200
+    commit_out="$("${CURL_NF[@]}" -m 300 -w $'\n%{http_code}' -X POST "$EDIT:commit" "${AUTH[@]}")"
+    commit_code="$(tail -1 <<<"$commit_out")"
+    [[ "$commit_code" == "200" ]] || { echo "::error::edit commit (inProgress fallback) failed (HTTP $commit_code): $(head -c 500 <<<"$commit_out" | tr '\n' ' ')"; exit 1; }
+    STATUS="inProgress"
+    commit_success=true
+  elif [[ "$commit_code" == "403" && "$STATUS" == "completed" && "$ALLOW_FALLBACK" == "true" ]] \
+    && grep -q "targeting no countries" <<<"$commit_body"; then
+    echo "::warning::Play refuses 'completed' (submit-for-review) on closed testing track '$TRACK' without a tester audience ('targeting no countries'); committing as draft. Once a tester group + country availability are configured on the track in Play Console, the same pipeline auto-submits for review with no code change."
+    echo "::warning::ASK-NATHAN: Play Console -> Testing -> Closed testing -> $TRACK -> add testers (emails or a Google Group) and set country availability (restOfWorld on). One-time setup; after that every release lands as 'completed' (submitted for review)."
+    if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+      echo "needs_tester_audience=true" >> "$GITHUB_OUTPUT"
+    fi
+    STATUS="draft"
+    release="${release/\"completed\"/\"draft\"}"
+    req -m 60 -X PUT "$EDIT/tracks/$TRACK" "${AUTH[@]}" \
+      -H "Content-Type: application/json" -d "$release"
+    [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.update ($TRACK) as draft" 200
+    "${CURL_NF[@]}" -m 300 -X POST "$EDIT:commit" "${AUTH[@]}" >/dev/null
+    commit_success=true
+  else
+    echo "::error::edit commit failed (HTTP $commit_code): $(head -c 500 <<<"$commit_body" | tr '\n' ' ')"
+    exit 1
   fi
-  STATUS="draft"
-  release="${release/\"completed\"/\"draft\"}"
-  req -m 60 -X PUT "$EDIT/tracks/$TRACK" "${AUTH[@]}" \
-    -H "Content-Type: application/json" -d "$release"
-  [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.update ($TRACK) as draft" 200
-  "${CURL_NF[@]}" -m 300 -X POST "$EDIT:commit" "${AUTH[@]}" >/dev/null
-  commit_success=true
-else
-  echo "::error::edit commit failed (HTTP $commit_code): $(head -c 500 <<<"$commit_body" | tr '\n' ' ')"
-  exit 1
 fi
 
 # 7. Verify the release landed on the track (fresh edit, read POST-commit state)
