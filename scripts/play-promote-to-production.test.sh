@@ -98,8 +98,3 @@ grep -q 'track-put .* status=inProgress uf=0.1' "$LOG" || fail "expected inProgr
 echo "OK promote-to-production caller-supplied + activeArtifacts"
 
 echo "ALL SCENARIOS PASSED"
-<<<<<<< HEAD
-=======
->>>>>>> 4e61dc8 (fix(AUT-322): staged production rollout (10%) when promote_to_production=true)
-=======
->>>>>>> de76976 (chore: add temporary workflow to promote first release to production with 100% rollout)

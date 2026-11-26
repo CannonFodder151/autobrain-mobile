@@ -309,13 +309,6 @@ if [[ "$upload_noop" == "false" ]]; then
     echo "::error::edit commit failed (HTTP $commit_code): $(head -c 500 <<<"$commit_body" | tr '\n' ' ')"
     exit 1
   fi
-<<<<<<< HEAD
-=======
-else
-  # AUT-415: upload was a no-op (bundle already on Play and committed).
-  # Drop the open edit — we made no changes, and leaving it open risks
-  # the AUT-952 "This Edit has been deleted" behavior on the next edit.
-  "${CURL_NF[@]}" -m 60 -X DELETE "$EDIT" "${AUTH[@]}" >/dev/null 2>&1 || true
   echo "skipped track assignment/commit (upload_noop=true)"
 >>>>>>> de76976 (chore: add temporary workflow to promote first release to production with 100% rollout)
 fi
