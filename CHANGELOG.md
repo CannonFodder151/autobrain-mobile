@@ -10,6 +10,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 
 ## [Unreleased]
+### Changed (AUT-IMP-003)
+- ci(mobile): auto-increment Android `versionCode` in `release-mobile.yml` when requested build number <= max versionCode on Play (prevents 255/"already used" conflicts). Adds `scripts/get-play-max-version-code.sh`, `scripts/bump-android-version-code.sh`, and `scripts/check-release-preflight.sh`.
+- docs(mobile): checked-in Android release runbook + secrets/config checklist codifying alpha (closed testing) upload flow and alpha→production staged promotion steps (`docs/releases/ANDROID_RELEASE_RUNBOOK.md`, `docs/releases/RELEASE_SECRETS_AND_CONFIG.md`).
+
 
 ## [0.3.324] - 2026-11-26
 
