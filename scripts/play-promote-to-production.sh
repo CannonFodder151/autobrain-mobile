@@ -167,7 +167,7 @@ else
   VERSION_CODE="$VERSION_CODE_ARG"
 fi
 resolve_or_verify_source
-[[ -n "${VERSION_CODE:-}" ]] || { echo "::error::failed to resolve versionCode"; exit 1; }: staged production rollout (10%) when promote_to_production=true)
+[[ -n "${VERSION_CODE:-}" ]] || { echo "::error::failed to resolve versionCode"; exit 1; }
 
 # 4. Pre-flight: production track state
 prod_probe="$(curl -sS --connect-timeout 30 -o /dev/null -w '%{http_code}' "$BASE/tracks/$TARGET_TRACK/releases" "${AUTH[@]}")"
@@ -192,10 +192,7 @@ live_vc="$(jq -r '[.releases[]? | select(.status=="completed" or .status=="inPro
 if [[ -n "$live_vc" && "$live_vc" != "$VERSION_CODE" ]]; then
   echo "::warning::production currently has versionCode $live_vc live; promoting $VERSION_CODE will replace it"
 fi
-already="$(grep -qx "$VERSION_CODE" <<<"$all_vcs" && echo true || echo false)": staged production rollout (10%) when promote_to_production=true)
-echo "production already contains $VERSION_CODE: $already"
-
-# 5. Open main edit
+already="$(grep -qx "$VERSION_CODE" <<<"$all_vcs" && echo true || echo false)"
 req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json" -d '{}'
 [[ "$HTTP_CODE" == "200" ]] || die_http "edits.insert (main)" 200
 edit_id="$(jq -r '.id' <<<"$HTTP_BODY")"
@@ -257,7 +254,7 @@ req -m 60 -X POST "$BASE/edits" "${AUTH[@]}" -H "Content-Type: application/json"
 verify_edit="$(jq -r '.id' <<<"$HTTP_BODY")"
 req -m 60 "$BASE/edits/$verify_edit/tracks/$TARGET_TRACK" "${AUTH[@]}"
 [[ "$HTTP_CODE" == "200" ]] || die_http "tracks.get verify" 200
-vc_on_track="$(extract_all_version_codes <<<"$HTTP_BODY" | grep -qx "$VERSION_CODE" && echo true || echo false)": staged production rollout (10%) when promote_to_production=true)
+vc_on_track="$(extract_all_version_codes <<<"$HTTP_BODY" | grep -qx "$VERSION_CODE" && echo true || echo false)"
 [[ "$vc_on_track" == "true" ]] || { echo "::error::versionCode $VERSION_CODE not visible on production after commit"; exit 1; }
 "${CURL_NF[@]}" -m 60 -X DELETE "$BASE/edits/$verify_edit" "${AUTH[@]}" >/dev/null 2>&1 || true
 if [[ "$STATUS" == "completed" ]]; then
