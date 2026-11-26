@@ -1,0 +1,30 @@
+name: Promote First Release to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: 'Version code to promote (e.g., 257)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: [self-hosted, linux, x64, release-signing]
+    env:
+      GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+      PLAY_PACKAGE_NAME: com.autobrainservice.app
+      PLAY_ROLLOUT_FRACTION: "1"
+      PLAY_FROM_TRACK: alpha
+      PLAY_TRACK: production
+    steps:
+      - name: Promote to production (100% rollout for first release)
+        env:
+          PLAY_RELEASE_NOTES: "autoBrain v0.3.311+${{ github.event.inputs.version_code }} — first production release"
+          PLAY_LOG_FILE: ${{ runner.temp }}/play-promote.log
+        run: |
+          set -euo pipefail
+          bash scripts/play-promote-to-production.sh "${{ github.event.inputs.version_code }}"
