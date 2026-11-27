@@ -24,33 +24,11 @@ jobs:
       - name: "Guard: CARTO_API_KEY release guard self-check"
         run: bash scripts/check-carto-key.test.sh
 
-      - name: Install Flutter
-        run: |
-          set -euo pipefail
-          echo "=== System Info ==="
-          uname -a
-          echo "=== Checking for git ==="
-          which git || echo "git not found"
-          git --version
-          echo "=== Checking network ==="
-          curl -sI https://github.com 2>&1 | head -5 || echo "curl failed"
-          echo "=== Checking disk space ==="
-          df -h
-          echo "=== Checking for Flutter ==="
-          if command -v flutter &> /dev/null; then
-            echo "Flutter found in PATH: $(which flutter)"
-            flutter --version
-          elif [ -d "$HOME/flutter" ]; then
-            echo "Flutter found at $HOME/flutter"
-            export PATH="$HOME/flutter/bin:$PATH"
-            flutter --version
-          else
-            echo "Flutter not found - installing via git clone..."
-            git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$HOME/flutter"
-            export PATH="$HOME/flutter/bin:$PATH"
-            flutter --version
-          fi
-          echo "$HOME/flutter/bin" >> "$GITHUB_PATH"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22.3'
+          channel: stable
+          cache: true
 
       - name: Fetch dependencies
         run: flutter pub get
