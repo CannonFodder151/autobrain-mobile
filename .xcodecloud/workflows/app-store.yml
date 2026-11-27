@@ -38,6 +38,61 @@ workflow:
           flutter pub get
 
     - build:
+        name: Generate Dart Defines (CARTO_API_KEY, API_BASE_URL, WS_BASE_URL, MOBILE_STORE_BUILD)
+        # AUT-5084 / AUT-5556: The Dart defines MUST reach the Dart compile
+        # inside the Xcode archive step. Flutter's xcode_backend.dart reads
+        # the DART_DEFINES build setting (base64-encoded "key=value" pairs)
+        # and passes them to `flutter assemble --DartDefines`.
+        # Xcode Cloud injects secrets as environment variables; we encode them
+        # here so the subsequent archive step inherits DART_DEFINES.
+        script: |
+          set -euo pipefail
+          export PATH="$FLUTTER_HOME/bin:$PATH"
+          
+          # CARTO_API_KEY is injected by Xcode Cloud from the repository secrets
+          # (configured in Xcode Cloud UI: Repository -> Secrets).
+          # If unset, fail loudly instead of shipping a watermarked map.
+          if [[ -z "${CARTO_API_KEY:-}" ]]; then
+            echo "::error::CARTO_API_KEY secret is not configured in Xcode Cloud — release would ship a key-less (watermarked) CARTO basemap"
+            exit 1
+          fi
+          
+          # Build the define set (same 4 defines as release-ios.yml)
+          DEFINES=(
+            "API_BASE_URL=https://hosted.autobrainservice.app/api/v1"
+            "WS_BASE_URL=wss://hosted.autobrainservice.app/ws"
+            "MOBILE_STORE_BUILD=true"
+            "CARTO_API_KEY=${CARTO_API_KEY}"
+          )
+          
+          # Encode each define as base64 and join with commas
+          # This mirrors flutter_tools' encodeDartDefines exactly.
+          ENCODED=""
+          for d in "${DEFINES[@]}"; do
+            b64=$(printf '%s' "$d" | base64 | tr -d '\n')
+            if [[ -z "$ENCODED" ]]; then
+              ENCODED="$b64"
+            else
+              ENCODED="${ENCODED},${b64}"
+            fi
+          done
+          
+          # Verify round-trip (fail closed if encoding is broken)
+          DECODED=()
+          IFS=',' read -ra PARTS <<<"$ENCODED"
+          for p in "${PARTS[@]}"; do
+            DECODED+=("$(printf '%s' "$p" | base64 -d)")
+          done
+          if [[ "${DEFINES[*]}" != "${DECODED[*]}" ]]; then
+            echo "::error::DART_DEFINES encoding did not round-trip"
+            exit 1
+          fi
+          
+          # Export for the subsequent archive step (Xcode Cloud passes env through)
+          echo "DART_DEFINES=$ENCODED" >> "$GITHUB_ENV"
+          echo "Generated DART_DEFINES with ${#DEFINES[@]} defines"
+
+    - build:
         name: Archive + export (App Store)
         # AUT-463: archive the Runner scheme with the app-store export
         # method. The team holds an iPhone Distribution cert only; the
