@@ -2,9 +2,9 @@ name: autobrain
 description: AI-powered car enthusiast companion.
 publish_to: 'none'
 <<<<<<< HEAD
-version: 0.3.324+269
+version: 0.3.324+270
 =======
-version: 0.3.324+269
+version: 0.3.324+270
 >>>>>>> a37dcf6 (chore(mobile): bump version to 0.3.311+259 (AUT-446))
 
 environment:
